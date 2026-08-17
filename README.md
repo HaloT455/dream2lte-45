@@ -37,6 +37,17 @@ new/empty output directory when producing the reproducible release build.
 - GPU frequency limits, CPU voltage tables and thermal limits are unchanged.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
 
+## SUSFS and memory management
+
+- KernelSU-Next remains the root implementation; the kernel 4.4-compatible
+  SUSFS v1.5.5 adapter and VFS hooks are enabled alongside it.
+- The legacy in-kernel Android low-memory killer is disabled. Android `lmkd`
+  retains the required memcg/cgroup support and is the only userspace memory
+  pressure policy engine.
+- CPU placement and DVFS are unchanged from the V6 baseline. No LITTLE 100%
+  pinning or 1--3 ms schedutil rate-limit override is included; EAS selects a
+  CPU and schedutil selects the frequency for each CPU policy.
+
 To create a flashable image while preserving a known-good boot image ramdisk
 and footer:
 

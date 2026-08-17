@@ -59,4 +59,60 @@ config KSU_KPROBES_HOOK
 	  Enable KPROBES, KRETPROBES and TRACEPOINT hook for KernelSU core.
 	  This should not be used on kernel below 5.10.
 
+menu "KernelSU - SUSFS 4.4 backport"
+
+config KSU_SUSFS
+	bool "KernelSU addon - SUSFS"
+	depends on KSU && KSU_MANUAL_HOOK
+	default n
+	help
+	  Enable the SUSFS v1.5.5 compatibility backport for legacy 4.4
+	  kernels. This tree uses direct VFS hooks and does not replace
+	  KernelSU-Next.
+
+config KSU_SUSFS_SUS_PATH
+	bool "Hide suspicious paths"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_MOUNT
+	bool "Hide suspicious mounts"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Use inode-based filtering on legacy proc mount listings. The newer
+	  mount-id remapping path is intentionally not used on kernel 4.4.
+
+config KSU_SUSFS_SUS_KSTAT
+	bool "Spoof suspicious kstat"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_UNAME
+	bool "Spoof uname"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_ENABLE_LOG
+	bool "Enable SUSFS kernel logging"
+	depends on KSU_SUSFS
+	default n
+
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "Hide KSU and SUSFS symbols from kallsyms"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	bool "Spoof /proc/cmdline"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_OPEN_REDIRECT
+	bool "Redirect selected open paths"
+	depends on KSU_SUSFS
+	default y
+
+endmenu
+
 endmenu

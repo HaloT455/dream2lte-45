@@ -37,6 +37,9 @@
 #include <linux/hash.h>
 #include <linux/init_task.h>
 #include <asm/uaccess.h>
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+#include <linux/susfs_def.h>
+#endif
 
 #include "internal.h"
 #include "mount.h"
@@ -1648,6 +1651,12 @@ static int lookup_fast(struct nameidata *nd,
 		 */
 		*inode = d_backing_inode(dentry);
 		negative = d_is_negative(dentry);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		if (*inode && unlikely((*inode)->i_state & INODE_STATE_SUS_PATH) &&
+		    likely(current->susfs_task_state &
+			   TASK_STRUCT_NON_ROOT_USER_APP_PROC))
+			return -ENOENT;
+#endif
 		if (read_seqcount_retry(&dentry->d_seq, seq))
 			return -ECHILD;
 
@@ -1706,6 +1715,15 @@ unlazy:
 		dput(dentry);
 		return -ENOENT;
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (dentry->d_inode &&
+	    unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) &&
+	    likely(current->susfs_task_state &
+		   TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		dput(dentry);
+		return -ENOENT;
+	}
+#endif
 	path->mnt = mnt;
 	path->dentry = dentry;
 	err = follow_managed(path, nd);
@@ -2854,6 +2872,13 @@ static int may_open(struct path *path, int acc_mode, int flag)
 	if (!inode)
 		return -ENOENT;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (unlikely(inode->i_state & INODE_STATE_SUS_PATH) &&
+	    likely(current->susfs_task_state &
+		   TASK_STRUCT_NON_ROOT_USER_APP_PROC))
+		return -ENOENT;
+#endif
+
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFLNK:
 		return -ELOOP;
@@ -3126,8 +3151,17 @@ static int lookup_open(struct nameidata *nd, struct path *path,
 		return PTR_ERR(dentry);
 
 	/* Cached positive dentry: will open in f_op->open */
-	if (!need_lookup && dentry->d_inode)
+	if (!need_lookup && dentry->d_inode) {
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		if (unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) &&
+		    likely(current->susfs_task_state &
+			   TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			dput(dentry);
+			return -ENOENT;
+		}
+#endif
 		goto out_no_open;
+	}
 
 	if ((nd->flags & LOOKUP_OPEN) && dir_inode->i_op->atomic_open) {
 		return atomic_open(nd, dentry, path, file, op, got_write,
@@ -3140,6 +3174,15 @@ static int lookup_open(struct nameidata *nd, struct path *path,
 		dentry = lookup_real(dir_inode, dentry, nd->flags);
 		if (IS_ERR(dentry))
 			return PTR_ERR(dentry);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		if (dentry->d_inode &&
+		    unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) &&
+		    likely(current->susfs_task_state &
+			   TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			dput(dentry);
+			return -ENOENT;
+		}
+#endif
 	}
 
 	/* Negative dentry, just create the file */
@@ -3525,12 +3568,19 @@ out2:
 	return file;
 }
 
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+extern struct filename *susfs_get_redirected_path(unsigned long ino);
+#endif
+
 struct file *do_filp_open(int dfd, struct filename *pathname,
 		const struct open_flags *op)
 {
 	struct nameidata nd;
 	int flags = op->lookup_flags;
 	struct file *filp;
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	struct filename *redirected;
+#endif
 
 	set_nameidata(&nd, dfd, pathname);
 	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
@@ -3538,6 +3588,27 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 		filp = path_openat(&nd, op, flags);
 	if (unlikely(filp == ERR_PTR(-ESTALE)))
 		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	if (!IS_ERR(filp) && file_inode(filp) &&
+	    unlikely(file_inode(filp)->i_state & INODE_STATE_OPEN_REDIRECT) &&
+	    current_uid().val < 2000) {
+		redirected = susfs_get_redirected_path(file_inode(filp)->i_ino);
+		if (!IS_ERR(redirected)) {
+			restore_nameidata();
+			filp_close(filp, NULL);
+			set_nameidata(&nd, dfd, redirected);
+			filp = path_openat(&nd, op, flags | LOOKUP_RCU);
+			if (unlikely(filp == ERR_PTR(-ECHILD)))
+				filp = path_openat(&nd, op, flags);
+			if (unlikely(filp == ERR_PTR(-ESTALE)))
+				filp = path_openat(&nd, op,
+						   flags | LOOKUP_REVAL);
+			restore_nameidata();
+			putname(redirected);
+			return filp;
+		}
+	}
+#endif
 	restore_nameidata();
 	return filp;
 }

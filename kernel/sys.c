@@ -1347,6 +1347,9 @@ static int override_release(char __user *release, size_t len)
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	extern void susfs_spoof_uname(struct new_utsname *tmp);
+#endif
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
@@ -1359,6 +1362,9 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 				 current->comm, current->pid, tmp.release);
 		}
 	}
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	susfs_spoof_uname(&tmp);
+#endif
 	up_read(&uts_sem);
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
@@ -2436,6 +2442,12 @@ int __weak arch_prctl_spec_ctrl_set(struct task_struct *t, unsigned long which,
 	return -EINVAL;
 }
 
+#ifdef CONFIG_KSU_SUSFS
+#define KSU_SUSFS_PRCTL_OPTION 0xDEADBEEF
+extern long ksu_handle_susfs_prctl(unsigned long cmd, unsigned long arg3,
+				    unsigned long arg5);
+#endif
+
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
@@ -2443,6 +2455,11 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	struct task_struct *tsk;
 	unsigned char comm[sizeof(me->comm)];
 	long error;
+
+#ifdef CONFIG_KSU_SUSFS
+	if ((unsigned int)option == KSU_SUSFS_PRCTL_OPTION)
+		return ksu_handle_susfs_prctl(arg2, arg3, arg5);
+#endif
 
 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
 	if (error != -ENOSYS)

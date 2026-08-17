@@ -38,6 +38,7 @@ kernelsu-objs += sulog/fd.o
 kernelsu-objs += supercall/dispatch.o
 kernelsu-objs += supercall/perm.o
 kernelsu-objs += supercall/supercall.o
+kernelsu-$(CONFIG_KSU_SUSFS) += susfs_adapter.o
 
 kernelsu-objs += feature/adb_root.o
 kernelsu-objs += feature/selinux_hide.o

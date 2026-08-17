@@ -26,6 +26,9 @@
 #include "hook_manager.h"
 #include "feature/kernel_umount.h"
 #include "compat/kernel_compat.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 
 extern void disable_seccomp(struct task_struct *tsk);
 
@@ -42,6 +45,15 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
     uid_t old_uid = current_uid().val;
 
     pr_debug("handle_setresuid from %d to %d\n", old_uid, new_uid);
+
+#ifdef CONFIG_KSU_SUSFS
+	/* Mark only non-root Android app processes for SUSFS VFS filtering. */
+	if ((is_appuid(new_uid) || is_isolated_process(new_uid)) &&
+	    !ksu_is_allow_uid_for_current(new_uid))
+		current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+	else
+		current->susfs_task_state &= ~TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+#endif
 
     if (unlikely(is_uid_manager(new_uid))) {
 
