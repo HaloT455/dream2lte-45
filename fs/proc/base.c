@@ -96,10 +96,6 @@
 
 #include "../../lib/kstrtox.h"
 
-#ifdef CONFIG_PAGE_BOOST
-#include <linux/delayacct.h>
-#endif
-
 /* NOTE:
  *	Implementing inode permission operations in /proc is almost
  *	certainly an error.  Permission checks need to happen during
@@ -514,57 +510,6 @@ static int proc_pid_stack(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif
 
-#ifdef CONFIG_PAGE_BOOST
-static int proc_pid_ioinfo(struct seq_file *m, struct pid_namespace *ns,
-			      struct pid *pid, struct task_struct *task)
-{
-	struct task_io_accounting acct = task->ioac;
-	unsigned long flags;
-	int result;
-
-	result = mutex_lock_killable(&task->signal->cred_guard_mutex);
-	if (result)
-		return result;
-
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS)) {
-		result = -EACCES;
-		goto out_unlock;
-	}
-
-	if (lock_task_sighand(task, &flags)) {
-		struct task_struct *t = task;
-
-		task_io_accounting_add(&acct, &task->signal->ioac);
-		while_each_thread(task, t)
-			task_io_accounting_add(&acct, &t->ioac);
-
-		unlock_task_sighand(task, &flags);
-	}
-
-	seq_printf(m,
-		   "%llu\n"
-		   "%llu\n"
-		   "%llu\n",
-#ifdef CONFIG_TASK_XACCT
-		   (unsigned long long)acct.rchar,
-#else
-		   (unsigned long long)0,
-#endif
-#ifdef CONFIG_TASK_IO_ACCOUNTING
-		   (unsigned long long)acct.read_bytes,
-#else
- 		   (unsigned long long)0,                 
-#endif
-		   (unsigned long long)delayacct_blkio_nsecs(task));
-
-	result = 0;
-
-out_unlock:
-	mutex_unlock(&task->signal->cred_guard_mutex);
-	return result;
-}
-#endif
-
 #ifdef CONFIG_SCHED_INFO
 /*
  * Provides /proc/PID/schedstat
@@ -647,7 +592,7 @@ static const struct file_operations proc_lstats_operations = {
 static int proc_oom_score(struct seq_file *m, struct pid_namespace *ns,
 			  struct pid *pid, struct task_struct *task)
 {
-	unsigned long totalpages = totalram_pages() + total_swap_pages;
+	unsigned long totalpages = totalram_pages + total_swap_pages;
 	unsigned long points = 0;
 
 	read_lock(&tasklist_lock);
@@ -943,7 +888,7 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 		flags |= FOLL_WRITE;
 
 	while (count > 0) {
-		size_t this_len = min_t(size_t, count, PAGE_SIZE);
+		int this_len = min_t(int, count, PAGE_SIZE);
 
 		if (write && copy_from_user(page, buf, this_len)) {
 			copied = -EFAULT;
@@ -2413,7 +2358,7 @@ static int timerslack_ns_show(struct seq_file *m, void *v)
 	}
 
 	task_lock(p);
-	seq_printf(m, "%lui\n", p->timer_slack_ns);
+	seq_printf(m, "%llu\n", p->timer_slack_ns);
 	task_unlock(p);
 
 out:
@@ -2526,13 +2471,6 @@ out:
 }
 
 #ifdef CONFIG_SECURITY
-static int proc_pid_attr_open(struct inode *inode, struct file *file)
-{
-	file->private_data = NULL;
-	__mem_open(inode, file, PTRACE_MODE_READ_FSCREDS);
-	return 0;
-}
-
 static ssize_t proc_pid_attr_read(struct file * file, char __user * buf,
 				  size_t count, loff_t *ppos)
 {
@@ -2561,10 +2499,6 @@ static ssize_t proc_pid_attr_write(struct file * file, const char __user * buf,
 	char *page;
 	ssize_t length;
 	struct task_struct *task = get_proc_task(inode);
-
-	/* A task may only write when it was the opener. */
-	if (file->private_data != current->mm)
-		return -EPERM;
 
 	length = -ESRCH;
 	if (!task)
@@ -2604,11 +2538,9 @@ out_no_task:
 }
 
 static const struct file_operations proc_pid_attr_operations = {
-	.open		= proc_pid_attr_open,
 	.read		= proc_pid_attr_read,
 	.write		= proc_pid_attr_write,
 	.llseek		= generic_file_llseek,
-	.release	= mem_release,
 };
 
 static const struct pid_entry attr_dir_stuff[] = {
@@ -2960,15 +2892,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("cmdline",    S_IRUGO, proc_pid_cmdline_ops),
 	ONE("stat",       S_IRUGO, proc_tgid_stat),
 	ONE("statm",      S_IRUGO, proc_pid_statm),
-	ONE("statlmkd",      S_IRUGO, proc_pid_statlmkd),
 	REG("maps",       S_IRUGO, proc_pid_maps_operations),
-#ifdef CONFIG_PAGE_BOOST
-	REG("filemap_list",       S_IRUGO, proc_pid_filemap_list_operations),
-	ONE("ioinfo",  S_IRUGO, proc_pid_ioinfo),
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	REG("io_record_control",      S_IRUGO|S_IWUGO, proc_pid_io_record_operations),
-#endif
-#endif
 #ifdef CONFIG_NUMA
 	REG("numa_maps",  S_IRUGO, proc_pid_numa_maps_operations),
 #endif
@@ -3052,7 +2976,7 @@ static const struct file_operations proc_tgid_base_operations = {
 struct pid *tgid_pidfd_to_pid(const struct file *file)
 {
 	if (!d_is_dir(file->f_path.dentry) ||
-	    (file->f_op != &proc_tgid_base_operations))
+	    file->f_op != &proc_tgid_base_operations)
 		return ERR_PTR(-EBADF);
 
 	return proc_pid(file_inode(file));
@@ -3367,7 +3291,6 @@ static const struct pid_entry tid_base_stuff[] = {
 	REG("cmdline",   S_IRUGO, proc_pid_cmdline_ops),
 	ONE("stat",      S_IRUGO, proc_tid_stat),
 	ONE("statm",     S_IRUGO, proc_pid_statm),
-	ONE("statlmkd",      S_IRUGO, proc_pid_statlmkd),
 	REG("maps",      S_IRUGO, proc_tid_maps_operations),
 #ifdef CONFIG_PROC_CHILDREN
 	REG("children",  S_IRUGO, proc_tid_children_operations),

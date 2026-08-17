@@ -159,21 +159,6 @@
 		#address-cells = <2>;
 		#size-cells = <0>;
 
-		hmp {
-			up_threshold = <524>;
-			down_threshold = <214>;
-			semiboost_up_threshold = <254>;
-			semiboost_down_threshold = <163>;
-			bootboost-duration-us = <40000000>;
-			down_compensation_timeout = <30>;               /* ms */
-			down_compensation_high_freq = <1248000>;        /* min qos lock for little cpu */
-			down_compensation_mid_freq = <1053000>;          /* min qos lock for little cpu */
-			down_compensation_low_freq = <832000>;          /* min qos lock for little cpu */
-			hmp_up_compst_ratio = <512>;
-			hmp_down_compst_ratio = <2048>;
-			little-id = <1>;
-		};
-
 		auto_cpu_mapping {
 			enabled = <1>;
 		};
@@ -185,6 +170,7 @@
 			logical-id = <0>;
 			enable-method = "psci";
 			cpu-idle-states = <&BOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 			#cooling-cells = <2>; /* min followed by max */
 			current = <60240 40410 27260 20180 16850 13710 10710 8290 6060>;
 		};
@@ -195,6 +181,7 @@
 			logical-id = <1>;
 			enable-method = "psci";
 			cpu-idle-states = <&BOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 			current = <60240 40410 27260 20180 16850 13710 10710 8290 6060>;
 		};
 		cpu@102 {
@@ -204,6 +191,7 @@
 			logical-id = <2>;
 			enable-method = "psci";
 			cpu-idle-states = <&BOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 			current = <60240 40410 27260 20180 16850 13710 10710 8290 6060>;
 		};
 		cpu@103 {
@@ -213,6 +201,7 @@
 			logical-id = <3>;
 			enable-method = "psci";
 			cpu-idle-states = <&BOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_1 &CLUSTER_COST_1>;
 			current = <60240 40410 27260 20180 16850 13710 10710 8290 6060>;
 		};
 		cpu4: cpu@0 {
@@ -222,6 +211,7 @@
 			logical-id = <4>;
 			enable-method = "psci";
 			cpu-idle-states = <&NONBOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 			#cooling-cells = <2>; /* min followed by max */
 			current = <355850 295970 251060 233620 201350 177320 137850 111850 100000 88090 78470 69380 58880>;
 		};
@@ -232,6 +222,7 @@
 			logical-id = <5>;
 			enable-method = "psci";
 			cpu-idle-states = <&NONBOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 			current = <355850 295970 251060 233620 201350 177320 137850 111850 100000 88090 78470 69380 58880>;
 		};
 		cpu@2 {
@@ -241,6 +232,7 @@
 			logical-id = <6>;
 			enable-method = "psci";
 			cpu-idle-states = <&NONBOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 			current = <355850 295970 251060 233620 201350 177320 137850 111850 100000 88090 78470 69380 58880>;
 		};
 		cpu@3 {
@@ -250,6 +242,7 @@
 			logical-id = <7>;
 			enable-method = "psci";
 			cpu-idle-states = <&NONBOOTCL_CPU_SLEEP>;
+			sched-energy-costs = <&CPU_COST_0 &CLUSTER_COST_0>;
 			current = <355850 295970 251060 233620 201350 177320 137850 111850 100000 88090 78470 69380 58880>;
 		};
 
@@ -274,6 +267,88 @@
 				exit-latency-us = <75>;
 				min-residency-us = <2000>;
 				status = "okay";
+			};
+		};
+		energy-costs {
+			CPU_COST_0: core-core0{
+				busy-cost-data = <
+					328     152
+					380	172
+					426	192
+					472	216
+					518	240
+					559	277
+					651	377
+					754	543
+					800	624
+					858	765
+					886	841
+					955	1148
+					1024	1469
+				>;
+				idle-cost-data = <
+					10
+					0
+					0
+				>;
+			};
+			CPU_COST_1: core-core1{
+				busy-cost-data = <
+					83	26
+					108	33
+					129	35
+					151	43
+					171	53
+					190	64
+					225	79
+					263	102
+					305	139
+				>;
+				idle-cost-data = <
+					1
+					0
+					0
+				>;
+			};
+			CLUSTER_COST_0: cluster-core0{
+				busy-cost-data = <
+					328     35
+					380     38
+					426     39
+					472     43
+					518     45
+					559     50
+					651     62
+					754     78
+					800     87
+					858     101
+					886     114
+					955     149
+					1024    174
+				>;
+				idle-cost-data = <
+					50
+					50
+					0
+				>;
+			};
+			CLUSTER_COST_1: cluster-core1{
+			busy-cost-data = <
+					83      18
+					108     21
+					129     23
+					151     24
+					171     29
+					190	31
+					225	35
+					263	41
+					305	49
+				>;
+				idle-cost-data = <
+					7
+					7
+					0
+				>;
 			};
 		};
 	};
@@ -445,21 +520,6 @@
 				       <0x0>, 	     <0x0>, 	   <0x0>,        <0x0>;
 				reg-offset = <0x644>;
 			};
-		};
-	};
-
-	schedtune {
-		domain@0 {
-			device_type = "schedtune-freqvar";
-			shared-cpus = "0-3";
-			/* this table works like target_load of interactive parameter */
-			table = < 100 598000 60 715000 30 832000 20 949000 10 1053000 0 >;
-		};
-		domain@1 {
-			device_type = "schedtune-freqvar";
-			shared-cpus = "4-7";
-			/* this table works like target_load of interactive parameter */
-			table = < 20 858000 15 962000 5 1261000 0 >;
 		};
 	};
 
@@ -4856,7 +4916,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head */
 			input_booster,cpu_freqs = <1066000>;
-			input_booster,hmp_boost = <1>;
 			input_booster,kfc_freqs = <0>;
 			input_booster,mif_freqs = <0>;
 			input_booster,int_freqs = <0>;
@@ -4875,7 +4934,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head */
 			input_booster,cpu_freqs = <1066000>;
-			input_booster,hmp_boost = <1>;
 			input_booster,kfc_freqs = <0>;
 			input_booster,mif_freqs = <0>;
 			input_booster,int_freqs = <0>;
@@ -4894,7 +4952,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head, 2_Head, 2_Tail */
 			input_booster,cpu_freqs = <1066000 1066000 858000>;
-			input_booster,hmp_boost = <1 1 1>;
 			input_booster,kfc_freqs = <832000 832000 832000>;
 			input_booster,mif_freqs = <0 0 0>;
 			input_booster,int_freqs = <0 0 0>;
@@ -4913,7 +4970,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1066000 858000>;
-			input_booster,hmp_boost = <1 1>;
 			input_booster,kfc_freqs = <832000 832000>;
 			input_booster,mif_freqs = <0 0>;
 			input_booster,int_freqs = <0 0>;
@@ -4932,7 +4988,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1066000 1066000>;
-			input_booster,hmp_boost = <1 1>;
 			input_booster,kfc_freqs = <832000 832000>;
 			input_booster,mif_freqs = <0 0>;
 			input_booster,int_freqs = <0 0>;
@@ -4951,7 +5006,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1066000 858000>;
-			input_booster,hmp_boost = <1 1>;
 			input_booster,kfc_freqs = <832000 832000>;
 			input_booster,mif_freqs = <0 0>;
 			input_booster,int_freqs = <0 0>;
@@ -4970,7 +5024,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1066000 0>;
-			input_booster,hmp_boost = <1 0>;
 			input_booster,kfc_freqs = <832000 0>;
 			input_booster,mif_freqs = <0 0>;
 			input_booster,int_freqs = <0 0>;
@@ -4989,7 +5042,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1066000 858000>;
-			input_booster,hmp_boost = <1 1>;
 			input_booster,kfc_freqs = <832000 832000>;
 			input_booster,mif_freqs = <0 0>;
 			input_booster,int_freqs = <0 0>;
@@ -5008,7 +5060,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head 2_Tail*/
 			input_booster,cpu_freqs = <1469000 858000>;
-			input_booster,hmp_boost = <1 1>;
 			input_booster,kfc_freqs = <832000 832000>;
 			input_booster,bimc_freqs = <0 0>;
 
@@ -5025,7 +5076,6 @@
 			/* Frequency table */
 			/* for level	:	1_Head */
 			input_booster,cpu_freqs = <1469000>;
-			input_booster,hmp_boost = <1>;
 			input_booster,kfc_freqs = <0>;
 			input_booster,mif_freqs = <0>;
 			input_booster,int_freqs = <0>;

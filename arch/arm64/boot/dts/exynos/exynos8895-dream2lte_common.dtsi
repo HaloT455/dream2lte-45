@@ -18,10 +18,10 @@
 	model = "Samsung UNIVERSAL8895 board based on EXYNOS8895";
 	compatible = "samsung,exynos8895", "samsung,UNIVERSAL8895";
 
-	/* Keep dream2lte CPU domains aligned with the recovered stock DT. */
+	/* Use the firmware-backed 2002 MHz A53 OPP; keep M2 and GPU stock. */
 	cpufreq {
 		domain@0 {
-			max-freq = <1794000>;
+			max-freq = <2002000>;
 		};
 
 		domain@1 {
@@ -3224,8 +3224,8 @@
 				cl0 {
 					qos,label="LIT";
 					qos,delay_time=<9>;
-					qos,table_size=<10>;
-					qos,table=<1794000 1690000 1456000 1248000 1053000 949000 832000 715000 598000 455000>;
+					qos,table_size=<12>;
+					qos,table=<2002000 1898000 1794000 1690000 1456000 1248000 1053000 949000 832000 715000 598000 455000>;
 				};
 
 				cl1 {
