@@ -6872,7 +6872,9 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 	rcu_read_unlock();
 
 #ifdef CONFIG_SCHED_HMP
-	if (hmp_family_boost(p) && p->parent && p->parent->pid > 2) {
+	if (hmp_family_boost(p) &&
+		p->se.avg.hmp_load_avg >= hmp_up_threshold &&
+		p->parent && p->parent->pid > 2) {
 		int lowest_ratio = 0;
 		thread_pid = hmp_is_family_in_fastest_domain(p->group_leader);
 		if (thread_pid) {
@@ -9858,15 +9860,14 @@ static unsigned int hmp_up_migration(int cpu, int *target_cpu, struct sched_enti
 	if (hmp_cpu_is_fastest(cpu))
 		return 0;
 
-	if (!hmp_boost()) {
-		if (hmp_semiboost())
-			up_threshold = hmp_semiboost_up_threshold;
-		else
-			up_threshold = hmp_up_threshold;
+	if (hmp_semiboost())
+		up_threshold = hmp_semiboost_up_threshold;
+	else
+		up_threshold = hmp_up_threshold;
 
-		if (se->avg.hmp_load_avg < up_threshold)
-			return 0;
-	}
+	/* Boost requests must not bypass the A53-first load threshold. */
+	if (se->avg.hmp_load_avg < up_threshold)
+		return 0;
 
 	/* Let the task load settle before doing another up migration */
 	/* hack - always use clock from first online CPU */
@@ -9918,15 +9919,10 @@ static unsigned int hmp_down_migration(int cpu, struct sched_entity *se)
 					< hmp_next_down_threshold)
 		return 0;
 
-	if (hmp_aggressive_up_migration) {
-		if (hmp_boost())
-			return 0;
-	} else {
+	if (!hmp_aggressive_up_migration) {
 		if (hmp_domain_min_load(hmp_cpu_domain(cpu), NULL, NULL)) {
 			if (hmp_active_down_migration)
 				return 1;
-		} else if (hmp_boost()) {
-			return 0;
 		}
 	}
 
@@ -10403,7 +10399,7 @@ static unsigned int hmp_idle_pull(int this_cpu)
 		else
 			up_threshold = hmp_up_threshold;
 
-		if (hmp_boost() || curr->avg.hmp_load_avg > up_threshold)
+		if (curr->avg.hmp_load_avg >= up_threshold)
 			if (curr->avg.hmp_load_avg > ratio) {
 				if (p)
 					put_task_struct(p);
@@ -11460,5 +11456,3 @@ static int __init hmp_tbsoftlanding_init(void)
 }
 late_initcall(hmp_tbsoftlanding_init);
 #endif	/* CONFIG_SCHED_HMP_TASK_BASED_SOFTLANDING */
-
-
