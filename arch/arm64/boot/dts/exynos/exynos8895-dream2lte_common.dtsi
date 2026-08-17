@@ -18,14 +18,17 @@
 	model = "Samsung UNIVERSAL8895 board based on EXYNOS8895";
 	compatible = "samsung,exynos8895", "samsung,UNIVERSAL8895";
 
-	/* Use the firmware-backed 2002 MHz A53 OPP; keep M2 and GPU stock. */
+	/*
+	 * Use firmware-backed CPU OPPs: 2002 MHz for A53 and 2704 MHz for
+	 * Mongoose M2.  GPU limits remain stock.
+	 */
 	cpufreq {
 		domain@0 {
 			max-freq = <2002000>;
 		};
 
 		domain@1 {
-			max-freq = <2574000>;
+			max-freq = <2704000>;
 		};
 	};
 
