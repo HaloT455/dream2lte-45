@@ -18,6 +18,17 @@
 	model = "Samsung UNIVERSAL8895 board based on EXYNOS8895";
 	compatible = "samsung,exynos8895", "samsung,UNIVERSAL8895";
 
+	/* Keep dream2lte CPU domains aligned with the recovered stock DT. */
+	cpufreq {
+		domain@0 {
+			max-freq = <1794000>;
+		};
+
+		domain@1 {
+			max-freq = <2574000>;
+		};
+	};
+
 	ect {
 		parameter_address = <0xA0000000>;
 		parameter_size = <0x19000>;
@@ -995,7 +1006,9 @@
 			stm,pat_function = <2>;
 			stm,project_name = "Dream2", "G955";
 			stm,firmware_name = "tsp_stm/fts8cd56_dream2_old.fw", "tsp_stm/fts8cd56_dream2_old.fw";
+			stm,enable_settings_aot;
 			support_dex_mode;
+			enable_settings_aot;
 		};
 	};
 
@@ -3211,15 +3224,15 @@
 				cl0 {
 					qos,label="LIT";
 					qos,delay_time=<9>;
-					qos,table_size=<9>;
-					qos,table=<1690000 1456000 1248000 1053000 949000 832000 715000 598000 455000>;
+					qos,table_size=<10>;
+					qos,table=<1794000 1690000 1456000 1248000 1053000 949000 832000 715000 598000 455000>;
 				};
 
 				cl1 {
 					qos,label="BIG";
 					qos,delay_time=<8>;
-					qos,table_size=<14>;
-					qos,table=<2496000 2314000 2158000 2002000 1937000 1807000 1703000 1469000 1261000
+					qos,table_size=<15>;
+					qos,table=<2574000 2496000 2314000 2158000 2002000 1937000 1807000 1703000 1469000 1261000
 						1170000 1066000 962000 858000 741000>;
 				};
 
