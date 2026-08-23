@@ -1,0 +1,71 @@
+name: Build Dream2LTE Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/ems-v2-experimental
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            python3 \
+            wget \
+            tar
+
+      - name: Setup Python
+        run: |
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Download GCC 4.9
+        run: |
+          mkdir -p "$HOME/tools"
+          wget -O "$HOME/tools/gcc.tar.gz" \
+            https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/aarch64-linux-android-4.9.tar.gz
+          tar -xzf "$HOME/tools/gcc.tar.gz" -C "$HOME/tools"
+
+      - name: Setup toolchain
+        run: |
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-" >> "$GITHUB_ENV"
+
+      - name: Check GCC
+        run: |
+          ${CROSS_COMPILE}gcc --version
+
+      - name: Configure kernel
+        run: |
+          make exynos8895-dream2lte_defconfig
+          grep CONFIG_ALWAYS_PERMISSIVE .config
+
+      - name: Build kernel
+        run: |
+          make -j"$(nproc)"
+
+      - name: Package kernel
+        run: |
+          mkdir -p output
+          cp -v arch/arm64/boot/Image* output/ || true
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-kernel
+          path: output/
