@@ -127,10 +127,14 @@ static enum hrtimer_restart hard_reset_hook_callback(struct hrtimer *hrtimer)
 		return HRTIMER_NORESTART;
 	}
 
-	pr_err("Hard Reset\n");
-	hard_reset_occurred = true;
-	BUG();
-	return HRTIMER_RESTART;
+	/*
+	 * The PMIC owns the actual seven-second hard reset.  Calling BUG() one
+	 * second earlier turns a normal Power + Volume Down recovery gesture into
+	 * a kernel panic and leaves a misleading ramoops record.  Let the PMIC
+	 * complete the reset without deliberately crashing the kernel.
+	 */
+	pr_err("Hard Reset keys held; waiting for PMIC reset\n");
+	return HRTIMER_NORESTART;
 }
 
 static int load_gpio_key_info(void)
