@@ -28,23 +28,28 @@ jobs:
             libelf-dev \
             python3 \
             wget \
-            tar
+            tar \
+            xz-utils
 
       - name: Setup Python
         run: |
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
-      - name: Download GCC 4.9
+      - name: Download GCC 14.2
         run: |
           mkdir -p "$HOME/tools"
-          wget -O "$HOME/tools/gcc.tar.gz" \
-            https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/aarch64-linux-android-4.9.tar.gz
-          tar -xzf "$HOME/tools/gcc.tar.gz" -C "$HOME/tools"
+          wget -O "$HOME/tools/gcc.tar.xz" \
+            https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
 
       - name: Setup toolchain
         run: |
           echo "ARCH=arm64" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE=$HOME/tools/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=codex-v7-1" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Mon Aug 24 23:40:00 +07 2026" >> "$GITHUB_ENV"
 
       - name: Check GCC
         run: |
@@ -52,24 +57,24 @@ jobs:
 
       - name: Configure kernel
         run: |
-          make exynos8895-dream2lte_defconfig
-          grep -q '^CONFIG_KSU=y$' .config
-          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' .config
-          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' .config
-          grep -q '^CONFIG_EROFS_FS=y$' .config
-          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' .config
+          make O=out exynos8895-dream2lte_defconfig
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' out/.config
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' out/.config
+          grep -q '^CONFIG_EROFS_FS=y$' out/.config
+          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' out/.config
 
       - name: Build kernel
         run: |
-          make -j"$(nproc)" Image dtb.img
+          make O=out -j"$(nproc)" Image dtb.img
 
       - name: Package kernel
         run: |
           mkdir -p output
-          cp -v arch/arm64/boot/Image output/
-          cp -v arch/arm64/boot/dtb.img output/
-          cp -v System.map output/
-          cp -v .config output/kernel.config
+          cp -v out/arch/arm64/boot/Image output/
+          cp -v out/arch/arm64/boot/dtb.img output/
+          cp -v out/System.map output/
+          cp -v out/.config output/kernel.config
           sha256sum output/* > output/SHA256SUMS
 
       - name: Upload kernel
