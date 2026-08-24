@@ -53,19 +53,28 @@ jobs:
       - name: Configure kernel
         run: |
           make exynos8895-dream2lte_defconfig
-          grep CONFIG_ALWAYS_PERMISSIVE .config
+          grep -q '^CONFIG_KSU=y$' .config
+          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' .config
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' .config
+          grep -q '^CONFIG_EROFS_FS=y$' .config
+          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' .config
 
       - name: Build kernel
         run: |
-          make -j"$(nproc)"
+          make -j"$(nproc)" Image dtb.img
 
       - name: Package kernel
         run: |
           mkdir -p output
-          cp -v arch/arm64/boot/Image* output/ || true
+          cp -v arch/arm64/boot/Image output/
+          cp -v arch/arm64/boot/dtb.img output/
+          cp -v System.map output/
+          cp -v .config output/kernel.config
+          sha256sum output/* > output/SHA256SUMS
 
       - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-kernel
+          name: dream2lte-s8plus-kernel-${{ github.sha }}
           path: output/
+          if-no-files-found: error

@@ -1,8 +1,6 @@
 #ifndef __KSU_UAPI_SELINUX_H
 #define __KSU_UAPI_SELINUX_H
 
-#include <linux/types.h>
-
 #define KSU_SEPOLICY_CMD_NORMAL_PERM 1
 #define KSU_SEPOLICY_CMD_XPERM 2
 #define KSU_SEPOLICY_CMD_TYPE_STATE 3
