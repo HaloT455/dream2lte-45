@@ -90,7 +90,9 @@ void on_boot_completed(void)
 	ksu_boot_completed = true;
 	pr_info("on_boot_completed!\n");
 	track_throne(true);
+#ifdef CONFIG_KSU_STRIP_READPROC_GID
 	ksu_unhook_setgroups();
+#endif
 }
 
 static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);
@@ -741,4 +743,3 @@ void __init ksu_ksud_init()
 {
 	vol_detector_init();
 }
-

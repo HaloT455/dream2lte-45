@@ -70,6 +70,16 @@ config KSU_FEATURE_ADBROOT
 	help
 	  Build KernelSU's adb root feature.
 
+config KSU_STRIP_READPROC_GID
+	bool "Strip Android AID_READPROC (3009) from supplementary groups"
+	depends on KSU
+	default n
+	help
+	  Enable the downstream setgroups hook that removes Android's READPROC
+	  group from processes other than adbd. Keep this disabled on Android
+	  systems that use userspace lmkd: lmkd requires GID 3009 and exits
+	  during early boot when the group is removed.
+
 config KSU_ENABLE_FULL_UID_CHECKS
 	bool "perform full uid checks (reduced performance)"
 	depends on KSU

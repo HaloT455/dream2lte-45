@@ -75,6 +75,7 @@ jobs:
           grep -q '^# CONFIG_KPROBES is not set$' "$OUT/.config"
           grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' "$OUT/.config"
           grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$OUT/.config"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
@@ -103,6 +104,7 @@ jobs:
         run: |
           OUT="out-${{ matrix.variant }}"
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
+          ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
 
       - name: Package ${{ matrix.variant }} output
         run: |
