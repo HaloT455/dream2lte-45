@@ -26,7 +26,8 @@ unsigned long boosted_cpu_util(int cpu);
 #define cpufreq_driver_fast_switch(x, y) 0
 #define cpufreq_enable_fast_switch(x)
 #define cpufreq_disable_fast_switch(x)
-#define LATENCY_MULTIPLIER			(1000)
+#define SUGOV_DEFAULT_UP_RATE_LIMIT_US		(5000)
+#define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US	(20000)
 #define SUGOV_KTHREAD_PRIORITY	50
 
 struct sugov_tunables {
@@ -700,15 +701,15 @@ static int sugov_init(struct cpufreq_policy *policy)
 		tunables->up_rate_limit_us = policy->up_transition_delay_us;
 		tunables->down_rate_limit_us = policy->down_transition_delay_us;
 	} else {
-		unsigned int lat;
-
-                tunables->up_rate_limit_us = LATENCY_MULTIPLIER;
-                tunables->down_rate_limit_us = LATENCY_MULTIPLIER;
-		lat = policy->cpuinfo.transition_latency / NSEC_PER_USEC;
-		if (lat) {
-                        tunables->up_rate_limit_us *= lat;
-                        tunables->down_rate_limit_us *= lat;
-                }
+		/*
+		 * Exynos8895 does not publish separate transition delays.  Scaling
+		 * the hardware latency by 1000 delayed both directions by about
+		 * 100 ms, which is visible as launch and scrolling stutter.  Raise
+		 * frequency quickly, then retain it a little longer to avoid ping-
+		 * pong transitions while keeping idle power low.
+		 */
+		tunables->up_rate_limit_us = SUGOV_DEFAULT_UP_RATE_LIMIT_US;
+		tunables->down_rate_limit_us = SUGOV_DEFAULT_DOWN_RATE_LIMIT_US;
 	}
 
 	policy->governor_data = sg_policy;

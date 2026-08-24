@@ -13,7 +13,7 @@
 
 // selinux_ops (LSM), security_operations struct tampering for ultra legacy
 
-static uintptr_t selinux_ops_addr = NULL;
+static uintptr_t selinux_ops_addr = 0x0;
 
 static int (*orig_setprocattr) (struct task_struct *p, char *name, void *value, size_t size) __read_mostly = NULL;
 static int hook_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
@@ -362,7 +362,7 @@ static int ksu_register_lsm_hook(void *data)
 	ops->bprm_check_security = hook_bprm_check_security;
 #endif
 
-#if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE)
+#if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE) && !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
 	orig_file_permission = ops->file_permission;
 	ops->file_permission = hook_file_permission;
 #endif

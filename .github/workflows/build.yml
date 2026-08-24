@@ -1,4 +1,4 @@
-name: Build clean Dream2LTE KSU 32567
+name: Build smooth Dream2LTE KSU 32590
 
 on:
   workflow_dispatch:
@@ -9,6 +9,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - enforcing
+          - permissive
 
     steps:
       - name: Checkout source
@@ -45,7 +51,7 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=clean-ksu32567" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-smooth" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Tue Aug 25 12:00:00 +07 2026" >> "$GITHUB_ENV"
 
@@ -53,43 +59,65 @@ jobs:
         run: |
           ${CROSS_COMPILE}gcc --version
 
-      - name: Configure and validate baseline
+      - name: Configure ${{ matrix.variant }} kernel
         run: |
-          make O=out exynos8895-dream2lte_defconfig
-          grep -q '^CONFIG_KSU=y$' out/.config
-          grep -q '^# CONFIG_KPROBES is not set$' out/.config
-          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' out/.config
-          grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' out/.config
-          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=y$' out/.config
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' out/.config
-          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' out/.config
-          grep -q '^CONFIG_EROFS_FS=y$' out/.config
-          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' out/.config
-          grep -q -- '-DKSU_VERSION=32567' drivers/kernelsu/Makefile
-          grep -q '^commit=7bd071c11f5a4d22729d73179d149493a6362a26$' drivers/kernelsu/UPSTREAM_COMMIT
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" exynos8895-dream2lte_defconfig
+          if [ "${{ matrix.variant }}" = enforcing ]; then
+            scripts/config --file "$OUT/.config" --disable ALWAYS_PERMISSIVE
+            make O="$OUT" olddefconfig
+          fi
+
+      - name: Validate configuration and integration
+        run: |
+          OUT="out-${{ matrix.variant }}"
+          grep -q '^CONFIG_KSU=y$' "$OUT/.config"
+          grep -q '^# CONFIG_KPROBES is not set$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' "$OUT/.config"
+          grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' "$OUT/.config"
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
+          grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
+          grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
+          grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
+          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
+          grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
+          grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
+          grep -q '^commit=e874376f71d80c6ee4163fafdc03e62412adbc49$' drivers/kernelsu/UPSTREAM_COMMIT
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
           ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
           grep -q 'ksu_task_fix_setuid' security/security.c
+          if [ "${{ matrix.variant }}" = enforcing ]; then
+            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
+          else
+            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
+          fi
 
-      - name: Build kernel
+      - name: Build ${{ matrix.variant }} kernel
         run: |
-          make O=out -j"$(nproc)" Image dtb.img
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img
 
       - name: Validate known-good DTB
         run: |
-          echo '2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  out/arch/arm64/boot/dtb.img' | sha256sum -c -
+          OUT="out-${{ matrix.variant }}"
+          echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
 
-      - name: Package output
+      - name: Package ${{ matrix.variant }} output
         run: |
-          mkdir -p output
-          cp -v out/arch/arm64/boot/Image output/
-          cp -v out/arch/arm64/boot/dtb.img output/
-          cp -v out/System.map output/
-          cp -v out/.config output/kernel.config
-          sha256sum output/* > output/SHA256SUMS
+          OUT="out-${{ matrix.variant }}"
+          DEST="output-${{ matrix.variant }}"
+          mkdir -p "$DEST"
+          cp -v "$OUT/arch/arm64/boot/Image" "$DEST/"
+          cp -v "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
+          cp -v "$OUT/System.map" "$DEST/"
+          cp -v "$OUT/.config" "$DEST/kernel.config"
+          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
 
-      - name: Upload kernel
+      - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-clean-ksu32567-${{ github.sha }}
-          path: output/
+          name: dream2lte-smooth-ksu32590-${{ matrix.variant }}-${{ github.sha }}
+          path: output-${{ matrix.variant }}/
           if-no-files-found: error

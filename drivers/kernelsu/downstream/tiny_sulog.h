@@ -35,7 +35,7 @@ static void tiny_sulog_init_heap()
 	if (!sulog_buf_ptr)
 		return;
 	
-	pr_info("sulog_init: allocated %lu bytes on 0x%p \n", SULOG_BUFSIZ, sulog_buf_ptr);
+	pr_info("sulog_init: allocated %lu bytes on 0x%lx \n", SULOG_BUFSIZ, (uintptr_t)sulog_buf_ptr);
 }
 
 /**
@@ -83,11 +83,7 @@ static noinline void write_sulog(uint8_t sym)
 
 	unsigned int offset = sulog_index_next * sizeof(struct sulog_entry);
 
-#ifdef CONFIG_64BIT
-	*(volatile uint64_t *)(sulog_buf_ptr + offset) = *(uint64_t *)&entry;
-#else
-	__builtin_memcpy(sulog_buf_ptr + offset, &entry, sizeof(entry));
-#endif
+	memcpy_inline(sulog_buf_ptr + offset, &entry, sizeof(entry));
 
 	// move ptr for next iteration
 	sulog_index_next = sulog_index_next + 1;
