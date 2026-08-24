@@ -1,4 +1,4 @@
-name: Build Dream2LTE Kernel
+name: Build clean Dream2LTE KSU 32567
 
 on:
   workflow_dispatch:
@@ -13,8 +13,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install dependencies
         run: |
@@ -31,7 +29,7 @@ jobs:
             tar \
             xz-utils
 
-      - name: Setup Python
+      - name: Configure Python
         run: |
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -42,33 +40,45 @@ jobs:
             https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
           tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
 
-      - name: Setup toolchain
+      - name: Configure toolchain
         run: |
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=codex-v7-1" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=clean-ksu32567" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_TIMESTAMP=Mon Aug 24 23:40:00 +07 2026" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Tue Aug 25 12:00:00 +07 2026" >> "$GITHUB_ENV"
 
-      - name: Check GCC
+      - name: Verify compiler
         run: |
           ${CROSS_COMPILE}gcc --version
 
-      - name: Configure kernel
+      - name: Configure and validate baseline
         run: |
           make O=out exynos8895-dream2lte_defconfig
           grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^# CONFIG_KPROBES is not set$' out/.config
           grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' out/.config
-          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' out/.config
+          grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' out/.config
+          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=y$' out/.config
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' out/.config
+          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' out/.config
           grep -q '^CONFIG_EROFS_FS=y$' out/.config
           grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' out/.config
+          grep -q -- '-DKSU_VERSION=32567' drivers/kernelsu/Makefile
+          grep -q '^commit=7bd071c11f5a4d22729d73179d149493a6362a26$' drivers/kernelsu/UPSTREAM_COMMIT
+          ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
+          grep -q 'ksu_task_fix_setuid' security/security.c
 
       - name: Build kernel
         run: |
           make O=out -j"$(nproc)" Image dtb.img
 
-      - name: Package kernel
+      - name: Validate known-good DTB
+        run: |
+          echo '2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  out/arch/arm64/boot/dtb.img' | sha256sum -c -
+
+      - name: Package output
         run: |
           mkdir -p output
           cp -v out/arch/arm64/boot/Image output/
@@ -80,6 +90,6 @@ jobs:
       - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-s8plus-kernel-${{ github.sha }}
+          name: dream2lte-clean-ksu32567-${{ github.sha }}
           path: output/
           if-no-files-found: error

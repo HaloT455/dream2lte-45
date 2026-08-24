@@ -116,8 +116,3 @@ all.config
 # fetched Android config fragments
 android/configs/android-*.cfg
 linux-upstream.sh
-
-# Local KernelSU fetch/build state (the source itself is tracked).
-/.kernelsu-fetch-lock
-/drivers/kernelsu/.check
-/drivers/kernelsu/.version
