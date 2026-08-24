@@ -706,6 +706,12 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	struct cred *new;
 	int retval;
 	kuid_t kruid, keuid, ksuid;
+
+#ifdef CONFIG_KSU
+	extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
+	ksu_handle_setresuid(ruid, euid, suid);
+#endif
+
 	kruid = make_kuid(ns, ruid);
 	keuid = make_kuid(ns, euid);
 	ksuid = make_kuid(ns, suid);
@@ -1348,7 +1354,7 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	    !strncmp(current->comm, "netbpfload", 10) ||
 	    !strncmp(current->comm, "netd", 4)) {
 		if (current_uid().val == 0) {
-			strcpy(tmp.release, "5.10.250");
+			strcpy(tmp.release, "5.4.3020");
 			pr_debug("fake uname: %s/%d release=%s\n",
 				 current->comm, current->pid, tmp.release);
 		}
