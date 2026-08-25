@@ -211,7 +211,9 @@ static int __init enforcing_setup(char *str)
 	unsigned long enforcing;
 	if (!kstrtoul(str, 0, &enforcing))
 // [ SEC_SELINUX_PORTING_COMMON
-#ifdef CONFIG_ALWAYS_ENFORCE
+#ifdef CONFIG_ALWAYS_PERMISSIVE
+		selinux_enforcing = 0;
+#elif defined(CONFIG_ALWAYS_ENFORCE)
 		selinux_enforcing = 1;
 #else
 		selinux_enforcing = enforcing ? 1 : 0;
@@ -7501,8 +7503,10 @@ static __init int selinux_init(void)
 	if (avc_add_callback(selinux_netcache_avc_callback, AVC_CALLBACK_RESET))
 		panic("SELinux: Unable to register AVC netcache callback\n");
 // [ SEC_SELINUX_PORTING_COMMON
-#ifdef CONFIG_ALWAYS_ENFORCE
-		selinux_enforcing = 1;
+#ifdef CONFIG_ALWAYS_PERMISSIVE
+	selinux_enforcing = 0;
+#elif defined(CONFIG_ALWAYS_ENFORCE)
+	selinux_enforcing = 1;
 #endif
 // ] SEC_SELINUX_PORTING_COMMON
 	if (selinux_enforcing)

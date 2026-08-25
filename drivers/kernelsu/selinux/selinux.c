@@ -63,6 +63,9 @@ void setup_ksu_cred(void)
 
 void setenforce(bool enforce)
 {
+#ifdef CONFIG_ALWAYS_PERMISSIVE
+	enforce = false;
+#endif
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 #ifdef KSU_COMPAT_USE_SELINUX_STATE
 	selinux_state.enforcing = enforce;

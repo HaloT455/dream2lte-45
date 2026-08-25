@@ -10,9 +10,12 @@ config SECURITY_SELINUX
 	  
 config ALWAYS_PERMISSIVE
 	bool "NSA SELinux Permissive"
+	depends on SECURITY_SELINUX
+	select SECURITY_SELINUX_DEVELOP
 	default n
 	help
-	  This forces the kernel to run in permissive mode.
+	  Force the kernel to remain in permissive mode even when Android init
+	  requests enforcing mode after loading policy.
 
 config SECURITY_SELINUX_BOOTPARAM
 	bool "NSA SELinux boot parameter"
@@ -136,4 +139,3 @@ config SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
 	  running 'checkpolicy -V'. Or look at what policy you have
 	  installed under /etc/selinux/$SELINUXTYPE/policy, where
 	  SELINUXTYPE is defined in your /etc/selinux/config.
-

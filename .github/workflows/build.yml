@@ -95,11 +95,12 @@ jobs:
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q -- '-DKSU_VERSION=32594' drivers/kernelsu/Makefile
           grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(1000)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
-          grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
+          grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
+          ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
           ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
           grep -q 'ksu_task_fix_setuid' security/security.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
@@ -108,6 +109,7 @@ jobs:
           else
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
+            grep -q 'new_value = 0;' security/selinux/selinuxfs.c
           fi
 
       - name: Build ${{ matrix.variant }} kernel
@@ -121,6 +123,11 @@ jobs:
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
           strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32594$'
           grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
+          if [ "${{ matrix.variant }}" = permissive ]; then
+            grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
+          else
+            ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
+          fi
 
       - name: Package ${{ matrix.variant }} output
         run: |
