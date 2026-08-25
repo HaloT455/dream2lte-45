@@ -91,6 +91,10 @@ void on_boot_completed(void)
 	pr_info("on_boot_completed!\n");
 	track_throne(true);
 
+#ifdef CONFIG_KSU_STRIP_READPROC_GID
+	ksu_unhook_setgroups();
+#endif
+
 #ifdef CONFIG_KSU_HOSTSREDIRECT
 	ksu_hostsredirect_init();
 #endif

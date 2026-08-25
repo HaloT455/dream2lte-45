@@ -70,6 +70,15 @@ config KSU_FEATURE_ADBROOT
 	help
 	  Build KernelSU's adb root feature.
 
+config KSU_STRIP_READPROC_GID
+	bool "Strip Android AID_READPROC (3009) from supplementary groups"
+	depends on KSU
+	default n
+	help
+	  Enable the downstream early-boot setgroups hook that removes Android's
+	  READPROC group from processes other than adbd. The hook is removed after
+	  Android reports boot completion so userspace services keep normal access.
+
 config KSU_HOSTSREDIRECT
 	bool "/system/etc/hosts redirection"
 	depends on KSU
