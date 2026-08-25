@@ -86,8 +86,10 @@ jobs:
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
           grep -q '^commit=e874376f71d80c6ee4163fafdc03e62412adbc49$' drivers/kernelsu/UPSTREAM_COMMIT
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(1000)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+          grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
+          ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
           ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
           grep -q 'ksu_task_fix_setuid' security/security.c
           if [ "${{ matrix.variant }}" = enforcing ]; then

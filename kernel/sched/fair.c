@@ -128,14 +128,12 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
 #endif
 
 /*
- * Keep CFS tasks on the energy-efficient LITTLE cluster while a CPU can
- * accept the projected load below 85% of its original capacity.  Schedutil
- * reaches the policy maximum at about 80%, so the LITTLE policy is already
- * at its top OPP before EAS starts spilling work onto the big cluster.
- *
- * 1024 / 0.85 = 1204.7, rounded up so the boundary is never above 85%.
+ * Use the standard EAS capacity headroom.  Keeping this aligned with
+ * schedutil's 1.25 tipping factor lets EAS select a suitable cluster and
+ * schedutil select its frequency from the same utilization signal, without
+ * an A53-first 85% spill gate.
  */
-unsigned int capacity_margin = 1205;
+unsigned int capacity_margin = 1280;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {

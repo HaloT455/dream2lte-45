@@ -26,7 +26,7 @@ unsigned long boosted_cpu_util(int cpu);
 #define cpufreq_driver_fast_switch(x, y) 0
 #define cpufreq_enable_fast_switch(x)
 #define cpufreq_disable_fast_switch(x)
-#define SUGOV_DEFAULT_UP_RATE_LIMIT_US		(5000)
+#define SUGOV_DEFAULT_UP_RATE_LIMIT_US		(1000)
 #define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US	(20000)
 #define SUGOV_KTHREAD_PRIORITY	50
 
@@ -704,9 +704,9 @@ static int sugov_init(struct cpufreq_policy *policy)
 		/*
 		 * Exynos8895 does not publish separate transition delays.  Scaling
 		 * the hardware latency by 1000 delayed both directions by about
-		 * 100 ms, which is visible as launch and scrolling stutter.  Raise
-		 * frequency quickly, then retain it a little longer to avoid ping-
-		 * pong transitions while keeping idle power low.
+		 * 100 ms, which is visible as launch and scrolling stutter.  Let
+		 * schedutil raise frequency within 1 ms, then retain it a little
+		 * longer to avoid ping-pong transitions while keeping idle power low.
 		 */
 		tunables->up_rate_limit_us = SUGOV_DEFAULT_UP_RATE_LIMIT_US;
 		tunables->down_rate_limit_us = SUGOV_DEFAULT_DOWN_RATE_LIMIT_US;
