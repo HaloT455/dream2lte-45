@@ -11,8 +11,8 @@ MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
-# compliant to last upstream kernel change as of 4a92049
-CFLAGS_ksu.o += -DKSU_VERSION=32590
+# backslashxx/KernelSU master f14aa96 (manager/userspace version 32594)
+CFLAGS_ksu.o += -DKSU_VERSION=32594
 
 ifndef KSU_EXPECTED_SIZE
 KSU_EXPECTED_SIZE := 0x033b
