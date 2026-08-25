@@ -6313,23 +6313,18 @@ static int cpu_util_wake(int cpu, struct task_struct *p)
 	return (util >= capacity) ? capacity : util;
 }
 
-static int start_cpu(void)
+static int start_cpu(bool boosted)
 {
 	struct root_domain *rd = cpu_rq(smp_processor_id())->rd;
 
 	RCU_LOCKDEP_WARN(rcu_read_lock_sched_held(),
 			   "sched RCU must be held");
 
-	/*
-	 * Always begin the EAS search on the most efficient capacity class.
-	 * A boosted task still carries boosted utilization, and will therefore
-	 * move to the big cluster when it no longer fits below the 85% margin.
-	 */
-	return rd->min_cap_orig_cpu;
+	return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;
 }
 
 static inline int find_best_target(struct task_struct *p, int *backup_cpu,
-				   bool prefer_idle)
+				   bool boosted, bool prefer_idle)
 {
 	unsigned long min_util = boosted_task_util(p);
 	unsigned long target_capacity = ULONG_MAX;
@@ -6350,8 +6345,8 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 	schedstat_inc(p, se.statistics.nr_wakeups_fbt_attempts);
 	schedstat_inc(this_rq(), eas_stats.fbt_attempts);
 
-	/* Prefer LITTLE; boosted utilization decides when the task needs big. */
-	cpu = start_cpu();
+	/* Boosted work may start on M2; normal work starts on efficient A53. */
+	cpu = start_cpu(boosted);
 	if (cpu < 0) {
 		schedstat_inc(p, se.statistics.nr_wakeups_fbt_no_cpu);
 		schedstat_inc(this_rq(), eas_stats.fbt_no_cpu);
@@ -6670,7 +6665,7 @@ static int select_energy_cpu_brute(struct task_struct *p, int prev_cpu, int sync
 	sync_entity_load_avg(&p->se);
 
 	/* Find a cpu with sufficient capacity */
-	tmp_target = find_best_target(p, &tmp_backup, prefer_idle);
+	tmp_target = find_best_target(p, &tmp_backup, boosted, prefer_idle);
 
 	if (tmp_target >= 0) {
 		target_cpu = tmp_target;

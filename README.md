@@ -31,9 +31,15 @@ new/empty output directory when producing the reproducible release build.
   governor; the mandatory performance fallback remains compiled.
 - Scheduler HMP and the CPU interactive governor are not compiled.
 - Cortex-A53 maximum OPP is 2002 MHz.
-- EAS searches the LITTLE cluster first and spills CFS work to Mongoose M2
-  when the projected LITTLE load crosses 85% capacity.
+- EAS starts normal work on the efficient A53 cluster, while boosted or
+  latency-sensitive work may start directly on Mongoose M2. There is no fixed
+  85% A53 gate; schedutil selects frequency from utilization with a 1 ms up
+  delay and 20 ms down delay.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
+- The Samsung kernel low-memory killer is enabled with automatic oom_adj
+  conversion so the ROM's lmkd path keeps GID 3009 and boots normally.
+- KernelSU 32594 uses manual Samsung 4.4 security hooks; automated LSM hook
+  insertion, kprobes, syscall-table tampering, and hosts redirect are disabled.
 - GPU frequency limits, CPU voltage tables and thermal limits are unchanged.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
 

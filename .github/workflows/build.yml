@@ -64,7 +64,9 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           make O="$OUT" exynos8895-dream2lte_defconfig
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            scripts/config --file "$OUT/.config" --disable ALWAYS_PERMISSIVE
+            scripts/config --file "$OUT/.config" \
+              --disable ALWAYS_PERMISSIVE \
+              --disable SECURITY_SELINUX_DEVELOP
             make O="$OUT" olddefconfig
           fi
 
@@ -90,12 +92,15 @@ jobs:
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
           ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
           grep -q 'ksu_task_fix_setuid' security/security.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
+            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
+            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
           fi
 
       - name: Build ${{ matrix.variant }} kernel
