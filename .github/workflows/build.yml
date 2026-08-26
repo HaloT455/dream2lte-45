@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - agent/ems-v2-experimental
+      - 'backup/**'
 
 jobs:
   build:
