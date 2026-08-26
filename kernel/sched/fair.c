@@ -128,12 +128,11 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
 #endif
 
 /*
- * Keep about ten percent EAS capacity headroom.  A margin of 1126 lets the
- * efficient A53 cluster handle work until roughly 91% utilization, reducing
- * premature migrations to Mongoose M2 while retaining headroom before A53
- * saturation causes visible latency.
+ * Use a neutral 1:1 capacity margin.  EAS receives raw utilization without a
+ * custom A53 spill threshold, leaving cluster selection to the scheduler and
+ * frequency selection to schedutil.
  */
-unsigned int capacity_margin = 1126;
+unsigned int capacity_margin = 1024;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {

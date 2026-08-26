@@ -107,7 +107,8 @@ jobs:
           grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(3000)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          grep -q '^unsigned int capacity_margin = 1126;$' kernel/sched/fair.c
+          grep -q '^unsigned int capacity_margin = 1024;$' kernel/sched/fair.c
+          ! grep -q '^unsigned int capacity_margin = 1126;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c

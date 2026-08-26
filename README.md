@@ -33,10 +33,10 @@ new/empty output directory when producing the reproducible release build.
 - Cortex-A53 maximum OPP is 2002 MHz.
 - EAS begins wakeup placement near the task's previous CPU to preserve cache
   and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
-  clusters and can select M2 when utilization requires it. About ten percent
-  capacity headroom keeps work on A53 until roughly 91% utilization. Schedutil
-  raises an OPP within 3 ms for genuine load and releases stale high OPPs after
-  8 ms, completing work quickly and returning the clusters to idle sooner.
+  clusters and can select M2 when utilization requires it. A neutral 1:1
+  capacity margin removes custom A53 spill thresholds. Schedutil raises an OPP
+  within 3 ms for genuine load and releases stale high OPPs after 8 ms,
+  completing work quickly and returning the clusters to idle sooner.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Android LMK is removed and replaced by Simple LMK with a 128 MiB minfree
   threshold and a bounded 200 ms victim-release timeout.

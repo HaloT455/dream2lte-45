@@ -706,9 +706,9 @@ static int sugov_init(struct cpufreq_policy *policy)
 		 * the hardware latency by 1000 delayed both directions by about
 		 * 100 ms, which is visible as launch and scrolling stutter.  Use a
 		 * race-to-idle response: raise an OPP within 3 ms when sustained work
-		 * needs it, then release a stale high OPP after 8 ms.  EAS capacity
-		 * headroom filters premature M2 migrations, while the governor finishes
-		 * genuine work quickly instead of stretching it across extra frames.
+		 * needs it, then release a stale high OPP after 8 ms.  EAS receives raw
+		 * utilization without a custom cluster spill threshold, while schedutil
+		 * remains solely responsible for selecting frequency from actual load.
 		 */
 		tunables->up_rate_limit_us = SUGOV_DEFAULT_UP_RATE_LIMIT_US;
 		tunables->down_rate_limit_us = SUGOV_DEFAULT_DOWN_RATE_LIMIT_US;
