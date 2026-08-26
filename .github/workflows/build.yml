@@ -67,9 +67,14 @@ jobs:
           if [ "${{ matrix.variant }}" = enforcing ]; then
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
-              --disable SECURITY_SELINUX_DEVELOP
-            make O="$OUT" olddefconfig
+              --disable SECURITY_SELINUX_DEVELOP \
+              --set-str LOCALVERSION "-Alice-SimpleLMK-Enforcing"
+          else
+            scripts/config --file "$OUT/.config" \
+              --set-str LOCALVERSION "-Alice-SimpleLMK-Permissive"
           fi
+          scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
+          make O="$OUT" olddefconfig
 
       - name: Validate configuration and integration
         run: |
@@ -116,13 +121,16 @@ jobs:
           ! grep -q 'ksu_' fs/stat.c
           ! grep -q 'ksu_' kernel/reboot.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
           fi
+          grep -q '^# CONFIG_LOCALVERSION_AUTO is not set$' "$OUT/.config"
 
       - name: Build ${{ matrix.variant }} kernel
         run: |
@@ -137,8 +145,10 @@ jobs:
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
+            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
+            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
