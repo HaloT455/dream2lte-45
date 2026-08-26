@@ -1,4 +1,4 @@
-name: Build balanced Dream2LTE SimpleLMK KSU-nohooks
+name: Build cool Dream2LTE SimpleLMK KSU-nohooks
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-SimpleLMK-Enforcing"
+              --set-str LOCALVERSION "-Alice-SimpleLMK-Cool-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-SimpleLMK-Permissive"
+              --set-str LOCALVERSION "-Alice-SimpleLMK-Cool-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -105,9 +105,10 @@ jobs:
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q -- '-DKSU_VERSION=32594' drivers/kernelsu/Makefile
           grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
-          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(3000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
+          grep -q '^unsigned int capacity_margin = 1126;$' kernel/sched/fair.c
+          ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
           ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
@@ -121,11 +122,11 @@ jobs:
           ! grep -q 'ksu_' fs/stat.c
           ! grep -q 'ksu_' kernel/reboot.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Cool-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Cool-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -145,10 +146,10 @@ jobs:
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Cool-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Cool-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -166,6 +167,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-balanced-simplelmk-ksu-nohooks-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-cool-simplelmk-ksu-nohooks-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

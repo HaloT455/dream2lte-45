@@ -33,15 +33,15 @@ new/empty output directory when producing the reproducible release build.
 - Cortex-A53 maximum OPP is 2002 MHz.
 - EAS begins wakeup placement near the task's previous CPU to preserve cache
   and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
-  clusters and can select M2 when utilization requires it. There is no fixed
-  85% A53 gate; schedutil uses a 2.5 ms up delay and 8 ms down delay for short
-  responsive bursts without retaining a stale overclocked OPP.
+  clusters and can select M2 when utilization requires it. About ten percent
+  capacity headroom keeps work on A53 until roughly 91% utilization. Schedutil
+  raises an OPP within 3 ms for genuine load and releases stale high OPPs after
+  8 ms, completing work quickly and returning the clusters to idle sooner.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
-- The Samsung kernel low-memory killer is enabled with automatic oom_adj
-  conversion. The downstream GID 3009 hook exempts adbd during early boot and
-  is removed at Android boot completion.
-- KernelSU 32594 uses manual Samsung 4.4 security hooks; automated LSM hook
-  insertion, kprobes, syscall-table tampering, and hosts redirect are disabled.
+- Android LMK is removed and replaced by Simple LMK with a 128 MiB minfree
+  threshold and a bounded 200 ms victim-release timeout.
+- KernelSU 32594 remains available through Kconfig/build integration, but all
+  kernel-core KSU hooks and the downstream GID 3009 hook are removed.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
 - GPU frequency limits, CPU voltage tables and thermal limits are unchanged.
