@@ -41,6 +41,40 @@ config ANDROID_BINDER_IPC_SELFTEST
 	  exhaustively with combinations of various buffer sizes and
 	  alignments.
 
+config ANDROID_SIMPLE_LMK
+	bool "Simple Android Low Memory Killer"
+	---help---
+	  A small in-kernel low memory killer for Android. It selects victims
+	  using oom_score_adj, starting with the least important processes, and
+	  frees a bounded amount of memory when kswapd reaches critical pressure.
+
+if ANDROID_SIMPLE_LMK
+
+config ANDROID_SIMPLE_LMK_MINFREE
+	int "Minimum MiB of memory to free per reclaim"
+	range 8 512
+	default 128
+	help
+	  Simple LMK will try to free at least this much memory per reclaim.
+
+config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
+	int "Reclaim timeout in milliseconds"
+	range 50 1000
+	default 200
+	help
+	  Maximum time to wait for a victim batch to release its memory before
+	  Simple LMK accepts another reclaim request.
+
+config ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY
+	int "kswapd priority that triggers reclaim"
+	range 1 5
+	default 1
+	help
+	  Trigger Simple LMK when kswapd reaches this scan priority. Priority 1
+	  is deliberately conservative for a 4 GiB device.
+
+endif
+
 endif # if ANDROID
 
 endmenu

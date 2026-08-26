@@ -1,4 +1,4 @@
-name: Build smooth Dream2LTE KSU 32594
+name: Build balanced Dream2LTE SimpleLMK KSU-nohooks
 
 on:
   workflow_dispatch:
@@ -51,7 +51,7 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-smooth" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-balanced" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Tue Aug 25 12:00:00 +07 2026" >> "$GITHUB_ENV"
 
@@ -78,31 +78,42 @@ jobs:
           grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' "$OUT/.config"
           grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' "$OUT/.config"
           grep -q '^CONFIG_KSU_FEATURE_ADBROOT=y$' "$OUT/.config"
-          grep -q '^CONFIG_KSU_STRIP_READPROC_GID=y$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$OUT/.config"
           grep -q '^# CONFIG_KSU_HOSTSREDIRECT is not set$' "$OUT/.config"
           grep -q '^CONFIG_USB_CONFIGFS=y$' "$OUT/.config"
           grep -q '^CONFIG_USB_CONFIGFS_F_ADB=y$' "$OUT/.config"
           grep -q '^CONFIG_PRINTK=y$' "$OUT/.config"
           grep -q '^CONFIG_PSTORE=y$' "$OUT/.config"
           grep -q '^CONFIG_PSTORE_CONSOLE=y$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=y$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES=y$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY=1$' "$OUT/.config"
+          ! grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
+          ! grep -q '^CONFIG_SEC_DEBUG.*=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q -- '-DKSU_VERSION=32594' drivers/kernelsu/Makefile
           grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
-          ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          ! grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
           ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
-          ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
-          grep -q 'ksu_task_fix_setuid' security/security.c
+          test ! -e drivers/staging/android/lowmemorykiller.c
+          test ! -e drivers/staging/android/trace/lowmemorykiller.h
+          grep -q 'simple_lmk_decide_reclaim' mm/vmscan.c
+          grep -q 'simple_lmk_mm_freed' kernel/fork.c
+          ! grep -q 'ksu_' security/security.c
+          ! grep -q 'ksu_' fs/exec.c
+          ! grep -q 'ksu_' fs/open.c
+          ! grep -q 'ksu_' fs/stat.c
+          ! grep -q 'ksu_' kernel/reboot.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
@@ -122,7 +133,8 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
           strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32594$'
-          grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
+          ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
+          grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
@@ -143,6 +155,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-smooth-ksu32594-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-balanced-simplelmk-ksu-nohooks-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

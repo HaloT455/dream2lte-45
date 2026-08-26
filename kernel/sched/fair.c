@@ -133,7 +133,7 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
  * schedutil select its frequency from the same utilization signal, without
  * an A53-first 85% spill gate.
  */
-unsigned int capacity_margin = 1280;
+unsigned int capacity_margin = 1205;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {
