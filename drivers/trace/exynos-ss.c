@@ -60,8 +60,8 @@
 
 #ifdef CONFIG_SEC_EXT
 #include <linux/sec_ext.h>
-#ifdef CONFIG_SEC_DEBUG
 #include <linux/sec_debug.h>
+#ifdef CONFIG_SEC_DEBUG
 #include <linux/sec_debug_hard_reset_hook.h>
 #endif /* CONFIG_SEC_DEBUG */
 #endif /* CONFIG_SEC_EXT */
