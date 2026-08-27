@@ -195,7 +195,12 @@ static irqreturn_t max77865_irq_thread(int irq, void *data)
 		pr_debug("[%s]IRQ_BASE(%d), NESTED_IRQ(%d)\n",
 			__func__, max77865->irq_base, max77865->irq_base + MAX77865_FG_IRQ_ALERT);
 		handle_nested_irq(max77865->irq_base + MAX77865_FG_IRQ_ALERT);
-		return IRQ_HANDLED;
+		/*
+		 * Do not return here.  MAX77865 can assert fuel-gauge and
+		 * charger sources in the same parent interrupt while VBUS is
+		 * changing.  CHGIN was masked above and must reach its nested
+		 * handler so the charger work can unmask it again.
+		 */
 	}
 
 	if (irq_src & MAX77865_IRQSRC_TOP) {

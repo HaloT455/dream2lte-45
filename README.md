@@ -55,6 +55,11 @@ new/empty output directory when producing the reproducible release build.
   but transient lockup reports no longer deliberately panic and reboot five
   seconds later. Genuine panics still retain the existing five-second reboot
   timeout and diagnostic storage.
+- The MAX77865 wired-charger path drains simultaneous fuel-gauge and CHGIN
+  interrupts instead of leaving CHGIN masked. Its stability sampler is bounded
+  to five seconds, stale QC work is ignored after a cable state change, and the
+  battery-presence interrupt passes an initialized value. AFC/QC voltages and
+  charging-current limits remain the Samsung defaults.
 - HaloT455 KernelSU 32590 is functional through manual security hooks plus the
   legacy-safe `execve/faccessat/stat/reboot` integration used by dream2lte.
   The bundled trust pin matches Manager 32596 supplied for this build. Kprobes,

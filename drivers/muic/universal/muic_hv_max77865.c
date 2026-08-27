@@ -2260,6 +2260,15 @@ static void max77865_hv_muic_check_qc_vb(struct work_struct *work)
 
 	mutex_lock(phv->pmutex);
 
+	/* A queued QC check may run after a fast cable detach/reattach. */
+	if (phv->attached_dev != ATTACHED_DEV_QC_CHARGER_PREPARE_MUIC &&
+	    phv->attached_dev != ATTACHED_DEV_QC_CHARGER_5V_MUIC &&
+	    phv->attached_dev != ATTACHED_DEV_QC_CHARGER_9V_MUIC) {
+		pr_info("%s:%s ignore stale QC work for dev %d\n",
+			MUIC_HV_DEV_NAME, __func__, phv->attached_dev);
+		goto out;
+	}
+
 	if (phv->is_qc_vb_settle == true) {
 		pr_info("%s:%s already qc vb settled\n", MUIC_HV_DEV_NAME, __func__);
 		goto out;
@@ -2503,6 +2512,7 @@ bool hv_do_predetach(struct hv_data *phv, int mdev)
         if (noti) {
                 max77865_muic_set_afc_ready(phv, false);
                 phv->is_afc_muic_prepare = false;
+		phv->is_qc_vb_settle = false;
                 max77865_hv_muic_reset_hvcontrol_reg(phv);
                 cancel_delayed_work(&phv->hv_muic_qc_vb_work);
                 cancel_delayed_work(&phv->hv_muic_mping_miss_wa);
@@ -2527,6 +2537,7 @@ void hv_do_detach(struct hv_data *phv)
 
 	max77865_muic_set_afc_ready(phv, false);
 	phv->is_afc_muic_prepare = false;
+	phv->is_qc_vb_settle = false;
 
 	cancel_delayed_work(&phv->hv_muic_qc_vb_work);
 	pr_info("%s:%s cancel_delayed_work, Mping missing wa\n",

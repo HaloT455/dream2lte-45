@@ -1,4 +1,4 @@
-name: Build Dream2LTE SimpleLMK5 Apollo Thermal Fix
+name: Build Dream2LTE SimpleLMK5 Charger and Apollo Fix
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-ApolloFix-KSU32590-LMK5-Enforcing"
+              --set-str LOCALVERSION "-Alice-ChargerFix-KSU32590-LMK5-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-ApolloFix-KSU32590-LMK5-Permissive"
+              --set-str LOCALVERSION "-Alice-ChargerFix-KSU32590-LMK5-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -130,6 +130,10 @@ jobs:
           grep -q 'polling-delay = <1000>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'cooling-device = <&cpu0 4 4>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'cooling-device = <&cpu0 11 11>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sample_count++ < 50' drivers/battery_v2/max77865_charger.c
+          grep -q 'value = { .intval = 0 }' drivers/battery_v2/max77865_charger.c
+          grep -q 'MAX77865 can assert fuel-gauge and' drivers/mfd/max77865-irq.c
+          grep -q 'ignore stale QC work for dev' drivers/muic/universal/muic_hv_max77865.c
           grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
           ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
           test ! -e drivers/staging/android/lowmemorykiller.c
@@ -151,11 +155,11 @@ jobs:
           grep -q 'ksu_handle_sys_reboot' kernel/reboot.c
           ! grep -q 'ksu_' kernel/sys.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-ApolloFix-KSU32590-LMK5-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-ChargerFix-KSU32590-LMK5-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-ApolloFix-KSU32590-LMK5-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-ChargerFix-KSU32590-LMK5-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -179,10 +183,10 @@ jobs:
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-ApolloFix-KSU32590-LMK5-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-ChargerFix-KSU32590-LMK5-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-ApolloFix-KSU32590-LMK5-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-ChargerFix-KSU32590-LMK5-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -200,6 +204,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-apollo-fix-simplelmk5-ksu-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-charger-apollo-fix-simplelmk5-ksu-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

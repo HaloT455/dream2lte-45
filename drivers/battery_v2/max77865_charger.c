@@ -1434,7 +1434,7 @@ static irqreturn_t wpc_charger_irq(int irq, void *data)
 static irqreturn_t max77865_batp_irq(int irq, void *data)
 {
 	struct max77865_charger_data *charger = data;
-	union power_supply_propval value;
+	union power_supply_propval value = { .intval = 0 };
 	u8 reg_data;
 
 	pr_info("%s : irq(%d)\n", __func__, irq);
@@ -1591,28 +1591,55 @@ static void max77865_chgin_isr_work(struct work_struct *work)
 	int battery_health;
 	union power_supply_propval value;
 	int stable_count = 0;
+	int sample_count = 0;
+	int ret;
 
 	wake_lock(&charger->chgin_wake_lock);
 
 	max77865_update_reg(charger->i2c,
 			    MAX77865_CHG_REG_INT_MASK, MAX77865_CHGIN_IM, MAX77865_CHGIN_IM);
 
-	while (1) {
+	/*
+	 * A charger swap can keep CHGIN details moving for a while.  Never
+	 * leave the single charger workqueue blocked forever if VBUS or I2C
+	 * remains unstable; the interrupt is unmasked again on exit.
+	 */
+	while (sample_count++ < 50) {
 		psy_do_property("battery", get,
 				POWER_SUPPLY_PROP_HEALTH, value);
 		battery_health = value.intval;
 
-		max77865_read_reg(charger->i2c,
-				  MAX77865_CHG_REG_DETAILS_00,
-				&chgin_dtls);
+		ret = max77865_read_reg(charger->i2c,
+					MAX77865_CHG_REG_DETAILS_00,
+					&chgin_dtls);
+		if (ret < 0) {
+			pr_err("%s: failed to read CHGIN details (%d)\n",
+			       __func__, ret);
+			msleep(100);
+			continue;
+		}
 		chgin_dtls = ((chgin_dtls & MAX77865_CHGIN_DTLS) >>
 			      MAX77865_CHGIN_DTLS_SHIFT);
-		max77865_read_reg(charger->i2c,
-				  MAX77865_CHG_REG_DETAILS_01, &chg_dtls);
+		ret = max77865_read_reg(charger->i2c,
+					MAX77865_CHG_REG_DETAILS_01,
+					&chg_dtls);
+		if (ret < 0) {
+			pr_err("%s: failed to read charger details (%d)\n",
+			       __func__, ret);
+			msleep(100);
+			continue;
+		}
 		chg_dtls = ((chg_dtls & MAX77865_CHG_DTLS) >>
 			    MAX77865_CHG_DTLS_SHIFT);
-		max77865_read_reg(charger->i2c,
-				  MAX77865_CHG_REG_CNFG_00, &chg_cnfg_00);
+		ret = max77865_read_reg(charger->i2c,
+					MAX77865_CHG_REG_CNFG_00,
+					&chg_cnfg_00);
+		if (ret < 0) {
+			pr_err("%s: failed to read charger mode (%d)\n",
+			       __func__, ret);
+			msleep(100);
+			continue;
+		}
 
 		if (prev_chgin_dtls == chgin_dtls)
 			stable_count++;
@@ -1668,6 +1695,9 @@ static void max77865_chgin_isr_work(struct work_struct *work)
 		prev_chgin_dtls = chgin_dtls;
 		msleep(100);
 	}
+	if (stable_count <= 10)
+		pr_warn("%s: CHGIN did not settle after %d samples\n",
+			__func__, sample_count - 1);
 	max77865_update_reg(charger->i2c,
 			    MAX77865_CHG_REG_INT_MASK, 0, MAX77865_CHGIN_IM);
 	wake_unlock(&charger->chgin_wake_lock);
