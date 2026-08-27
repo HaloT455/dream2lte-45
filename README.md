@@ -43,10 +43,11 @@ new/empty output directory when producing the reproducible release build.
   after Android configures the legacy `lowmemorykiller.minfree` endpoint, runs
   at normal scheduler priority and falls back to the regular OOM killer if its
   worker is unavailable.
-- HaloT455 KernelSU 32590 is functional through manual hooks in
-  `security/security.c`. The bundled trust pin matches Manager 32596 supplied
-  for this build. Kprobes, syscall-table tampering, ARM64 branch rewriting and
-  the downstream GID 3009 patch remain disabled.
+- HaloT455 KernelSU 32590 is functional through manual security hooks plus the
+  legacy-safe `execve/faccessat/stat/reboot` integration used by dream2lte.
+  The bundled trust pin matches Manager 32596 supplied for this build. Kprobes,
+  syscall-table tampering, ARM64 branch rewriting, the obsolete direct
+  `setresuid` hook and the downstream GID 3009 patch remain disabled.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
 - GPU frequency limits, CPU voltage tables and thermal limits are unchanged.

@@ -1,4 +1,4 @@
-name: Build cool Dream2LTE SimpleLMK functional KernelSU
+name: Build cool Dream2LTE SimpleLMK KernelSU RootFix
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-Cool-KSU32590-Functional-Enforcing"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-RootFix-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-Cool-KSU32590-Functional-Permissive"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-RootFix-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -129,17 +129,18 @@ jobs:
           grep -q 'ksu_file_permission' security/security.c
           grep -q 'ksu_task_fix_setuid' security/security.c
           grep -q 'ksu_hide_setprocattr' security/security.c
-          ! grep -q 'ksu_' fs/exec.c
-          ! grep -q 'ksu_' fs/open.c
-          ! grep -q 'ksu_' fs/stat.c
-          ! grep -q 'ksu_' kernel/reboot.c
+          grep -q 'ksu_handle_execveat' fs/exec.c
+          grep -q 'ksu_handle_faccessat' fs/open.c
+          grep -q 'ksu_handle_stat' fs/stat.c
+          grep -q 'ksu_handle_newfstat_ret' fs/stat.c
+          grep -q 'ksu_handle_sys_reboot' kernel/reboot.c
           ! grep -q 'ksu_' kernel/sys.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-Functional-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-RootFix-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-Functional-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-RootFix-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -157,13 +158,14 @@ jobs:
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
           strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32590$'
           grep -a -q 'Automated LSM hooking disabled' "$OUT/arch/arm64/boot/Image"
+          grep -a -q 'su_compat: hooks enabled: exec, faccessat, stat' "$OUT/arch/arm64/boot/Image"
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-Functional-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-RootFix-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-Functional-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-RootFix-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -181,6 +183,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-cool-simplelmk-ksu-functional-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-cool-simplelmk-ksu-rootfix-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
