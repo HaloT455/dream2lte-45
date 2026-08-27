@@ -35,6 +35,7 @@
 #include <linux/freezer.h>
 #include <linux/ftrace.h>
 #include <linux/ratelimit.h>
+#include <linux/simple_lmk.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
@@ -685,12 +686,12 @@ bool out_of_memory(struct oom_control *oc)
 	unsigned int uninitialized_var(points);
 	enum oom_constraint constraint = CONSTRAINT_NONE;
 
-	/* Simple LMK performs the kill asynchronously from its reclaim thread. */
-	if (IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK))
-		return true;
-
 	if (oom_killer_disabled)
 		return false;
+
+	/* SimpleLMK handles the first request; regular OOM is the safety net. */
+	if (simple_lmk_oom_reclaim())
+		return true;
 
 	blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
 	if (freed > 0)

@@ -4,7 +4,7 @@ Reconstructed buildable kernel source for the Samsung Galaxy S8+ Exynos
 (`dream2lte`, SM-G955F) from the supplied 2026-08-04 boot image.
 
 The tree is based on Linux 4.4.302 for Exynos 8895 and includes the matching
-device configuration, DT sources, Samsung drivers and KernelSU-Next manual
+device configuration, DT sources, Samsung drivers and KernelSU manual
 hooks. KernelSU is vendored in the tree, so a normal build does not fetch or
 modify source code over the network.
 
@@ -39,9 +39,14 @@ new/empty output directory when producing the reproducible release build.
   completing work quickly and returning the clusters to idle sooner.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Android LMK is removed and replaced by Simple LMK with a 128 MiB minfree
-  threshold and a bounded 200 ms victim-release timeout.
-- KernelSU 32594 remains available through Kconfig/build integration, but all
-  kernel-core KSU hooks and the downstream GID 3009 hook are removed.
+  threshold and a bounded 200 ms victim-release timeout. Simple LMK starts only
+  after Android configures the legacy `lowmemorykiller.minfree` endpoint, runs
+  at normal scheduler priority and falls back to the regular OOM killer if its
+  worker is unavailable.
+- HaloT455 KernelSU 32590 is functional through manual hooks in
+  `security/security.c`. The bundled trust pin matches Manager 32596 supplied
+  for this build. Kprobes, syscall-table tampering, ARM64 branch rewriting and
+  the downstream GID 3009 patch remain disabled.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
 - GPU frequency limits, CPU voltage tables and thermal limits are unchanged.

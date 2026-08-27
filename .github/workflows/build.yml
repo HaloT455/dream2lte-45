@@ -1,4 +1,4 @@
-name: Build cool Dream2LTE SimpleLMK KSU-nohooks
+name: Build cool Dream2LTE SimpleLMK functional KernelSU
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-SimpleLMK-Cool-Enforcing"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-Functional-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-SimpleLMK-Cool-Permissive"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-Functional-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -82,10 +82,12 @@ jobs:
           grep -q '^CONFIG_KSU=y$' "$OUT/.config"
           grep -q '^# CONFIG_KPROBES is not set$' "$OUT/.config"
           grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_HACK_ARM64_BRANCH_LINK is not set$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set$' "$OUT/.config"
           grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' "$OUT/.config"
+          grep -q '^CONFIG_KSU_FEATURE_SULOG=y$' "$OUT/.config"
           grep -q '^CONFIG_KSU_FEATURE_ADBROOT=y$' "$OUT/.config"
           grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$OUT/.config"
-          grep -q '^# CONFIG_KSU_HOSTSREDIRECT is not set$' "$OUT/.config"
           grep -q '^CONFIG_USB_CONFIGFS=y$' "$OUT/.config"
           grep -q '^CONFIG_USB_CONFIGFS_F_ADB=y$' "$OUT/.config"
           grep -q '^CONFIG_PRINTK=y$' "$OUT/.config"
@@ -103,8 +105,10 @@ jobs:
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
-          grep -q -- '-DKSU_VERSION=32594' drivers/kernelsu/Makefile
-          grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
+          grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
+          grep -q '^KSU_EXPECTED_SIZE := 0x0363$' drivers/kernelsu/Makefile
+          grep -q '^KSU_EXPECTED_HASH := 4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549$' drivers/kernelsu/Makefile
+          grep -q '^e874376f71d80c6ee4163fafdc03e62412adbc49$' drivers/kernelsu/UPSTREAM_COMMIT
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(3000)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
           grep -q '^unsigned int capacity_margin = 1024;$' kernel/sched/fair.c
@@ -117,17 +121,25 @@ jobs:
           test ! -e drivers/staging/android/trace/lowmemorykiller.h
           grep -q 'simple_lmk_decide_reclaim' mm/vmscan.c
           grep -q 'simple_lmk_mm_freed' kernel/fork.c
-          ! grep -q 'ksu_' security/security.c
+          grep -q 'simple_lmk_oom_reclaim' drivers/android/simple_lmk.c
+          grep -q 'set_user_nice(current, -10)' drivers/android/simple_lmk.c
+          ! grep -q 'sched_setscheduler_nocheck.*SCHED_FIFO' drivers/android/simple_lmk.c
+          grep -q 'ksu_bprm_check' security/security.c
+          grep -q 'ksu_inode_rename' security/security.c
+          grep -q 'ksu_file_permission' security/security.c
+          grep -q 'ksu_task_fix_setuid' security/security.c
+          grep -q 'ksu_hide_setprocattr' security/security.c
           ! grep -q 'ksu_' fs/exec.c
           ! grep -q 'ksu_' fs/open.c
           ! grep -q 'ksu_' fs/stat.c
           ! grep -q 'ksu_' kernel/reboot.c
+          ! grep -q 'ksu_' kernel/sys.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Cool-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-Functional-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-SimpleLMK-Cool-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-Functional-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -143,14 +155,15 @@ jobs:
         run: |
           OUT="out-${{ matrix.variant }}"
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
-          strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32594$'
+          strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32590$'
+          grep -a -q 'Automated LSM hooking disabled' "$OUT/arch/arm64/boot/Image"
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Cool-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-Functional-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-SimpleLMK-Cool-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-Functional-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -168,6 +181,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-cool-simplelmk-ksu-nohooks-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-cool-simplelmk-ksu-functional-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

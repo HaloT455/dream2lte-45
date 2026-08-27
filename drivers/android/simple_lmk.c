@@ -36,6 +36,7 @@ static int nr_victims;
 static atomic_t needs_reclaim = ATOMIC_INIT(0);
 static atomic_t nr_killed = ATOMIC_INIT(0);
 static atomic_t lmk_ready = ATOMIC_INIT(0);
+static atomic_t init_done = ATOMIC_INIT(0);
 
 static int victim_cmp(const void *lhs_ptr, const void *rhs_ptr)
 {
@@ -215,11 +216,8 @@ static void scan_and_kill(void)
 
 static int simple_lmk_reclaim_thread(void *data)
 {
-	static const struct sched_param sched_max_rt_prio = {
-		.sched_priority = MAX_RT_PRIO - 1
-	};
-
-	sched_setscheduler_nocheck(current, SCHED_FIFO, &sched_max_rt_prio);
+	/* Avoid starving Android's unlock path with a FIFO 99 process scan. */
+	set_user_nice(current, -10);
 	set_freezable();
 
 	while (1) {
@@ -241,6 +239,19 @@ void simple_lmk_decide_reclaim(int kswapd_priority)
 		wake_up(&oom_waitq);
 }
 
+bool simple_lmk_oom_reclaim(void)
+{
+	if (!atomic_read(&lmk_ready))
+		return false;
+
+	/* The regular OOM killer is the safety net while SimpleLMK is busy. */
+	if (atomic_cmpxchg_acquire(&needs_reclaim, 0, 1))
+		return false;
+
+	wake_up(&oom_waitq);
+	return true;
+}
+
 void simple_lmk_mm_freed(struct mm_struct *mm)
 {
 	int i;
@@ -259,17 +270,29 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 	read_unlock(&mm_free_lock);
 }
 
-static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
+static int simple_lmk_start(void)
 {
-	static atomic_t init_done = ATOMIC_INIT(0);
 	struct task_struct *thread;
 
-	if (!atomic_cmpxchg(&init_done, 0, 1)) {
-		thread = kthread_run(simple_lmk_reclaim_thread, NULL,
-				     "simple_lmkd");
-		BUG_ON(IS_ERR(thread));
-		atomic_set_release(&lmk_ready, 1);
+	if (atomic_cmpxchg(&init_done, 0, 1))
+		return 0;
+
+	thread = kthread_run(simple_lmk_reclaim_thread, NULL, "simple_lmkd");
+	if (IS_ERR(thread)) {
+		atomic_set(&init_done, 0);
+		pr_err("Failed to start reclaim thread: %ld\n", PTR_ERR(thread));
+		return PTR_ERR(thread);
 	}
+
+	atomic_set_release(&lmk_ready, 1);
+	pr_info("Ready with regular OOM fallback\n");
+	return 0;
+}
+
+static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
+{
+	/* Start only after Android configures lowmemorykiller.minfree. */
+	simple_lmk_start();
 
 	return 0;
 }
