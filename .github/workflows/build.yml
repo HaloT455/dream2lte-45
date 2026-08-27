@@ -1,4 +1,4 @@
-name: Build cool Dream2LTE SimpleLMK KernelSU RootFix
+name: Build stable Dream2LTE SimpleLMK5 KernelSU RootFix
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-Cool-KSU32590-RootFix-Enforcing"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-StableRoot-LMK5-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-Cool-KSU32590-RootFix-Permissive"
+              --set-str LOCALVERSION "-Alice-Cool-KSU32590-StableRoot-LMK5-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -93,10 +93,15 @@ jobs:
           grep -q '^CONFIG_PRINTK=y$' "$OUT/.config"
           grep -q '^CONFIG_PSTORE=y$' "$OUT/.config"
           grep -q '^CONFIG_PSTORE_CONSOLE=y$' "$OUT/.config"
+          grep -q '^CONFIG_HARDLOCKUP_DETECTOR=y$' "$OUT/.config"
+          grep -q '^# CONFIG_BOOTPARAM_HARDLOCKUP_PANIC is not set$' "$OUT/.config"
+          grep -q '^CONFIG_BOOTPARAM_HARDLOCKUP_PANIC_VALUE=0$' "$OUT/.config"
+          grep -q '^# CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC is not set$' "$OUT/.config"
+          grep -q '^CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC_VALUE=0$' "$OUT/.config"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$OUT/.config"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$OUT/.config"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY=1$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY=5$' "$OUT/.config"
           ! grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
@@ -115,6 +120,12 @@ jobs:
           ! grep -q '^unsigned int capacity_margin = 1126;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
+          grep -q 'freq = (freq + (freq >> 2)) \* util / max;' kernel/sched/cpufreq_schedutil.c
+          grep -q 'raw_spin_lock_irqsave(&sg_policy->update_lock, flags);' kernel/sched/cpufreq_schedutil.c
+          grep -q 'freq = sg_policy->next_freq;' kernel/sched/cpufreq_schedutil.c
+          grep -q 'kthread_bind_mask(thread, cpumask_of(SUGOV_WORKER_CPU));' kernel/sched/cpufreq_schedutil.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
           grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
           ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
           test ! -e drivers/staging/android/lowmemorykiller.c
@@ -136,11 +147,11 @@ jobs:
           grep -q 'ksu_handle_sys_reboot' kernel/reboot.c
           ! grep -q 'ksu_' kernel/sys.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-RootFix-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-StableRoot-LMK5-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-RootFix-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-Cool-KSU32590-StableRoot-LMK5-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -158,14 +169,14 @@ jobs:
           echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
           strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32590$'
           grep -a -q 'Automated LSM hooking disabled' "$OUT/arch/arm64/boot/Image"
-          grep -a -q 'su_compat: hooks enabled: exec, faccessat, stat' "$OUT/arch/arm64/boot/Image"
+          grep -a -q 'hooks enabled: exec, faccessat, stat' "$OUT/arch/arm64/boot/Image"
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-RootFix-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-StableRoot-LMK5-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-RootFix-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-Cool-KSU32590-StableRoot-LMK5-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -183,6 +194,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-cool-simplelmk-ksu-rootfix-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-cool-simplelmk5-ksu-rootfix-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

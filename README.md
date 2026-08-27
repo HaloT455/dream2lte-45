@@ -36,13 +36,22 @@ new/empty output directory when producing the reproducible release build.
   clusters and can select M2 when utilization requires it. A neutral 1:1
   capacity margin removes custom A53 spill thresholds. Schedutil raises an OPP
   within 3 ms for genuine load and releases stale high OPPs after 8 ms,
-  completing work quickly and returning the clusters to idle sooner.
+  completing work quickly and returning the clusters to idle sooner. Deferred
+  DVFS requests are serialized so an update cannot be lost while the slow
+  cpufreq driver is running. Both policy workers run on CPU0, which Exynos
+  hotplug keeps online, so an M2 screen-off transition cannot strand its worker.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Android LMK is removed and replaced by Simple LMK with a 128 MiB minfree
-  threshold and a bounded 200 ms victim-release timeout. Simple LMK starts only
-  after Android configures the legacy `lowmemorykiller.minfree` endpoint, runs
-  at normal scheduler priority and falls back to the regular OOM killer if its
-  worker is unavailable.
+  threshold, kswapd reclaim priority 5, and a bounded 200 ms victim-release
+  timeout. This lets memory pressure be handled before kswapd reaches its last
+  reclaim levels without reserving more RAM. Simple LMK starts only after
+  Android configures the legacy `lowmemorykiller.minfree` endpoint, runs at
+  normal scheduler priority and falls back to the regular OOM killer if its
+  worker is unavailable or already busy.
+- Hard- and soft-lockup detectors, pstore and the Exynos watchdog stay enabled,
+  but transient lockup reports no longer deliberately panic and reboot five
+  seconds later. Genuine panics still retain the existing five-second reboot
+  timeout and diagnostic storage.
 - HaloT455 KernelSU 32590 is functional through manual security hooks plus the
   legacy-safe `execve/faccessat/stat/reboot` integration used by dream2lte.
   The bundled trust pin matches Manager 32596 supplied for this build. Kprobes,
