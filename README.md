@@ -30,7 +30,10 @@ new/empty output directory when producing the reproducible release build.
 - WALT-backed EAS with schedutil as the default and only dynamic CPU frequency
   governor; the mandatory performance fallback remains compiled.
 - Scheduler HMP and the CPU interactive governor are not compiled.
-- Cortex-A53 maximum OPP is 2002 MHz.
+- Cortex-A53 maximum OPP is 2002 MHz. APOLLO thermal polling releases stale
+  cooling states below 71 degrees C, so schedutil can reach that OPP instead
+  of remaining stuck at cooling state 3 / 1690 MHz after suspend or a power
+  event. Real APOLLO heating still progressively caps A53 from 76 degrees C.
 - EAS begins wakeup placement near the task's previous CPU to preserve cache
   and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
   clusters and can select M2 when utilization requires it. A neutral 1:1
@@ -59,7 +62,9 @@ new/empty output directory when producing the reproducible release build.
   `setresuid` hook and the downstream GID 3009 patch remain disabled.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
-- GPU frequency limits, CPU voltage tables and thermal limits are unchanged.
+- GPU frequency limits and CPU voltage tables are unchanged. M2 thermal
+  control remains stock; the A53 APOLLO cooling map is aligned with the
+  expanded OPP table and retains hard throttling at high temperature.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
 
 To create a flashable image while preserving a known-good boot image ramdisk

@@ -149,6 +149,14 @@
 #define TOTAL_SENSORS	8
 #define DEFAULT_BALANCE_OFFSET	20
 
+/*
+ * APOLLO starts throttling at 76C with 5C hysteresis. Some newer
+ * userspace power stacks write the A53 cooling device directly and the
+ * thermal core then considers its unchanged DT target up to date. That
+ * can leave the cooling state stuck after the SoC has cooled or resumed.
+ */
+#define APOLLO_COOLING_RELEASE_TEMP	71000
+
 static bool suspended;
 static bool is_cpu_hotplugged_out;
 static DEFINE_MUTEX (thermal_suspend_lock);
@@ -721,6 +729,7 @@ static int exynos_get_temp(void *p, int *temp)
 {
 	struct exynos_tmu_data *data = p;
 	struct thermal_cooling_device *cdev;
+	unsigned long cooling_state;
 	unsigned int mcinfo_count;
 	unsigned int mcinfo_result[4] = {0, 0, 0, 0};
 	unsigned int mcinfo_logging = 0;
@@ -743,6 +752,16 @@ static int exynos_get_temp(void *p, int *temp)
 
 	if (!cdev)
 		return 0;
+
+	/*
+	 * Release a stale A53 limit once APOLLO is safely below the first
+	 * real throttling trip including hysteresis. This does not bypass hot
+	 * throttling: at 76C and above the thermal maps retain full control.
+	 */
+	if (data->id == 1 && *temp < APOLLO_COOLING_RELEASE_TEMP &&
+	    cdev->ops->get_cur_state && cdev->ops->set_cur_state &&
+	    !cdev->ops->get_cur_state(cdev, &cooling_state) && cooling_state)
+		cdev->ops->set_cur_state(cdev, 0);
 
 	mutex_lock(&thermal_suspend_lock);
 
