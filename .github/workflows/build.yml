@@ -68,7 +68,16 @@ jobs:
 
       - name: Build kernel and DTB
         run: |
-          make O=out -j"$(nproc)" Image dtb.img
+          set -o pipefail
+          make O=out -j"$(nproc)" Image dtb.img 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v6-build-log-${{ github.sha }}
+          path: build.log
+          if-no-files-found: error
 
       - name: Validate output
         run: |
