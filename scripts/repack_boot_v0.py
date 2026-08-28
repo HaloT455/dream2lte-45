@@ -32,6 +32,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, type=Path)
     parser.add_argument("--kernel", required=True, type=Path)
+    parser.add_argument("--ramdisk", type=Path,
+                        help="optional replacement ramdisk")
     parser.add_argument("--dt", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
@@ -51,11 +53,14 @@ def main() -> None:
     offset = page_size
     _, offset = section(image, offset, old_kernel_size, page_size)
     ramdisk, offset = section(image, offset, ramdisk_size, page_size)
+    if args.ramdisk:
+        ramdisk = args.ramdisk.read_bytes()
     second, offset = section(image, offset, second_size, page_size)
     _, offset = section(image, offset, dt_size, page_size)
     footer = image[offset:]
 
     fields[0] = len(kernel)
+    fields[2] = len(ramdisk)
     fields[8] = len(dt)
     first_page = bytearray(image[:page_size])
     struct.pack_into("<10I", first_page, 8, *fields)

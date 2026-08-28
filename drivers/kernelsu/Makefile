@@ -11,15 +11,15 @@ MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
-# backslashxx/KernelSU master f14aa96 (manager/userspace version 32594)
-CFLAGS_ksu.o += -DKSU_VERSION=32594
+# HaloT455/KernelSU manager v3.2.5 compatibility (userspace version 32590)
+CFLAGS_ksu.o += -DKSU_VERSION=32590
 
 ifndef KSU_EXPECTED_SIZE
-KSU_EXPECTED_SIZE := 0x033b
+KSU_EXPECTED_SIZE := 0x0363
 endif
 
 ifndef KSU_EXPECTED_HASH
-KSU_EXPECTED_HASH := c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6
+KSU_EXPECTED_HASH := 4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549
 endif
 
 ifdef KSU_MANAGER_PACKAGE

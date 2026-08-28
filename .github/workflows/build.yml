@@ -1,20 +1,14 @@
-name: Build smooth Dream2LTE KSU 32594
+name: Build V6 SimpleLMK Note10-style EAS
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/ems-v2-experimental
+      - backup/v6-simplelmk-note10-eas-20260828
 
 jobs:
-  build:
+  build-permissive:
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - enforcing
-          - permissive
 
     steps:
       - name: Checkout source
@@ -24,19 +18,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc \
-            bison \
-            flex \
-            build-essential \
-            libssl-dev \
-            libelf-dev \
-            python3 \
-            wget \
-            tar \
-            xz-utils
-
-      - name: Configure Python
-        run: |
+            bc bison flex build-essential libssl-dev libelf-dev \
+            python3 wget tar xz-utils
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
       - name: Download GCC 14.2
@@ -51,98 +34,61 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-smooth" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_TIMESTAMP=Tue Aug 25 12:00:00 +07 2026" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
 
-      - name: Verify compiler
+      - name: Configure Permissive kernel
         run: |
-          ${CROSS_COMPILE}gcc --version
+          make O=out exynos8895-dream2lte_defconfig
 
-      - name: Configure ${{ matrix.variant }} kernel
+      - name: Validate integration
         run: |
-          OUT="out-${{ matrix.variant }}"
-          make O="$OUT" exynos8895-dream2lte_defconfig
-          if [ "${{ matrix.variant }}" = enforcing ]; then
-            scripts/config --file "$OUT/.config" \
-              --disable ALWAYS_PERMISSIVE \
-              --disable SECURITY_SELINUX_DEVELOP
-            make O="$OUT" olddefconfig
-          fi
-
-      - name: Validate configuration and integration
-        run: |
-          OUT="out-${{ matrix.variant }}"
-          grep -q '^CONFIG_KSU=y$' "$OUT/.config"
-          grep -q '^# CONFIG_KPROBES is not set$' "$OUT/.config"
-          grep -q '^# CONFIG_KSU_LSM_SECURITY_HOOKS is not set$' "$OUT/.config"
-          grep -q '^CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=y$' "$OUT/.config"
-          grep -q '^CONFIG_KSU_FEATURE_ADBROOT=y$' "$OUT/.config"
-          grep -q '^CONFIG_KSU_STRIP_READPROC_GID=y$' "$OUT/.config"
-          grep -q '^# CONFIG_KSU_HOSTSREDIRECT is not set$' "$OUT/.config"
-          grep -q '^CONFIG_USB_CONFIGFS=y$' "$OUT/.config"
-          grep -q '^CONFIG_USB_CONFIGFS_F_ADB=y$' "$OUT/.config"
-          grep -q '^CONFIG_PRINTK=y$' "$OUT/.config"
-          grep -q '^CONFIG_PSTORE=y$' "$OUT/.config"
-          grep -q '^CONFIG_PSTORE_CONSOLE=y$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=y$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES=y$' "$OUT/.config"
-          grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
-          grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
-          grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
-          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
-          grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
-          grep -q -- '-DKSU_VERSION=32594' drivers/kernelsu/Makefile
-          grep -q '^commit=f14aa96fc1817078ca50013b375631d499c42140$' drivers/kernelsu/UPSTREAM_COMMIT
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' out/.config
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' out/.config
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' out/.config
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' out/.config
+          grep -q '^CONFIG_MEMCG=y$' out/.config
+          grep -q '^CONFIG_SWAP=y$' out/.config
+          grep -q '^CONFIG_ZRAM=y$' out/.config
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' out/.config
+          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' out/.config
+          grep -q '^CONFIG_F2FS_FS=y$' out/.config
+          grep -q '^CONFIG_EROFS_FS=y$' out/.config
+          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' out/.config
+          grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' out/.config
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' out/.config
+          grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
+          grep -q 'KSU_EXPECTED_SIZE := 0x0363' drivers/kernelsu/Makefile
+          grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
-          ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
-          grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
-          ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
-          ! grep -q 'ksu_handle_setresuid(uid_t' kernel/sys.c
-          grep -q 'ksu_task_fix_setuid' security/security.c
-          if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
-            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
-          else
-            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
-            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
-            grep -q 'new_value = 0;' security/selinux/selinuxfs.c
-          fi
+          grep -q 'failed to mask watchdog reset for suspend' drivers/watchdog/s3c2410_wdt.c
 
-      - name: Build ${{ matrix.variant }} kernel
+      - name: Build kernel and DTB
         run: |
-          OUT="out-${{ matrix.variant }}"
-          make O="$OUT" -j"$(nproc)" Image dtb.img
+          make O=out -j"$(nproc)" Image dtb.img
 
-      - name: Validate known-good DTB
+      - name: Validate output
         run: |
-          OUT="out-${{ matrix.variant }}"
-          echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
-          strings -a "$OUT/arch/arm64/boot/Image" | grep -q '^32594$'
-          grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
-          if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
-          else
-            ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
-          fi
+          test -s out/arch/arm64/boot/Image
+          echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  out/arch/arm64/boot/dtb.img" | sha256sum -c -
+          grep -a -q 'simple_lmk: Ready with global vmpressure' out/arch/arm64/boot/Image
+          grep -a -q 'Alice-V6-SLMK-Note10EAS-KSU32590' out/arch/arm64/boot/Image
 
-      - name: Package ${{ matrix.variant }} output
+      - name: Package output
         run: |
-          OUT="out-${{ matrix.variant }}"
-          DEST="output-${{ matrix.variant }}"
-          mkdir -p "$DEST"
-          cp -v "$OUT/arch/arm64/boot/Image" "$DEST/"
-          cp -v "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
-          cp -v "$OUT/System.map" "$DEST/"
-          cp -v "$OUT/.config" "$DEST/kernel.config"
-          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
+          mkdir -p output
+          cp out/arch/arm64/boot/Image output/
+          cp out/arch/arm64/boot/dtb.img output/
+          cp out/System.map output/
+          cp out/.config output/kernel.config
+          sha256sum output/* > output/SHA256SUMS
 
-      - name: Upload ${{ matrix.variant }} kernel
+      - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-smooth-ksu32594-${{ matrix.variant }}-${{ github.sha }}
-          path: output-${{ matrix.variant }}/
+          name: dream2lte-v6-simplelmk-note10-eas-permissive-${{ github.sha }}
+          path: output/
           if-no-files-found: error

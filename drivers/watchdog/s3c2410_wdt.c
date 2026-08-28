@@ -709,15 +709,28 @@ static struct notifier_block nb_panic_block = {
 #ifdef CONFIG_PM
 static int s3c2410wdt_suspend(void)
 {
+	int ret;
 	struct s3c2410_wdt *wdt = s3c_wdt;
 
 	if (!wdt)
 		return 0;
 
 	s3c2410wdt_keepalive(&wdt->wdt_device);
-	/* Save watchdog state, and turn it off. */
+	/* Save the state before making reset impossible in suspend. */
 	wdt->wtcon_save = readl(wdt->reg_base + S3C2410_WTCON);
 	wdt->wtdat_save = readl(wdt->reg_base + S3C2410_WTDAT);
+
+	ret = s3c2410wdt_mask_wdt_reset(wdt, true);
+	if (ret < 0)
+		dev_err(wdt->dev, "failed to mask watchdog reset for suspend: %d\n",
+			ret);
+
+	ret = s3c2410wdt_automatic_disable_wdt(wdt, true);
+	if (ret < 0)
+		dev_err(wdt->dev, "failed to disable watchdog for suspend: %d\n",
+			ret);
+
+	s3c2410wdt_stop_intclear(wdt);
 
 	return 0;
 }
@@ -732,10 +745,9 @@ static void s3c2410wdt_resume(void)
 		return;
 
 	ret = s3c2410wdt_automatic_disable_wdt(wdt, false);
-	if (ret < 0) {
-		dev_info(wdt->dev, "automatic_dsiable fail");
-		return;
-	}
+	if (ret < 0)
+		dev_err(wdt->dev,
+			"failed to re-enable watchdog block: %d\n", ret);
 
 	s3c2410wdt_stop_intclear(wdt);
 	/* Restore watchdog state. */
@@ -744,10 +756,8 @@ static void s3c2410wdt_resume(void)
 	writel(wdt->wtcon_save, wdt->reg_base + S3C2410_WTCON);
 
 	ret = s3c2410wdt_mask_wdt_reset(wdt, false);
-	if (ret < 0) {
-		dev_info(wdt->dev, "wdt reset mask fail");
-		return;
-	}
+	if (ret < 0)
+		dev_err(wdt->dev, "failed to unmask watchdog reset: %d\n", ret);
 
 	val = readl(wdt->reg_base + S3C2410_WTCON);
 	dev_info(wdt->dev, "watchdog %sabled, con: 0x%08x, dat: 0x%08x, cnt: 0x%08x\n",
