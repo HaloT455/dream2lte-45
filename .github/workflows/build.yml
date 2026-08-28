@@ -116,7 +116,7 @@ jobs:
           test -s "$OUT/arch/arm64/boot/Image"
           test -s "$OUT/arch/arm64/boot/dtb.img"
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
-          grep -a -q '^32590$' "$OUT/arch/arm64/boot/Image"
+          strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
