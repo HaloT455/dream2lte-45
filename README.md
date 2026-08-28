@@ -30,21 +30,25 @@ new/empty output directory when producing the reproducible release build.
 - WALT-backed EAS with schedutil as the default and only dynamic CPU frequency
   governor; the mandatory performance fallback remains compiled.
 - Scheduler HMP and the CPU interactive governor are not compiled.
-- Cortex-A53 maximum OPP is 2002 MHz.
+- Cortex-A53 maximum OPP is 2002 MHz. Below 65 degrees C the APOLLO thermal
+  zone releases stale cooling limits so schedutil retains the complete OPP
+  range. At 65 degrees C and above it applies progressively stronger caps.
 - EAS begins wakeup placement near the task's previous CPU to preserve cache
   and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
   clusters and can select M2 when utilization requires it. There is no fixed
   85% A53 gate; schedutil uses a 2.5 ms up delay and 8 ms down delay for short
   responsive bursts without retaining a stale overclocked OPP.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
-- The Samsung kernel low-memory killer is enabled with automatic oom_adj
-  conversion. The downstream GID 3009 hook exempts adbd during early boot and
-  is removed at Android boot completion.
-- KernelSU 32594 uses manual Samsung 4.4 security hooks; automated LSM hook
+- Complete SimpleLMK is enabled with global and memcg vmpressure triggers,
+  bounded victim waits and the original OOM fallback when reclaim cannot run.
+- KernelSU 32590 uses manual Samsung 4.4 security hooks; automated LSM hook
   insertion, kprobes, syscall-table tampering, and hosts redirect are disabled.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
-- GPU frequency limits, CPU voltage tables and thermal limits are unchanged.
+- M2 retains the complete 741MHz..2.704GHz schedutil range below 65 degrees C.
+  Its stock power allocator starts at 65 degrees C and targets 70 degrees C.
+  GPU limits, CPU voltage tables, battery charging protection, and CPU hot
+  safety trips remain in place.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
 
 To create a flashable image while preserving a known-good boot image ramdisk

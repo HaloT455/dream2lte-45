@@ -1,4 +1,4 @@
-name: Build V6 SimpleLMK Note10-style EAS
+name: Build V6 SimpleLMK Note10 EAS 65C
 
 on:
   workflow_dispatch:
@@ -7,8 +7,12 @@ on:
       - backup/v6-simplelmk-note10-eas-20260828
 
 jobs:
-  build-permissive:
+  build:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [enforcing, permissive]
 
     steps:
       - name: Checkout source
@@ -38,66 +42,101 @@ jobs:
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
 
-      - name: Configure Permissive kernel
+      - name: Configure ${{ matrix.variant }} kernel
         run: |
-          make O=out exynos8895-dream2lte_defconfig
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" exynos8895-dream2lte_defconfig
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            scripts/config --file "$OUT/.config" \
+              --disable ALWAYS_PERMISSIVE \
+              --disable SECURITY_SELINUX_DEVELOP \
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-KSU32590-Enforcing"
+          else
+            scripts/config --file "$OUT/.config" \
+              --enable ALWAYS_PERMISSIVE \
+              --enable SECURITY_SELINUX_DEVELOP \
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-KSU32590-Permissive"
+          fi
+          scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
+          make O="$OUT" olddefconfig
 
       - name: Validate integration
         run: |
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' out/.config
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' out/.config
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' out/.config
-          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' out/.config
-          grep -q '^CONFIG_MEMCG=y$' out/.config
-          grep -q '^CONFIG_SWAP=y$' out/.config
-          grep -q '^CONFIG_ZRAM=y$' out/.config
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' out/.config
-          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' out/.config
-          grep -q '^CONFIG_F2FS_FS=y$' out/.config
-          grep -q '^CONFIG_EROFS_FS=y$' out/.config
-          grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' out/.config
-          grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' out/.config
-          grep -q '^CONFIG_KSU=y$' out/.config
-          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' out/.config
+          OUT="out-${{ matrix.variant }}"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$OUT/.config"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$OUT/.config"
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
+          grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
+          grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
+          grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
+          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
+          grep -q '^CONFIG_F2FS_FS=y$' "$OUT/.config"
+          grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
+          grep -q '^CONFIG_KSU=y$' "$OUT/.config"
+          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$OUT/.config"
           grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
           grep -q 'KSU_EXPECTED_SIZE := 0x0363' drivers/kernelsu/Makefile
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
           grep -q 'failed to mask watchdog reset for suspend' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'APOLLO_COOLING_RELEASE_TEMP.*64000' drivers/thermal/samsung/exynos_tmu.c
+          grep -A2 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
+          grep -A2 'mngs_alert1: mngs-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '70000'
+          grep -A2 'apo_alert1: apo-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
+          grep -q 'cooling-device = <&cpu0 1 1>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'cooling-device = <&cpu0 11 11>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
+            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
+          else
+            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
+            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
+          fi
 
       - name: Build kernel and DTB
         run: |
           set -o pipefail
-          make O=out -j"$(nproc)" Image dtb.img 2>&1 | tee build.log
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-build-log-${{ github.sha }}
-          path: build.log
+          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
       - name: Validate output
         run: |
-          test -s out/arch/arm64/boot/Image
-          echo "2179adc007d6505fe976ceb6904d70e18bb34416791f06d2c6a617d119da4dd3  out/arch/arm64/boot/dtb.img" | sha256sum -c -
-          grep -a -q 'simple_lmk: Ready with global vmpressure' out/arch/arm64/boot/Image
-          grep -a -q 'Alice-V6-SLMK-Note10EAS-KSU32590' out/arch/arm64/boot/Image
+          OUT="out-${{ matrix.variant }}"
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dtb.img"
+          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
+          grep -a -q '^32590$' "$OUT/arch/arm64/boot/Image"
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+          else
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+          fi
 
       - name: Package output
         run: |
-          mkdir -p output
-          cp out/arch/arm64/boot/Image output/
-          cp out/arch/arm64/boot/dtb.img output/
-          cp out/System.map output/
-          cp out/.config output/kernel.config
-          sha256sum output/* > output/SHA256SUMS
+          OUT="out-${{ matrix.variant }}"
+          DEST="output-${{ matrix.variant }}"
+          mkdir -p "$DEST"
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
+          cp "$OUT/System.map" "$DEST/"
+          cp "$OUT/.config" "$DEST/kernel.config"
+          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
 
-      - name: Upload kernel
+      - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-simplelmk-note10-eas-permissive-${{ github.sha }}
-          path: output/
+          name: dream2lte-v6-simplelmk-note10-eas-65c-${{ matrix.variant }}-${{ github.sha }}
+          path: output-${{ matrix.variant }}/
           if-no-files-found: error

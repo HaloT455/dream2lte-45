@@ -149,6 +149,14 @@
 #define TOTAL_SENSORS	8
 #define DEFAULT_BALANCE_OFFSET	20
 
+/*
+ * APOLLO throttling starts at 65C.  Release a stale A53 cooling state as
+ * soon as the sensor is one full degree below that trip.  This keeps the
+ * complete 455MHz..2.002GHz schedutil range available while cool, including
+ * after suspend and charger transitions, without bypassing hot protection.
+ */
+#define APOLLO_COOLING_RELEASE_TEMP	64000
+
 static bool suspended;
 static bool is_cpu_hotplugged_out;
 static DEFINE_MUTEX (thermal_suspend_lock);
@@ -721,6 +729,7 @@ static int exynos_get_temp(void *p, int *temp)
 {
 	struct exynos_tmu_data *data = p;
 	struct thermal_cooling_device *cdev;
+	unsigned long cooling_state;
 	unsigned int mcinfo_count;
 	unsigned int mcinfo_result[4] = {0, 0, 0, 0};
 	unsigned int mcinfo_logging = 0;
@@ -743,6 +752,11 @@ static int exynos_get_temp(void *p, int *temp)
 
 	if (!cdev)
 		return 0;
+
+	if (data->id == 1 && *temp < APOLLO_COOLING_RELEASE_TEMP &&
+	    cdev->ops->get_cur_state && cdev->ops->set_cur_state &&
+	    !cdev->ops->get_cur_state(cdev, &cooling_state) && cooling_state)
+		cdev->ops->set_cur_state(cdev, 0);
 
 	mutex_lock(&thermal_suspend_lock);
 

@@ -4667,12 +4667,14 @@
 					type = "active";
 				};
 				mngs_alert0: mngs-alert0 {
-					temperature = <55000>; /* millicelsius */
+					/* Full M2 OPP range remains available below 65C. */
+					temperature = <65000>; /* millicelsius */
 					hysteresis = <2000>; /* millicelsius */
 					type = "active";
 				};
 				mngs_alert1: mngs-alert1 {
-					temperature = <83000>; /* millicelsius */
+					/* Power allocator ramps cooling after the 65C switch-on. */
+					temperature = <70000>; /* millicelsius */
 					hysteresis = <5000>; /* millicelsius */
 					type = "passive";
 				};
@@ -4697,9 +4699,10 @@
 
 		apo_thermal: APOLLO {
 			zone_name  = "APO_THERMAL";
-			polling-delay-passive = <0>;
-			polling-delay = <0>;
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
 			thermal-sensors = <&tmuctrl_1>;
+			governor = "step_wise";
 
 			trips {
 				apo_alert0: apo-alert0 {
@@ -4708,32 +4711,32 @@
 					type = "active";
 				};
 				apo_alert1: apo-alert1 {
-					temperature = <76000>; /* millicelsius */
-					hysteresis = <5000>; /* millicelsius */
+					temperature = <65000>; /* millicelsius */
+					hysteresis = <1000>; /* millicelsius */
 					type = "active";
 				};
 				apo_alert2: apo-alert2 {
-					temperature = <81000>; /* millicelsius */
-					hysteresis = <5000>; /* millicelsius */
+					temperature = <70000>; /* millicelsius */
+					hysteresis = <2000>; /* millicelsius */
 					type = "active";
 				};
 				apo_alert3: apo-alert3 {
-					temperature = <86000>; /* millicelsius */
-					hysteresis = <5000>; /* millicelsius */
+					temperature = <75000>; /* millicelsius */
+					hysteresis = <3000>; /* millicelsius */
 					type = "active";
 				};
 				apo_alert4: apo-alert4 {
-					temperature = <91000>; /* millicelsius */
+					temperature = <80000>; /* millicelsius */
 					hysteresis = <5000>; /* millicelsius */
 					type = "active";
 				};
 				apo_alert5: apo-alert5 {
-					temperature = <96000>; /* millicelsius */
+					temperature = <85000>; /* millicelsius */
 					hysteresis = <5000>; /* millicelsius */
 					type = "active";
 				};
 				apo_alert6: apo-alert6 {
-					temperature = <101000>; /* millicelsius */
+					temperature = <90000>; /* millicelsius */
 					hysteresis = <5000>; /* millicelsius */
 					type = "active";
 				};
@@ -4747,43 +4750,43 @@
 			cooling-maps {
 				map0 {
 				     trip = <&apo_alert0>;
-				     /* Corresponds to 1586MHz at freq_table */
+				     /* No A53 frequency limit below the 65C trip. */
 				     cooling-device = <&cpu0 0 0>;
 				};
 				map1 {
 				     trip = <&apo_alert1>;
-				     /* Corresponds to 1482MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 65C: first gentle cap, 1.898GHz. */
+				     cooling-device = <&cpu0 1 1>;
 			       };
 				map2 {
 				     trip = <&apo_alert2>;
-				     /* Corresponds to 1378MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 70C: 1.794GHz. */
+				     cooling-device = <&cpu0 2 2>;
 				};
 				map3 {
 				     trip = <&apo_alert3>;
-				     /* Corresponds to 1170MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 75C: 1.690GHz. */
+				     cooling-device = <&cpu0 3 3>;
 				};
 				map4 {
 				     trip = <&apo_alert4>;
-				     /* Corresponds to 1066MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 80C: 1.456GHz. */
+				     cooling-device = <&cpu0 4 4>;
 				};
 				map5 {
 				     trip = <&apo_alert5>;
-				     /* Corresponds to 442MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 85C: 1.248GHz. */
+				     cooling-device = <&cpu0 5 5>;
 			       };
 				map6 {
 				     trip = <&apo_alert6>;
-				     /* Corresponds to 442MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* 90C: 949MHz. */
+				     cooling-device = <&cpu0 7 7>;
 				};
 				map7 {
 				     trip = <&apo_hot>;
-				     /* Corresponds to 442MHz at freq_table */
-				     cooling-device = <&cpu0 0 0>;
+				     /* Preserve the stock hot trip and minimum safe OPP. */
+				     cooling-device = <&cpu0 11 11>;
 				};
 			};
 		};
