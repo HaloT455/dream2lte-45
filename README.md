@@ -34,12 +34,13 @@ new/empty output directory when producing the reproducible release build.
   cooling states below 71 degrees C, so schedutil can reach that OPP instead
   of remaining stuck at cooling state 3 / 1690 MHz after suspend or a power
   event. Real APOLLO heating still progressively caps A53 from 76 degrees C.
-- EAS begins wakeup placement near the task's previous CPU to preserve cache
-  and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
-  clusters and can select M2 when utilization requires it. A neutral 1:1
-  capacity margin removes custom A53 spill thresholds. Schedutil raises an OPP
-  within 3 ms for genuine load and releases stale high OPPs after 8 ms,
-  completing work quickly and returning the clusters to idle sooner. Deferred
+- EAS uses Android's schedtune hint to begin latency-sensitive top-app searches
+  from M2, preventing `prefer_idle` from accepting an idle A53 before examining
+  the high-capacity cluster. Normal work retains cache affinity, and a neutral
+  1:1 capacity margin keeps custom A53 spill thresholds removed. Schedutil
+  raises an OPP within 1 ms and waits 20 ms before lowering it, spanning a
+  60 Hz frame to prevent mid-frame OPP ping-pong without locking a minimum
+  frequency. Deferred
   DVFS requests are serialized so an update cannot be lost while the slow
   cpufreq driver is running. Both policy workers run on CPU0, which Exynos
   hotplug keeps online, so an M2 screen-off transition cannot strand its worker.

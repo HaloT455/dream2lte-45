@@ -1,4 +1,4 @@
-name: Build Dream2LTE SimpleLMK5 Charger and Apollo Fix
+name: Build Dream2LTE SmoothFrame Charger and Apollo Fix
 
 on:
   workflow_dispatch:
@@ -68,10 +68,10 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-ChargerFix-KSU32590-LMK5-Enforcing"
+              --set-str LOCALVERSION "-Alice-SmoothFrame-KSU32590-LMK5-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
-              --set-str LOCALVERSION "-Alice-ChargerFix-KSU32590-LMK5-Permissive"
+              --set-str LOCALVERSION "-Alice-SmoothFrame-KSU32590-LMK5-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -114,8 +114,8 @@ jobs:
           grep -q '^KSU_EXPECTED_SIZE := 0x0363$' drivers/kernelsu/Makefile
           grep -q '^KSU_EXPECTED_HASH := 4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549$' drivers/kernelsu/Makefile
           grep -q '^e874376f71d80c6ee4163fafdc03e62412adbc49$' drivers/kernelsu/UPSTREAM_COMMIT
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(3000)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(1000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
           grep -q '^unsigned int capacity_margin = 1024;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1126;$' kernel/sched/fair.c
           ! grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
@@ -134,8 +134,9 @@ jobs:
           grep -q 'value = { .intval = 0 }' drivers/battery_v2/max77865_charger.c
           grep -q 'MAX77865 can assert fuel-gauge and' drivers/mfd/max77865-irq.c
           grep -q 'ignore stale QC work for dev' drivers/muic/universal/muic_hv_max77865.c
-          grep -q 'cpu = start_cpu(p);' kernel/sched/fair.c
-          ! grep -q 'return boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;' kernel/sched/fair.c
+          grep -q 'cpu = start_cpu(p, boosted);' kernel/sched/fair.c
+          grep -q 'if (boosted)' kernel/sched/fair.c
+          grep -q 'return rd->max_cap_orig_cpu;' kernel/sched/fair.c
           test ! -e drivers/staging/android/lowmemorykiller.c
           test ! -e drivers/staging/android/trace/lowmemorykiller.h
           grep -q 'simple_lmk_decide_reclaim' mm/vmscan.c
@@ -155,11 +156,11 @@ jobs:
           grep -q 'ksu_handle_sys_reboot' kernel/reboot.c
           ! grep -q 'ksu_' kernel/sys.c
           if [ "${{ matrix.variant }}" = enforcing ]; then
-            grep -q '^CONFIG_LOCALVERSION="-Alice-ChargerFix-KSU32590-LMK5-Enforcing"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SmoothFrame-KSU32590-LMK5-Enforcing"$' "$OUT/.config"
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
           else
-            grep -q '^CONFIG_LOCALVERSION="-Alice-ChargerFix-KSU32590-LMK5-Permissive"$' "$OUT/.config"
+            grep -q '^CONFIG_LOCALVERSION="-Alice-SmoothFrame-KSU32590-LMK5-Permissive"$' "$OUT/.config"
             grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
             grep -q 'new_value = 0;' security/selinux/selinuxfs.c
@@ -183,10 +184,10 @@ jobs:
           ! grep -a -q 'prevent gid 3009 assignment' "$OUT/arch/arm64/boot/Image"
           grep -a -q 'simple_lmk: ' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = permissive ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-ChargerFix-KSU32590-LMK5-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-SmoothFrame-KSU32590-LMK5-Permissive' "$OUT/arch/arm64/boot/Image"
             grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-ChargerFix-KSU32590-LMK5-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-SmoothFrame-KSU32590-LMK5-Enforcing' "$OUT/arch/arm64/boot/Image"
             ! grep -a -q 'always-permissive build ignored enforcing request' "$OUT/arch/arm64/boot/Image"
           fi
 
@@ -204,6 +205,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-charger-apollo-fix-simplelmk5-ksu-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-smoothframe-charger-apollo-simplelmk5-ksu-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

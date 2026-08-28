@@ -6312,7 +6312,7 @@ static int cpu_util_wake(int cpu, struct task_struct *p)
 	return (util >= capacity) ? capacity : util;
 }
 
-static int start_cpu(struct task_struct *p)
+static int start_cpu(struct task_struct *p, bool boosted)
 {
 	struct root_domain *rd = cpu_rq(smp_processor_id())->rd;
 	int cpu = task_cpu(p);
@@ -6321,13 +6321,15 @@ static int start_cpu(struct task_struct *p)
 			   "sched RCU must be held");
 
 	/*
-	 * Preserve cache and cluster affinity for short UI wakeups.  Starting
-	 * every boosted/prefer-idle search on the maximum-capacity cluster wakes
-	 * all M2 cores for small frame work and causes thermal oscillation.  EAS
-	 * still scans every capacity class and can select M2 when utilization no
-	 * longer fits A53; this seed only avoids an unconditional cross-cluster
-	 * jump.
+	 * Android marks latency-sensitive top-app work with schedtune boost.
+	 * Start at the maximum-capacity class. This prevents prefer-idle from
+	 * returning the first idle A53 before examining M2. This only selects
+	 * the EAS search order. Schedutil still chooses frequency from
+	 * utilization, with no minimum-frequency or cluster lock.
 	 */
+	if (boosted)
+		return rd->max_cap_orig_cpu;
+
 	if (cpu_online(cpu) && cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
 		return cpu;
 
@@ -6335,7 +6337,7 @@ static int start_cpu(struct task_struct *p)
 }
 
 static inline int find_best_target(struct task_struct *p, int *backup_cpu,
-				   bool prefer_idle)
+				   bool boosted, bool prefer_idle)
 {
 	unsigned long min_util = boosted_task_util(p);
 	unsigned long target_capacity = ULONG_MAX;
@@ -6356,8 +6358,8 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 	schedstat_inc(p, se.statistics.nr_wakeups_fbt_attempts);
 	schedstat_inc(this_rq(), eas_stats.fbt_attempts);
 
-	/* Start close to the task; EAS remains free to choose either cluster. */
-	cpu = start_cpu(p);
+	/* Let Android's latency hint choose the first EAS capacity class. */
+	cpu = start_cpu(p, boosted);
 	if (cpu < 0) {
 		schedstat_inc(p, se.statistics.nr_wakeups_fbt_no_cpu);
 		schedstat_inc(this_rq(), eas_stats.fbt_no_cpu);
@@ -6676,7 +6678,7 @@ static int select_energy_cpu_brute(struct task_struct *p, int prev_cpu, int sync
 	sync_entity_load_avg(&p->se);
 
 	/* Find a cpu with sufficient capacity */
-	tmp_target = find_best_target(p, &tmp_backup, prefer_idle);
+	tmp_target = find_best_target(p, &tmp_backup, boosted, prefer_idle);
 
 	if (tmp_target >= 0) {
 		target_cpu = tmp_target;
