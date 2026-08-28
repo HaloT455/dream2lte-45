@@ -46,12 +46,12 @@ new/empty output directory when producing the reproducible release build.
   hotplug keeps online, so an M2 screen-off transition cannot strand its worker.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Android LMK is removed and replaced by Simple LMK with a 128 MiB minfree
-  threshold, kswapd reclaim priority 5, and a bounded 200 ms victim-release
-  timeout. This lets memory pressure be handled before kswapd reaches its last
-  reclaim levels without reserving more RAM. Simple LMK starts only after
+  threshold, global vmpressure trigger, and a bounded 200 ms victim-release
+  timeout. Pressure samples reset between allocator stalls so stale data
+  cannot trigger kills while idle. Simple LMK starts only after
   Android configures the legacy `lowmemorykiller.minfree` endpoint, runs at
-  normal scheduler priority and falls back to the regular OOM killer if its
-  worker is unavailable or already busy.
+  normal scheduler priority, serializes reclaim requests, and falls back to
+  the regular OOM killer only if its worker cannot make progress.
 - Hard- and soft-lockup detectors, pstore and the Exynos watchdog stay enabled,
   but transient lockup reports no longer deliberately panic and reboot five
   seconds later. Genuine panics still retain the existing five-second reboot

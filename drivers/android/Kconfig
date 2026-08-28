@@ -46,7 +46,8 @@ config ANDROID_SIMPLE_LMK
 	---help---
 	  A small in-kernel low memory killer for Android. It selects victims
 	  using oom_score_adj, starting with the least important processes, and
-	  frees a bounded amount of memory when kswapd reaches critical pressure.
+	  frees a bounded amount of memory when global vmpressure reaches its
+	  critical level. It can coexist with memcg and compressed swap.
 
 if ANDROID_SIMPLE_LMK
 
@@ -64,14 +65,6 @@ config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	help
 	  Maximum time to wait for a victim batch to release its memory before
 	  Simple LMK accepts another reclaim request.
-
-config ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY
-	int "kswapd priority that triggers reclaim"
-	range 1 5
-	default 1
-	help
-	  Trigger Simple LMK when kswapd reaches this scan priority. Priority 1
-	  is deliberately conservative for a 4 GiB device.
 
 endif
 

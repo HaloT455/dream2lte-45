@@ -63,6 +63,7 @@
 #include <linux/sched/rt.h>
 #include <linux/page_owner.h>
 #include <linux/kthread.h>
+#include <linux/vmpressure.h>
 
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
@@ -3118,6 +3119,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	enum migrate_mode migration_mode = MIGRATE_ASYNC;
 	bool deferred_compaction = false;
 	int contended_compaction = COMPACT_CONTENDED_NONE;
+	bool used_vmpressure = false;
 
 	/*
 	 * In the slowpath, we sanity check order to avoid ever trying to
@@ -3151,8 +3153,11 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 retry:
-	if (gfp_mask & __GFP_KSWAPD_RECLAIM)
+	if (gfp_mask & __GFP_KSWAPD_RECLAIM) {
+		if (!used_vmpressure)
+			used_vmpressure = vmpressure_inc_users(order);
 		wake_all_kswapds(order, ac);
+	}
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -3262,6 +3267,8 @@ retry:
 		migration_mode = MIGRATE_SYNC_LIGHT;
 
 	/* Try direct reclaim and then allocating */
+	if (!used_vmpressure)
+		used_vmpressure = vmpressure_inc_users(order);
 	page = __alloc_pages_direct_reclaim(gfp_mask, order, alloc_flags, ac,
 							&did_some_progress);
 	if (page)
@@ -3310,6 +3317,8 @@ got_pg:
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 	clear_tsk_thread_flag(current, TIF_MEMALLOC);
 #endif
+	if (used_vmpressure)
+		vmpressure_dec_users();
 	return page;
 }
 

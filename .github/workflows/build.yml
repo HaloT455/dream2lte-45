@@ -101,7 +101,6 @@ jobs:
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$OUT/.config"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$OUT/.config"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY=5$' "$OUT/.config"
           ! grep -q '^CONFIG_ANDROID_LOW_MEMORY_KILLER=' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
@@ -139,7 +138,8 @@ jobs:
           grep -q 'return rd->max_cap_orig_cpu;' kernel/sched/fair.c
           test ! -e drivers/staging/android/lowmemorykiller.c
           test ! -e drivers/staging/android/trace/lowmemorykiller.h
-          grep -q 'simple_lmk_decide_reclaim' mm/vmscan.c
+          grep -q 'vmpressure_notifier_register' drivers/android/simple_lmk.c
+          grep -q 'vmpressure_inc_users' mm/page_alloc.c
           grep -q 'simple_lmk_mm_freed' kernel/fork.c
           grep -q 'simple_lmk_oom_reclaim' drivers/android/simple_lmk.c
           grep -q 'set_user_nice(current, -10)' drivers/android/simple_lmk.c

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2019-2023 Sultan Alsawaf <sultan@kerneltoast.com>.
- *
- * Linux 4.4 kswapd trigger adapted for the Exynos 8895 tree.
  */
 
 #define pr_fmt(fmt) "simple_lmk: " fmt
@@ -14,6 +12,7 @@
 #include <linux/oom.h>
 #include <linux/ratelimit.h>
 #include <linux/sort.h>
+#include <linux/vmpressure.h>
 
 #define MIN_FREE_PAGES \
 	(CONFIG_ANDROID_SIMPLE_LMK_MINFREE * SZ_1M / PAGE_SIZE)
@@ -33,10 +32,18 @@ static DECLARE_WAIT_QUEUE_HEAD(oom_waitq);
 static DECLARE_COMPLETION(reclaim_done);
 static __cacheline_aligned_in_smp DEFINE_RWLOCK(mm_free_lock);
 static int nr_victims;
-static atomic_t needs_reclaim = ATOMIC_INIT(0);
 static atomic_t nr_killed = ATOMIC_INIT(0);
 static atomic_t lmk_ready = ATOMIC_INIT(0);
 static atomic_t init_done = ATOMIC_INIT(0);
+static atomic_t oom_fallback = ATOMIC_INIT(0);
+
+enum simple_lmk_reclaim_state {
+	SIMPLE_LMK_IDLE,
+	SIMPLE_LMK_QUEUED,
+	SIMPLE_LMK_RUNNING,
+};
+
+static atomic_t reclaim_state = ATOMIC_INIT(SIMPLE_LMK_IDLE);
 
 static int victim_cmp(const void *lhs_ptr, const void *rhs_ptr)
 {
@@ -155,15 +162,16 @@ static int process_victims(int vlen)
 	return nr_to_kill;
 }
 
-static void scan_and_kill(void)
+static bool scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
 	unsigned long pages_found;
+	bool reclaimed;
 
 	pages_found = find_victims(&nr_found);
 	if (unlikely(!nr_found)) {
 		pr_err_ratelimited("No processes available to kill\n");
-		return;
+		return false;
 	}
 
 	if (pages_found > MIN_FREE_PAGES) {
@@ -204,7 +212,8 @@ static void scan_and_kill(void)
 		task_unlock(vtsk);
 	}
 
-	if (!wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES))
+	reclaimed = wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES);
+	if (!reclaimed)
 		pr_info("Timeout waiting for victims, continuing\n");
 
 	write_lock(&mm_free_lock);
@@ -212,31 +221,52 @@ static void scan_and_kill(void)
 	nr_victims = 0;
 	nr_killed = (atomic_t)ATOMIC_INIT(0);
 	write_unlock(&mm_free_lock);
+
+	return reclaimed;
 }
 
 static int simple_lmk_reclaim_thread(void *data)
 {
+	int old_state;
+
 	/* Avoid starving Android's unlock path with a FIFO 99 process scan. */
 	set_user_nice(current, -10);
 	set_freezable();
 
 	while (1) {
-		wait_event_freezable(oom_waitq, atomic_read(&needs_reclaim));
-		scan_and_kill();
-		atomic_set_release(&needs_reclaim, 0);
+		if (wait_event_freezable(oom_waitq,
+					 atomic_read(&reclaim_state) ==
+					 SIMPLE_LMK_QUEUED))
+			continue;
+
+		old_state = atomic_cmpxchg_acquire(
+			&reclaim_state, SIMPLE_LMK_QUEUED, SIMPLE_LMK_RUNNING);
+		if (old_state != SIMPLE_LMK_QUEUED)
+			continue;
+
+		if (!scan_and_kill())
+			atomic_set_release(&oom_fallback, 1);
+
+		atomic_set_release(&reclaim_state, SIMPLE_LMK_IDLE);
 	}
 
 	return 0;
 }
 
-void simple_lmk_decide_reclaim(int kswapd_priority)
+static bool simple_lmk_queue_reclaim(bool reset_fallback)
 {
-	if (!atomic_read(&lmk_ready) ||
-	    kswapd_priority != CONFIG_ANDROID_SIMPLE_LMK_KSWAPD_PRIORITY)
-		return;
+	if (!atomic_read(&lmk_ready))
+		return false;
 
-	if (!atomic_cmpxchg_acquire(&needs_reclaim, 0, 1))
-		wake_up(&oom_waitq);
+	if (atomic_cmpxchg_acquire(&reclaim_state, SIMPLE_LMK_IDLE,
+				   SIMPLE_LMK_QUEUED) != SIMPLE_LMK_IDLE)
+		return false;
+
+	if (reset_fallback)
+		atomic_set_release(&oom_fallback, 0);
+
+	wake_up(&oom_waitq);
+	return true;
 }
 
 bool simple_lmk_oom_reclaim(void)
@@ -244,11 +274,12 @@ bool simple_lmk_oom_reclaim(void)
 	if (!atomic_read(&lmk_ready))
 		return false;
 
-	/* The regular OOM killer is the safety net while SimpleLMK is busy. */
-	if (atomic_cmpxchg_acquire(&needs_reclaim, 0, 1))
+	/* Fall back once only after Simple LMK could not make progress. */
+	if (atomic_xchg(&oom_fallback, 0))
 		return false;
 
-	wake_up(&oom_waitq);
+	/* A queued/running reclaim already indicates OOM progress. */
+	simple_lmk_queue_reclaim(false);
 	return true;
 }
 
@@ -270,22 +301,45 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 	read_unlock(&mm_free_lock);
 }
 
+static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
+				    unsigned long pressure, void *data)
+{
+	if (pressure >= 100)
+		simple_lmk_queue_reclaim(true);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block vmpressure_notif = {
+	.notifier_call = simple_lmk_vmpressure_cb,
+	.priority = INT_MAX,
+};
+
 static int simple_lmk_start(void)
 {
 	struct task_struct *thread;
+	int ret;
 
 	if (atomic_cmpxchg(&init_done, 0, 1))
 		return 0;
 
+	ret = vmpressure_notifier_register(&vmpressure_notif);
+	if (ret) {
+		atomic_set(&init_done, 0);
+		pr_err("Failed to register vmpressure notifier: %d\n", ret);
+		return ret;
+	}
+
 	thread = kthread_run(simple_lmk_reclaim_thread, NULL, "simple_lmkd");
 	if (IS_ERR(thread)) {
+		vmpressure_notifier_unregister(&vmpressure_notif);
 		atomic_set(&init_done, 0);
 		pr_err("Failed to start reclaim thread: %ld\n", PTR_ERR(thread));
 		return PTR_ERR(thread);
 	}
 
 	atomic_set_release(&lmk_ready, 1);
-	pr_info("Ready with regular OOM fallback\n");
+	pr_info("Ready with global vmpressure and serialized OOM fallback\n");
 	return 0;
 }
 
