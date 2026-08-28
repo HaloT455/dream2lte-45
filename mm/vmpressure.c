@@ -338,16 +338,6 @@ static void vmpressure_global(unsigned long scanned, bool critical,
 	vmpressure_notify(min(pressure, 100UL));
 }
 
-static void __vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool critical,
-			 unsigned long scanned, unsigned long reclaimed)
-{
-	if (!memcg)
-		vmpressure_global(scanned, critical, reclaimed);
-
-	if (IS_ENABLED(CONFIG_MEMCG))
-		vmpressure_memcg(gfp, memcg, critical, scanned, reclaimed);
-}
-
 /**
  * vmpressure() - Account memory pressure through scanned/reclaimed ratio
  * @gfp:	reclaimer's gfp mask
@@ -364,6 +354,13 @@ void vmpressure(gfp_t gfp, struct mem_cgroup *memcg,
 	if (order > PAGE_ALLOC_COSTLY_ORDER)
 		return;
 
+	/* Preserve Android's existing per-memcg userspace notifications. */
+	if (IS_ENABLED(CONFIG_MEMCG))
+		vmpressure_memcg(gfp, memcg, false, scanned, reclaimed);
+
+	if (memcg)
+		return;
+
 	read_lock_irqsave(&global_pressure_users_lock, flags);
 	if (!atomic_long_read(&global_pressure_users)) {
 		read_unlock_irqrestore(&global_pressure_users_lock, flags);
@@ -371,7 +368,7 @@ void vmpressure(gfp_t gfp, struct mem_cgroup *memcg,
 	}
 	read_unlock_irqrestore(&global_pressure_users_lock, flags);
 
-	__vmpressure(gfp, memcg, false, scanned, reclaimed);
+	vmpressure_global(scanned, false, reclaimed);
 }
 
 /**
@@ -403,7 +400,10 @@ void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio, int order)
 	 * range vmscan. A critical report is sent before reclaim dives into a
 	 * long scan.
 	 */
-	__vmpressure(gfp, memcg, true, 0, 0);
+	if (IS_ENABLED(CONFIG_MEMCG))
+		vmpressure_memcg(gfp, memcg, true, 0, 0);
+	if (!memcg)
+		vmpressure_global(0, true, 0);
 }
 
 /**

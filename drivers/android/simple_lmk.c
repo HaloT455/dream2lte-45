@@ -166,7 +166,7 @@ static bool scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
 	unsigned long pages_found;
-	bool reclaimed;
+	bool completed, reclaimed;
 
 	pages_found = find_victims(&nr_found);
 	if (unlikely(!nr_found)) {
@@ -212,11 +212,12 @@ static bool scan_and_kill(void)
 		task_unlock(vtsk);
 	}
 
-	reclaimed = wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES);
-	if (!reclaimed)
+	completed = wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES);
+	if (!completed)
 		pr_info("Timeout waiting for victims, continuing\n");
 
 	write_lock(&mm_free_lock);
+	reclaimed = completed || atomic_read(&nr_killed) > 0;
 	reinit_completion(&reclaim_done);
 	nr_victims = 0;
 	nr_killed = (atomic_t)ATOMIC_INIT(0);
