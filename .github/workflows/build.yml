@@ -1,4 +1,4 @@
-name: Build V6 SimpleLMK Note10 EAS 65C
+name: Build V6 SimpleLMK Note10 EAS 65C Suspend Fix
 
 on:
   workflow_dispatch:
@@ -50,12 +50,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-KSU32590-Permissive"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -81,7 +81,10 @@ jobs:
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'failed to mask watchdog reset for suspend' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
+          grep -q '\.pm.*= &s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
+          ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'kthread_bind_mask(thread, cpumask_of(SUGOV_WORKER_CPU))' kernel/sched/cpufreq_schedutil.c
           grep -q 'APOLLO_COOLING_RELEASE_TEMP.*64000' drivers/thermal/samsung/exynos_tmu.c
           grep -A2 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
           grep -A2 'mngs_alert1: mngs-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '70000'
@@ -118,9 +121,9 @@ jobs:
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
