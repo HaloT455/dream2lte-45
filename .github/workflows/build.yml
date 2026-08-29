@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - backup/v6-simplelmk-note10-eas-20260828
+      - agent/ems-v3-thermal65-simplelmk
 
 jobs:
   build:
