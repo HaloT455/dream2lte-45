@@ -226,7 +226,8 @@ static void sec_reboot(enum reboot_mode reboot_mode, const char *cmd)
 	}
 
 	flush_cache_all();
-	mach_restart(REBOOT_SOFT, "sw reset");
+	/* Keep the reboot target available to the SoC reset handler. */
+	mach_restart(REBOOT_SOFT, cmd ? cmd : "sw reset");
 
 	pr_emerg("%s: waiting for reboot\n", __func__);
 	while (1)
