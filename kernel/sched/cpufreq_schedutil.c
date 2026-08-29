@@ -29,7 +29,6 @@ unsigned long boosted_cpu_util(int cpu);
 #define SUGOV_DEFAULT_UP_RATE_LIMIT_US		(2500)
 #define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US	(8000)
 #define SUGOV_KTHREAD_PRIORITY	50
-#define SUGOV_WORKER_CPU	0
 
 struct sugov_tunables {
 	struct gov_attr_set attr_set;
@@ -144,10 +143,8 @@ static void sugov_update_commit(struct sugov_policy *sg_policy, u64 time,
 		policy->cur = next_freq;
 		trace_cpu_frequency(next_freq, smp_processor_id());
 	} else {
-		if (!sg_policy->work_in_progress) {
-			sg_policy->work_in_progress = true;
-			irq_work_queue(&sg_policy->irq_work);
-		}
+		sg_policy->work_in_progress = true;
+		irq_work_queue(&sg_policy->irq_work);
 	}
 }
 
@@ -325,9 +322,7 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 			sg_policy->cached_raw_freq = 0;
 		}
 	}
-	raw_spin_lock(&sg_policy->update_lock);
 	sugov_update_commit(sg_policy, time, next_f);
-	raw_spin_unlock(&sg_policy->update_lock);
 }
 
 static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
@@ -405,23 +400,13 @@ static void sugov_update_shared(struct update_util_data *hook, u64 time,
 static void sugov_work(struct kthread_work *work)
 {
 	struct sugov_policy *sg_policy = container_of(work, struct sugov_policy, work);
-	unsigned long flags;
-	unsigned int freq;
-
-	/*
-	 * Snapshot the newest request and clear the busy flag while serialized
-	 * with update-util callbacks. A request arriving while the slow driver
-	 * changes an OPP can then queue a fresh pass instead of being lost.
-	 */
-	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-	freq = sg_policy->next_freq;
-	sg_policy->work_in_progress = false;
-	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
 	mutex_lock(&sg_policy->work_lock);
-	__cpufreq_driver_target(sg_policy->policy, freq,
+	__cpufreq_driver_target(sg_policy->policy, sg_policy->next_freq,
 				CPUFREQ_RELATION_L);
 	mutex_unlock(&sg_policy->work_lock);
+
+	sg_policy->work_in_progress = false;
 }
 
 static void sugov_irq_work(struct irq_work *irq_work)
@@ -587,11 +572,7 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	}
 
 	sg_policy->thread = thread;
-	/*
-	 * CPU0 stays online through Exynos screen-off hotplug. Keep both slow
-	 * DVFS workers runnable while the complete M2 policy is being offlined.
-	 */
-	kthread_bind_mask(thread, cpumask_of(SUGOV_WORKER_CPU));
+	kthread_bind_mask(thread, policy->related_cpus);
 	init_irq_work(&sg_policy->irq_work, sugov_irq_work);
 	mutex_init(&sg_policy->work_lock);
 
@@ -838,13 +819,8 @@ static int sugov_stop(struct cpufreq_policy *policy)
 	synchronize_sched();
 
 	if (!policy->fast_switch_enabled) {
-		unsigned long flags;
-
 		irq_work_sync(&sg_policy->irq_work);
 		kthread_cancel_work_sync(&sg_policy->work);
-		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		sg_policy->work_in_progress = false;
-		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
 	return 0;
 }
