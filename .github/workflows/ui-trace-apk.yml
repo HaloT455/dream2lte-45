@@ -18,8 +18,11 @@ jobs:
         run: |
           python3 scripts/test_ui_trace.py
           sh -n scripts/collect_ui_trace.sh
-      - name: Install Android build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Check runner Android build tools
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
       - name: Build and verify APK
         run: bash apps/ui-trace/build.sh
       - uses: actions/upload-artifact@v4
