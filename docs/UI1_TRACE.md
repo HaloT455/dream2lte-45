@@ -23,9 +23,11 @@ do not switch to Permissive merely to work around trace access errors.
 
 ## Capture (Windows CMD)
 
-The companion APK on `agent/ui-trace-apk` uses this collector for a 60-second
-recording without USB; see `apps/ui-trace/README.md`. Both routes remain
-on-demand UI diagnostics, not persistent reboot logging.
+The companion APK 1.1 on `agent/ui-trace-apk` now uses native Perfetto for a
+60-second binary recording without USB; see `apps/ui-trace/README.md`.
+The older text collector below remains available for compatibility, but
+overran its ring buffer in the user's 60-second run. Do not use it to claim
+a complete timeline. Both routes are on-demand UI diagnostics, not reboot logging.
 
 After flashing the corresponding UI1-Trace boot through your existing
 working recovery method, let the phone finish booting and cool down.

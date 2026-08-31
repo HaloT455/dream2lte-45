@@ -8,9 +8,11 @@ build_tools="$trace_sdk/build-tools/35.0.0"
 android_jar="$trace_sdk/platforms/android-35/android.jar"
 out="$app_dir/out"
 mkdir -p "$out/gen" "$out/classes" "$out/dex" "$out/assets" "$out/test"
-cp "$repo_dir/scripts/collect_ui_trace.sh" "$out/assets/collect_ui_trace.sh"
-javac --release 8 -d "$out/test" "$app_dir/src/vn/alice/uitrace/SafeFiles.java" "$app_dir/tests/SafeFilesTest.java"
+cp "$repo_dir/scripts/collect_ui_perfetto.sh" "$out/assets/collect_ui_perfetto.sh"
+cp "$app_dir/assets/ui-perfetto.pbtxt" "$out/assets/ui-perfetto.pbtxt"
+javac --release 8 -d "$out/test" "$app_dir/src/vn/alice/uitrace/SafeFiles.java" "$app_dir/src/vn/alice/uitrace/TraceArchive.java" "$app_dir/tests/SafeFilesTest.java" "$app_dir/tests/TraceArchiveTest.java"
 java -ea -cp "$out/test" vn.alice.uitrace.SafeFilesTest
+java -ea -Xmx32m -cp "$out/test" vn.alice.uitrace.TraceArchiveTest
 "$build_tools/aapt2" compile --dir "$app_dir/res" -o "$out/resources.zip"
 "$build_tools/aapt2" link -o "$out/base.apk" -I "$android_jar" --manifest "$app_dir/AndroidManifest.xml" \
     --java "$out/gen" -A "$out/assets" "$out/resources.zip"
@@ -29,11 +31,11 @@ keytool -genkeypair -keystore "$out/signing.p12" -storetype PKCS12 \
     -dname 'CN=ALice UI Trace Diagnostic' -noprompt
 "$build_tools/apksigner" sign --ks "$out/signing.p12" --ks-key-alias ui-trace \
     --ks-pass env:TRACE_KEY_PASSWORD --key-pass env:TRACE_KEY_PASSWORD \
-    --out "$out/ALice-UI-Trace-1.0.apk" "$out/aligned.apk"
-"$build_tools/apksigner" verify --verbose --print-certs "$out/ALice-UI-Trace-1.0.apk" > "$out/apk-verification.txt"
-"$build_tools/aapt2" dump badging "$out/ALice-UI-Trace-1.0.apk" >> "$out/apk-verification.txt"
-"$build_tools/zipalign" -c -p 4 "$out/ALice-UI-Trace-1.0.apk"
-grep -q "package: name='vn.alice.uitrace' versionCode='1'" "$out/apk-verification.txt"
+    --out "$out/ALice-UI-Trace-1.1.apk" "$out/aligned.apk"
+"$build_tools/apksigner" verify --verbose --print-certs "$out/ALice-UI-Trace-1.1.apk" > "$out/apk-verification.txt"
+"$build_tools/aapt2" dump badging "$out/ALice-UI-Trace-1.1.apk" >> "$out/apk-verification.txt"
+"$build_tools/zipalign" -c -p 4 "$out/ALice-UI-Trace-1.1.apk"
+grep -q "package: name='vn.alice.uitrace' versionCode='2'" "$out/apk-verification.txt"
 ! grep -q 'INTERNET\|MANAGE_EXTERNAL_STORAGE\|REQUEST_INSTALL_PACKAGES\|RECEIVE_BOOT_COMPLETED\|application-debuggable' "$out/apk-verification.txt"
 cd "$out"
-sha256sum ALice-UI-Trace-1.0.apk > SHA256SUMS
+sha256sum ALice-UI-Trace-1.1.apk > SHA256SUMS

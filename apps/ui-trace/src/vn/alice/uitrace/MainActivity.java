@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
             }
             return insets;
         });
-        addText(body, "ALice UI Trace", 28, Color.WHITE);
+        addText(body, "ALice UI Trace 1.1", 28, Color.WHITE);
         addText(body, "GHI VẾT GIẬT / KHỰNG • 60 GIÂY", 12, Color.rgb(85,214,186));
         addText(body, "Cấp root → bắt đầu ghi → thao tác đến lúc khựng → mở lại app và chia sẻ log. Đo được khi rút USB.", 16, Color.LTGRAY);
         rootStatus = addText(body, "Chưa kiểm tra root và kernel.", 14, Color.LTGRAY);
@@ -73,7 +73,7 @@ public final class MainActivity extends Activity {
         stop = button(body, "Dừng ghi sớm");
         stop.setOnClickListener(v -> startService(new Intent(this, TraceService.class).setAction(TraceService.STOP)));
         status = addText(body, "Sẵn sàng kiểm tra.", 16, Color.WHITE);
-        addText(body, "Không Internet, không tự gửi dữ liệu. Không chỉnh xung, nhiệt, SELinux hay giữ wakelock. Trace ở RAM lúc đo; file log được lưu trên điện thoại khi kết thúc.", 13, Color.LTGRAY);
+        addText(body, "Không Internet, không tự gửi dữ liệu. Không chỉnh xung, nhiệt, SELinux hay giữ wakelock. Perfetto ghi nhị phân liên tục ra bộ nhớ máy; cần 600 MiB trống. Khi xong hãy gửi ZIP, TXT chỉ là thông tin kèm theo.", 13, Color.LTGRAY);
         addText(body, "LOG ĐÃ LƯU — chạm để chia sẻ", 14, Color.rgb(85,214,186));
         logs = new LinearLayout(this);
         logs.setOrientation(LinearLayout.VERTICAL);
@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
             boolean supported = false;
             Process process = null;
             try {
-                process = new ProcessBuilder("su", "-c", "id -u && uname -r && cat /proc/filesystems")
+                process = new ProcessBuilder("su", "-c", "id -u && uname -r && cat /proc/filesystems && command -v perfetto && perfetto --version")
                     .redirectErrorStream(true).start();
                 if (!process.waitFor(60, TimeUnit.SECONDS)) throw new Exception("Quá thời gian chờ cấp root.");
                 StringBuilder output = new StringBuilder();
@@ -109,7 +109,7 @@ public final class MainActivity extends Activity {
                     String line; while ((line = reader.readLine()) != null && output.length() < 16000) output.append(line).append('\n');
                 }
                 if (process.exitValue() != 0 || !output.toString().matches("(?s).*\\b0\\s*\\n.*"))
-                    throw new Exception("Chưa được cấp root.\n" + output);
+                    throw new Exception("Chưa có root hoặc ROM thiếu Perfetto.\n" + output);
                 supported = output.toString().matches("(?s).*\\btracefs\\b.*");
                 String kernel = "";
                 for (String line : output.toString().split("\n")) if (line.startsWith("4.")) kernel = line;
@@ -147,7 +147,7 @@ public final class MainActivity extends Activity {
     private void showLogs() {
         if (logs == null) return;
         logs.removeAllViews();
-        File[] files = new File(getFilesDir(), "logs").listFiles((dir, name) -> name.matches("ui-trace-[0-9]{8}-[0-9]{6}-[0-9]+\\.txt"));
+        File[] files = new File(getFilesDir(), "logs").listFiles((dir, name) -> SafeFiles.validLogName(name));
         if (files == null || files.length == 0) { addText(logs, "Chưa có log.", 14, Color.LTGRAY); return; }
         Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());
         for (File file : files) {
@@ -159,7 +159,7 @@ public final class MainActivity extends Activity {
     private void share(String name) {
         try {
             Uri uri = new Uri.Builder().scheme("content").authority("vn.alice.uitrace.logs").appendPath(name).build();
-            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri);
+            Intent send = new Intent(Intent.ACTION_SEND).setType(SafeFiles.mimeType(name)).putExtra(Intent.EXTRA_STREAM, uri);
             send.setClipData(ClipData.newRawUri("UI trace", uri));
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(send, "Gửi log để phân tích"));

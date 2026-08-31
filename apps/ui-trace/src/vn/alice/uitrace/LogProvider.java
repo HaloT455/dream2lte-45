@@ -25,7 +25,7 @@ public final class LogProvider extends ContentProvider {
         if (!"r".equals(mode)) throw new FileNotFoundException("Read-only logs");
         return ParcelFileDescriptor.open(resolve(uri), ParcelFileDescriptor.MODE_READ_ONLY);
     }
-    @Override public String getType(Uri uri) { return "text/plain"; }
+    @Override public String getType(Uri uri) { return SafeFiles.mimeType(uri.getLastPathSegment()); }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
         try {
             File file = resolve(uri);

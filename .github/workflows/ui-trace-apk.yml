@@ -18,6 +18,8 @@ jobs:
         run: |
           python3 scripts/test_ui_trace.py
           sh -n scripts/collect_ui_trace.sh
+          python3 scripts/test_ui_perfetto.py
+          sh -n scripts/collect_ui_perfetto.sh
       - name: Check runner Android build tools
         run: |
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
@@ -29,7 +31,7 @@ jobs:
         with:
           name: alice-ui-trace-apk-${{ github.sha }}
           path: |
-            apps/ui-trace/out/ALice-UI-Trace-1.0.apk
+            apps/ui-trace/out/ALice-UI-Trace-1.1.apk
             apps/ui-trace/out/SHA256SUMS
             apps/ui-trace/out/apk-verification.txt
           if-no-files-found: error

@@ -10,7 +10,7 @@ final class SafeFiles {
     }
 
     static File log(File directory, String name) throws IOException {
-        if (name == null || !name.matches("ui-trace-[0-9]{8}-[0-9]{6}-[0-9]+\\.txt"))
+        if (!validLogName(name))
             throw new IOException("Invalid log name");
         File root = directory.getCanonicalFile();
         File file = new File(root, name).getCanonicalFile();
@@ -18,9 +18,15 @@ final class SafeFiles {
         return file;
     }
 
+    static boolean validLogName(String name) {
+        return name != null && name.matches("ui-trace-[0-9]{8}-[0-9]{6}-[0-9]+\\.(txt|zip)");
+    }
+
+    static String mimeType(String name) { return name != null && name.endsWith(".zip") ? "application/zip" : "text/plain"; }
+
     static String stopCommand(long pid, File script) {
         if (pid <= 1 || pid > Integer.MAX_VALUE) throw new IllegalArgumentException("Invalid pid");
-        return "if grep -Fq -- " + quote(script.getAbsolutePath()) + " /proc/" + pid
-            + "/cmdline; then kill -TERM " + pid + "; fi";
+        return "if tr '\\000' '\\n' < /proc/" + pid + "/cmdline | grep -Fxq -- "
+            + quote(script.getAbsolutePath()) + "; then kill -TERM " + pid + "; fi";
     }
 }
