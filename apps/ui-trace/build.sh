@@ -19,7 +19,7 @@ java -ea -Xmx32m -cp "$out/test" vn.alice.uitrace.TraceArchiveTest
 find "$app_dir/src" "$out/gen" -name '*.java' -print > "$out/sources.txt"
 javac --release 8 -encoding UTF-8 -classpath "$android_jar" -d "$out/classes" @"$out/sources.txt"
 jar cf "$out/classes.jar" -C "$out/classes" .
-"$build_tools/d8" --release --min-api 26 --lib "$android_jar" --output "$out/dex" "$out/classes.jar"
+"$build_tools/d8" --release --min-api 30 --lib "$android_jar" --output "$out/dex" "$out/classes.jar"
 zip -j "$out/base.apk" "$out/dex/classes.dex"
 "$build_tools/zipalign" -f -p 4 "$out/base.apk" "$out/aligned.apk"
 # Per-build diagnostic signing key: never upload the private key or password.

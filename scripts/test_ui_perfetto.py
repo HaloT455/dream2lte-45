@@ -11,7 +11,7 @@ CONFIG = SCRIPT.parent.parent / 'apps/ui-trace/assets/ui-perfetto.pbtxt'
 EVENTS = ('sched/sched_switch', 'sched/sched_wakeup',
           'vmscan/mm_vmscan_direct_reclaim_begin', 'vmscan/mm_vmscan_direct_reclaim_end')
 MOCK = r'''#!/usr/bin/env python3
-import os, signal, sys, time
+import os, re, signal, sys, time
 from pathlib import Path
 root = Path(os.environ['ALICE_FAKE_ROOT'])
 mode = os.environ.get('ALICE_FAKE_MODE', '')
@@ -23,6 +23,7 @@ elif name == 'getenforce': print('Enforcing')
 elif name == 'pidof': sys.exit(1)
 elif name == 'mount': sys.exit(1)
 elif name == 'umount': sys.exit(0)
+elif name == 'cp': sys.exit(1)
 elif name == 'perfetto':
     if '--version' in sys.argv: print('Perfetto mocked'); sys.exit(0)
     (root / 'called').write_text(' '.join(sys.argv[1:]))
@@ -30,7 +31,8 @@ elif name == 'perfetto':
     proc = root / 'proc' / str(os.getpid())
     proc.mkdir()
     (proc / 'cmdline').write_bytes(b'\0'.join(s.encode() for s in sys.argv) + b'\0')
-    output = Path(sys.argv[sys.argv.index('-o') + 1])
+    config = Path(sys.argv[sys.argv.index('-c') + 1]).read_text()
+    output = Path(re.search(r'^output_path: "([^"]+)"$', config, re.M)[1])
     output.write_bytes(b'\x0a\x03abc' * 1000)
     nodes = list((trace / 'events').rglob('enable'))
     if mode != 'missing_events':
@@ -75,18 +77,20 @@ class PerfettoCollectorTests(unittest.TestCase):
             (bin_dir / name).symlink_to(mock)
         # Fake proc also models argv ownership: host proc/PID namespaces can differ.
         script = SCRIPT.read_text()
-        for prefix in ('/proc/', '/sys/', '/dev/cpuctl/'):
+        for prefix in ('/proc/', '/sys/', '/dev/cpuctl/', '/data/misc/perfetto-traces'):
             script = script.replace(prefix, str(self.root) + prefix)
         self.script = self.root / 'collector.sh'
         self.script.write_text(script)
         self.config = self.root / 'config.pbtxt'
-        self.config.write_text(CONFIG.read_text())
+        self.native = self.root / 'data/misc/perfetto-traces/alice-ui-12345678-1234-1234-1234-123456789abc.perfetto-trace'
+        self.native.parent.mkdir(parents=True)
+        self.config.write_text(CONFIG.read_text() + '\noutput_path: "' + str(self.native) + '"\n')
         self.output = self.root / 'output.trace'
         self.output.touch()
         self.env = dict(os.environ, ALICE_FAKE_ROOT=str(self.root), PATH=str(bin_dir) + ':' + os.environ['PATH'])
 
     def run_capture(self, mode=''):
-        return subprocess.run(['sh', str(self.script), str(self.config), str(self.output)],
+        return subprocess.run(['sh', str(self.script), str(self.config), str(self.output), str(self.native)],
                               env=dict(self.env, ALICE_FAKE_MODE=mode), capture_output=True, text=True, timeout=25)
 
     def test_success_binary_not_dumped_to_text(self):
@@ -96,6 +100,7 @@ class PerfettoCollectorTests(unittest.TestCase):
         self.assertIn('ALICE_CAPTURE_COMPLETE', result.stdout)
         self.assertIn('=== after ===', result.stdout)
         self.assertEqual(self.output.stat().st_size, 5000)
+        self.assertFalse(self.native.exists())
         self.assertNotIn('\x03abc', result.stdout)
 
     def test_signal_flushes_owned_child(self):
@@ -123,6 +128,20 @@ class PerfettoCollectorTests(unittest.TestCase):
         result = self.run_capture('start_failure')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('ALICE_CAPTURE_COMPLETE', result.stdout)
+
+    def test_existing_native_output_never_overwritten(self):
+        self.native.write_bytes(b'KEEP')
+        result = self.run_capture()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.native.read_bytes(), b'KEEP')
+        self.assertFalse((self.root / 'called').exists())
+
+    def test_copy_failure_preserves_native_output(self):
+        (self.root / 'bin/cp').symlink_to(self.root / 'bin/mock')
+        result = self.run_capture()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.native.exists())
+        self.assertIn('Native trace retained', result.stdout)
 
     def test_cleanup_failure_not_success(self):
         result = self.run_capture('cleanup_failure')

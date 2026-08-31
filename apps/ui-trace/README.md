@@ -1,7 +1,7 @@
 # ALice UI Trace 1.1
 
 Native Java root APK, one user-initiated **60-second** UI trace.
-Android 8+ API compatibility; the ROM must also provide a working **Perfetto**
+Android 11+; the ROM must also provide a working **Perfetto**
 command and system traced/traced_probes services. Compile/target SDK 35.
 The UI1-Trace kernel (or equivalent event tracing support) is still required.
 
@@ -16,6 +16,12 @@ not fix the pipeline.
 only metadata/status, never millions of formatted event lines. The trace is
 written to phone storage while measuring: this has I/O and tracing overhead.
 It is not a zero-overhead benchmark and cannot guarantee zero dropped events.
+
+System traced creates a uniquely named file in its standard allowed directory,
+then root imports that exact file into the app after recording and removes the
+native duplicate only after successful copy. No app-private fd is passed to
+traced, which would commonly fail under enforcing SELinux. If import fails,
+the native file is kept and its exact path is written in the error TXT.
 
 The fixed config requests 60,000 ms, 2 MiB ftrace buffers per CPU, an 18 MiB
 central buffer, 100 ms ftrace drain and 1-second file writes. The binary file
@@ -67,7 +73,8 @@ watchdog requests cancellation, then terminates an unresponsive su client
 15 seconds later. Stopping su is not proof its root child stopped. SIGKILL,
 process death and reboot cannot guarantee cleanup. On an unconfirmed cleanup,
 the app preserves diagnostics and advises reboot before recording again.
-Partial raw files can remain private after a failure; successfully archived
+Partial raw files can remain in the app or standard Perfetto directory after
+a failure; successfully archived
 raw/config/script intermediates are removed. No recovery of kernel panic logs
 across reboot is promised.
 
@@ -89,3 +96,4 @@ Primary references:
 - https://perfetto.dev/docs/concepts/config
 - https://github.com/google/perfetto/blob/v48.1/protos/perfetto/config/trace_config.proto
 - https://github.com/google/perfetto/blob/v48.1/src/perfetto_cmd/perfetto_cmd.cc
+- https://github.com/LineageOS/android_system_sepolicy/blob/lineage-22.2/private/traced.te

@@ -117,7 +117,8 @@ public final class TraceService extends Service {
             report = SafeFiles.log(directory, base + ".txt");
             if (!report.createNewFile()) throw new Exception("Tên log đã tồn tại.");
             if (directory.getUsableSpace() < MIN_FREE) throw new Exception("Cần ít nhất 600 MiB trống để ghi và đóng gói log.");
-            session = new File(getFilesDir(), "capture-" + java.util.UUID.randomUUID());
+            String token = java.util.UUID.randomUUID().toString();
+            session = new File(getFilesDir(), "capture-" + token);
             if (!session.mkdir()) throw new Exception("Không tạo được phiên ghi.");
             script = new File(session, "capture.sh");
             config = new File(session, "ui-perfetto.pbtxt");
@@ -125,12 +126,17 @@ public final class TraceService extends Service {
             if (!trace.createNewFile()) throw new Exception("Không tạo được file trace.");
             asset("collect_ui_perfetto.sh", script);
             asset("ui-perfetto.pbtxt", config);
+            String nativeOutput = "/data/misc/perfetto-traces/alice-ui-" + token + ".perfetto-trace";
+            try (FileOutputStream out = new FileOutputStream(config, true)) {
+                out.write(("\noutput_path: \"" + nativeOutput + "\"\n").getBytes(StandardCharsets.UTF_8));
+            }
             try (BufferedWriter output = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(report), StandardCharsets.UTF_8), 32768)) {
                 output.write("ALice UI Trace APK 1.1\nRequested capture: 60 seconds\nBinary trace is in the ZIP; this TXT is metadata, not the full trace.\n");
                 Thread.sleep(3000);
                 if (!cancelRequested) {
                     String command = "echo ALICE_ROOT_PID=$$; exec sh " + SafeFiles.quote(script.getAbsolutePath())
-                        + " " + SafeFiles.quote(config.getAbsolutePath()) + " " + SafeFiles.quote(trace.getAbsolutePath());
+                        + " " + SafeFiles.quote(config.getAbsolutePath()) + " " + SafeFiles.quote(trace.getAbsolutePath())
+                        + " " + SafeFiles.quote(nativeOutput);
                     process = new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
                     long written = 0;
                     boolean capped = false;

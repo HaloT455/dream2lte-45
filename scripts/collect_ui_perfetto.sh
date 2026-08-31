@@ -3,10 +3,22 @@
 # Perfetto drains ftrace continuously and writes a bounded binary file.
 set -eu
 umask 077
-[ "$#" = 2 ] || { echo 'Expected config and pre-created output.'; exit 2; }
+[ "$#" = 3 ] || { echo 'Expected config, pre-created output and owned native output.'; exit 2; }
 config=$1
 output=$2
+native_output=$3
 [ -f "$config" ] && [ -f "$output" ] && [ ! -L "$config" ] && [ ! -L "$output" ] || exit 2
+native_name=${native_output##*/}
+token=${native_name#alice-ui-}
+token=${token%.perfetto-trace}
+case "$token" in ''|*[!a-f0-9-]*) echo 'Invalid session token.'; exit 2 ;; esac
+[ "${#token}" = 36 ] &&
+    [ "$native_output" = "/data/misc/perfetto-traces/alice-ui-$token.perfetto-trace" ] || exit 2
+[ -d /data/misc/perfetto-traces ] || { echo 'ROM has no Perfetto output directory.'; exit 2; }
+[ ! -e "$native_output" ] && [ ! -L "$native_output" ] || {
+    echo 'Native output already exists; never overwrite another log.'; exit 2;
+}
+grep -Fxq -- "output_path: \"$native_output\"" "$config" || exit 2
 [ "$(id -u)" = 0 ] || { echo 'Run through su.'; exit 2; }
 command -v perfetto >/dev/null || { echo 'ROM has no perfetto. No settings changed.'; exit 2; }
 
@@ -96,13 +108,16 @@ snapshot() {
 }
 
 echo 'ALice UI Trace 1.1; Perfetto binary; requested duration=60000 ms'
+echo "NATIVE_OUTPUT=$native_output"
 uname -r
 getenforce
 perfetto --version
 snapshot before
 [ "$interrupted" = 0 ] || exit 130
 echo 'ALICE_STARTING'
-perfetto --txt -c "$config" -o "$output" &
+# Android 11+ traced creates this file in its allowed directory. Do not pass
+# an app-private fd: enforcing traced cannot generally write app_data_file.
+perfetto --txt -c "$config" &
 child=$!
 if [ "$interrupted" = 1 ]; then stop_child; fi
 started=0
@@ -141,6 +156,12 @@ echo "CAPTURE_CANCELLED=$interrupted"
 [ "$(cat "$trace_dir/events/enable")" = 0 ] || {
     echo 'ALICE_CLEANUP_UNCONFIRMED: events remain enabled; no forced reset.'; exit 1;
 }
+# Import only the exact session output after the native writer has stopped.
+# On copy failure leave the native file and its path in the TXT for recovery.
+if [ -f "$native_output" ] && [ ! -L "$native_output" ]; then
+    cp "$native_output" "$output" || { echo 'Native trace retained: import failed.'; exit 1; }
+    rm -- "$native_output" || { echo 'Native trace duplicate retained: cleanup failed.'; exit 1; }
+fi
 # Perform owned-mount cleanup before claiming success.
 if [ "$mounted_here" = 1 ]; then umount "$trace_dir" || exit 1; mounted_here=0; fi
 echo 'ALICE_CLEANUP_OK'
