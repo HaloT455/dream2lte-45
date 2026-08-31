@@ -1,12 +1,10 @@
-name: Build V6 SimpleLMK Note10 EAS 65C Sleep Stable
+name: Build V6 Kernel UI1 Candidate
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - backup/v6-simplelmk-note10-eas-20260828
-      - agent/ems-v3-thermal65-simplelmk
-      - agent/ems-v4-suspend-stable
+      - agent/ems-v5-ui-smooth
 
 jobs:
   build:
@@ -40,9 +38,16 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-ui1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Mon Aug 31 00:00:00 UTC 2026" >> "$GITHUB_ENV"
+
+      - name: Host scheduler regression checks
+        run: |
+          python3 scripts/test_schedutil_work.py
+          python3 scripts/test_cpu_ui_hints.py
+          sh -n scripts/collect_ui_perf.sh
+          git diff --check
 
       - name: Configure ${{ matrix.variant }} kernel
         run: |
@@ -52,12 +57,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SS-Enf"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-UI1-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SS-Perm"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-UI1-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -74,6 +79,9 @@ jobs:
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
+          grep -q '^CONFIG_SCHED_CPU_UI_HINTS=y$' "$OUT/.config"
+          grep -q '^CONFIG_CGROUP_SCHEDTUNE=y$' "$OUT/.config"
+          grep -q '^CONFIG_FAIR_GROUP_SCHED=y$' "$OUT/.config"
           grep -q '^CONFIG_F2FS_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_KSU=y$' "$OUT/.config"
@@ -111,7 +119,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v6-ui1-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -122,10 +130,13 @@ jobs:
           test -s "$OUT/arch/arm64/boot/dtb.img"
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
+          grep -q ' sched_cpu_ui_cpu_boost$' "$OUT/System.map"
+          grep -q ' sched_cpu_ui_task_boost$' "$OUT/System.map"
+          grep -a -q 'ui_hint_prefer_idle' "$OUT/arch/arm64/boot/Image"
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SS-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-UI1-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SS-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-UI1-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -142,6 +153,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-sleep-stable-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v6-ui1-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
