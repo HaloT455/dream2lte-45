@@ -1,0 +1,32 @@
+name: Build ALice UI Trace APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/ui-trace-apk]
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate bounded collector
+        run: |
+          python3 scripts/test_ui_trace.py
+          sh -n scripts/collect_ui_trace.sh
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build and verify APK
+        run: bash apps/ui-trace/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alice-ui-trace-apk-${{ github.sha }}
+          path: |
+            apps/ui-trace/out/ALice-UI-Trace-1.0.apk
+            apps/ui-trace/out/SHA256SUMS
+            apps/ui-trace/out/apk-verification.txt
+          if-no-files-found: error

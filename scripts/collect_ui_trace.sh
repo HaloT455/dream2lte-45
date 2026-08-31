@@ -3,12 +3,12 @@
 # stdout is a text bundle; stderr reports progress/errors. No log file on UFS.
 set -eu
 
-seconds=${1-15}
+seconds=${1-60}
 case "$seconds" in
-    ''|*[!0-9]*) echo 'Duration must be 5..20 seconds.' >&2; exit 2 ;;
+    ''|*[!0-9]*) echo 'Duration must be 5..60 seconds.' >&2; exit 2 ;;
 esac
-if [ "${#seconds}" -gt 2 ] || [ "$seconds" -lt 5 ] || [ "$seconds" -gt 20 ]; then
-    echo 'Duration must be 5..20 seconds.' >&2
+if [ "${#seconds}" -gt 2 ] || [ "$seconds" -lt 5 ] || [ "$seconds" -gt 60 ]; then
+    echo 'Duration must be 5..60 seconds.' >&2
     exit 2
 fi
 [ "$(id -u)" = 0 ] || { echo 'Run through su.' >&2; exit 2; }
@@ -17,6 +17,17 @@ command -v atrace >/dev/null || { echo 'atrace is missing.' >&2; exit 2; }
 trace_dir=
 mounted_here=0
 trace_owned=0
+capture_waiting=0
+capture_wait_pid=
+interrupted=0
+interrupt_capture() {
+    if [ "$capture_waiting" = 1 ]; then
+        interrupted=1
+        if [ -n "$capture_wait_pid" ]; then kill "$capture_wait_pid" 2>/dev/null || true; fi
+    else
+        exit 130
+    fi
+}
 cleanup() {
     result=$?
     trap - EXIT HUP INT TERM PIPE
@@ -39,7 +50,8 @@ cleanup() {
     exit "$result"
 }
 trap cleanup EXIT
-trap 'exit 130' HUP INT TERM PIPE
+trap interrupt_capture HUP INT TERM
+trap 'exit 130' PIPE
 
 for candidate in /sys/kernel/tracing /sys/kernel/debug/tracing; do
     if [ -e "$candidate/trace_marker" ]; then
@@ -131,13 +143,13 @@ snapshot() {
     done
 }
 
-printf 'UI1-Trace capture v1; duration=%ss; buffer=4096 KiB per CPU\n' "$seconds"
+printf 'UI1-Trace capture v2; duration=%ss; buffer=8192 KiB per CPU\n' "$seconds"
 uname -r
 getenforce
 printf 'Trace directory: %s\nCategories: %s\n' "$trace_dir" "$*"
 snapshot before
 trace_owned=1
-atrace --async_start -b 4096 "$@" >/dev/null
+atrace --async_start -b 8192 "$@" >/dev/null
 # Some Android atrace versions return success even when setup fails.
 [ "$(cat "$trace_dir/tracing_on")" = 1 ] || { echo 'Trace did not start.' >&2; exit 1; }
 for event in sched/sched_switch sched/sched_wakeup power/cpu_frequency \
@@ -147,7 +159,13 @@ for event in sched/sched_switch sched/sched_wakeup power/cpu_frequency \
     }
 done
 echo "Recording: repeat the stuttering gesture for $seconds seconds." >&2
-sleep "$seconds"
+capture_waiting=1
+sleep "$seconds" &
+capture_wait_pid=$!
+if [ "$interrupted" = 1 ]; then kill "$capture_wait_pid" 2>/dev/null || true; fi
+wait "$capture_wait_pid" || { [ "$interrupted" = 1 ] || exit 1; }
+capture_waiting=0
+capture_wait_pid=
 printf '0\n' > "$trace_dir/tracing_on"
 printf '\n=== buffer stats ===\n'
 for node in "$trace_dir"/per_cpu/cpu*/stats; do read_node "$node"; done
@@ -159,3 +177,7 @@ printf '\n=== trace end ===\n'
 trace_owned=0
 snapshot after
 echo 'Finished. Trace events stopped; no performance settings changed.' >&2
+if [ "$interrupted" = 1 ]; then
+    echo 'Stopped early: saved the available partial trace.' >&2
+    exit 130
+fi

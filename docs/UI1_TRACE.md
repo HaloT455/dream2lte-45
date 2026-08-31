@@ -23,6 +23,10 @@ do not switch to Permissive merely to work around trace access errors.
 
 ## Capture (Windows CMD)
 
+The companion APK on `agent/ui-trace-apk` uses this collector for a 60-second
+recording without USB; see `apps/ui-trace/README.md`. Both routes remain
+on-demand UI diagnostics, not persistent reboot logging.
+
 After flashing the corresponding UI1-Trace boot through your existing
 working recovery method, let the phone finish booting and cool down.
 Stop/save any other Perfetto, System Tracing or atrace session first.
@@ -32,11 +36,11 @@ until the command finishes. Do not collect sensitive app content unnecessarily.
 
 ```bat
 adb push collect_ui_trace.sh /data/local/tmp/collect_ui_trace.sh
-adb shell "su -c 'sh /data/local/tmp/collect_ui_trace.sh 15'" > ui1-trace.txt
+adb shell "su -c 'sh /data/local/tmp/collect_ui_trace.sh 60'" > ui1-trace.txt
 ```
 
 When `Recording` appears, reproduce Home scrolling and the recents transition
-for 15 seconds. Upload `ui1-trace.txt`; include stderr if any error appears.
+for 60 seconds. Upload `ui1-trace.txt`; include stderr if any error appears.
 The bundle contains before/after gfxinfo and system snapshots, per-CPU buffer
 loss statistics, and the trace delimited by `=== trace begin/end ===`.
 It records CPU scheduling, frequency, idle and Binder events plus UI markers;
@@ -46,7 +50,7 @@ to distinguish runnable delay from blocking or UI work.
 
 Only standard tracing controls and, when needed, a temporary tracefs mount
 are changed. No SELinux/policy/permission, governor, voltage, thermal, cache,
-wakelock or swap writes. The buffer is 4096 KiB per CPU (up to 32 MiB on this
+wakelock or swap writes. The buffer is 8192 KiB per CPU (up to 64 MiB on this
 8-core device), kept in RAM and dumped over ADB. The script does not create a
 log file on phone storage. This does not assert that the rest of Android makes
 no storage writes or that temporary RAM pressure cannot affect the workload.

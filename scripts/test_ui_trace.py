@@ -121,10 +121,16 @@ class CollectorTests(unittest.TestCase):
         self.assert_stopped()
 
     def test_invalid_durations(self):
-        for seconds in ('', '0', '4', '21', '999999999999999999999', '-1', '5;id', 'abc'):
+        for seconds in ('', '0', '4', '61', '999999999999999999999', '-1', '5;id', 'abc'):
             with self.subTest(seconds=seconds):
                 self.assertNotEqual(self.run_capture(seconds=seconds).returncode, 0)
         self.assertNotIn('--async_start', self.calls())
+
+    def test_sixty_seconds_accepted(self):
+        result = self.run_capture(seconds='60')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('duration=60s', result.stdout)
+        self.assertIn('-b 8192', self.calls())
 
     def test_nonroot_and_missing_category(self):
         for mode in ('nonroot', 'missing_category'):
@@ -149,6 +155,10 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 130, result.stderr)
         self.assert_stopped()
         self.assertIn('--async_stop', self.calls())
+        self.assertIn('=== trace begin ===', result.stdout)
+        self.assertIn('sched_switch:', result.stdout)
+        self.assertIn('Stopped early:', result.stderr)
+        self.assertEqual(self.calls().count('--async_stop'), 1)
 
     def test_missing_kernel_support(self):
         (self.trace / 'trace_marker').unlink()
