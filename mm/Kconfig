@@ -789,3 +789,38 @@ config PAGE_BOOST_RECORDING
 	  Record Everything for the chosen process.
 	  As Android executes an app one by one, only allow 1 recording
 	  at a time.
+
+config LRU_GEN
+	bool "Multigenerational LRU"
+	depends on MMU
+	help
+	  A high performance LRU implementation for workloads that overcommit
+	  memory. See Documentation/vm/multigen_lru.rst for details.
+
+config LRU_GEN_ENABLED
+	bool "Turn on by default"
+	depends on LRU_GEN
+	help
+	  Enable the multigenerational LRU fast path during boot.
+
+config LRU_GEN_STATS
+	bool "Full stats for debugging"
+	depends on LRU_GEN
+	help
+	  Keep complete per-generation statistics for debugfs reporting.
+
+config NR_LRU_GENS
+	int "Max number of generations"
+	depends on LRU_GEN
+	range 4 31
+	default 7
+	help
+	  Use order_base_2(N+1) spare bits in page flags.
+
+config TIERS_PER_GEN
+	int "Number of tiers per generation"
+	depends on LRU_GEN
+	range 2 5
+	default 4
+	help
+	  Use N-2 spare bits in page flags to track buffered-I/O accesses.

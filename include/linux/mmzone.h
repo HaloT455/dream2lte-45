@@ -212,6 +212,7 @@ enum zone_stat_item {
 #define LRU_BASE 0
 #define LRU_ACTIVE 1
 #define LRU_FILE 2
+#define ANON_AND_FILE 2
 
 enum lru_list {
 	LRU_INACTIVE_ANON = LRU_BASE,
@@ -254,9 +255,60 @@ struct zone_reclaim_stat {
 	unsigned long		recent_scanned[2];
 };
 
+struct lruvec;
+
+#define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
+#define LRU_USAGE_MASK		((BIT(LRU_USAGE_WIDTH) - 1) << LRU_USAGE_PGOFF)
+
+#ifdef CONFIG_LRU_GEN
+
+#define MAX_NR_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+#define MAX_NR_TIERS		((unsigned int)CONFIG_TIERS_PER_GEN)
+#define LRU_TIER_FLAGS		(BIT(PG_referenced) | BIT(PG_workingset))
+#define LRU_USAGE_SHIFT		(CONFIG_TIERS_PER_GEN - 1)
+
+#ifdef CONFIG_LRU_GEN_STATS
+#define NR_STAT_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+#else
+#define NR_STAT_GENS		1U
+#endif
+
+struct lrugen {
+	unsigned long max_seq;
+	unsigned long min_seq[ANON_AND_FILE];
+	unsigned long timestamps[MAX_NR_GENS];
+	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	unsigned long sizes[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	atomic_long_t evicted[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t refaulted[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	unsigned long activated[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS - 1];
+	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
+	bool enabled[ANON_AND_FILE];
+};
+
+void lru_gen_init_lruvec(struct lruvec *lruvec);
+void lru_gen_set_state(bool enable, bool main, bool swap);
+
+#else /* CONFIG_LRU_GEN */
+
+static inline void lru_gen_init_lruvec(struct lruvec *lruvec)
+{
+}
+
+static inline void lru_gen_set_state(bool enable, bool main, bool swap)
+{
+}
+
+#endif /* CONFIG_LRU_GEN */
+
 struct lruvec {
 	struct list_head lists[NR_LRU_LISTS];
 	struct zone_reclaim_stat reclaim_stat;
+#ifdef CONFIG_LRU_GEN
+	/* Unevictable pages remain on LRU_UNEVICTABLE. */
+	struct lrugen evictable;
+#endif
 #ifdef CONFIG_MEMCG
 	struct zone *zone;
 #endif
