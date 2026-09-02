@@ -182,6 +182,8 @@ struct mem_cgroup_id {
 	atomic_t ref;
 };
 
+struct lru_gen_mm_list;
+
 /*
  * The memory controller data structure. The memory controller controls both
  * page cache and RSS per cgroup. We would eventually like to provide
@@ -283,10 +285,15 @@ struct mem_cgroup {
 	struct list_head event_list;
 	spinlock_t event_list_lock;
 
+#ifdef CONFIG_LRU_GEN
+	struct lru_gen_mm_list *mm_list;
+#endif
+
 	struct mem_cgroup_per_node *nodeinfo[0];
 	/* WARNING: nodeinfo must be the last member here */
 };
 extern struct cgroup_subsys_state *mem_cgroup_root_css;
+extern struct mem_cgroup *root_mem_cgroup;
 
 /**
  * mem_cgroup_events - count memory events against a cgroup
@@ -505,6 +512,14 @@ out:
 void mem_cgroup_split_huge_fixup(struct page *head);
 #endif
 
+struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm);
+
+static inline void mem_cgroup_put(struct mem_cgroup *memcg)
+{
+	if (memcg)
+		css_put(&memcg->css);
+}
+
 #else /* CONFIG_MEMCG */
 
 #define MEM_CGROUP_ID_SHIFT	0
@@ -678,6 +693,15 @@ unsigned long mem_cgroup_soft_limit_reclaim(struct zone *zone, int order,
 }
 
 static inline void mem_cgroup_split_huge_fixup(struct page *head)
+{
+}
+
+static inline struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
+{
+	return NULL;
+}
+
+static inline void mem_cgroup_put(struct mem_cgroup *memcg)
 {
 }
 
