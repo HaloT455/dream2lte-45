@@ -194,6 +194,7 @@ enum zone_stat_item {
 #endif
 	WORKINGSET_REFAULT,
 	WORKINGSET_ACTIVATE,
+	WORKINGSET_RESTORE,
 	WORKINGSET_NODERECLAIM,
 	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_FREE_CMA_PAGES,
@@ -289,6 +290,8 @@ struct lrugen {
 
 void lru_gen_init_lruvec(struct lruvec *lruvec);
 void lru_gen_set_state(bool enable, bool main, bool swap);
+void *lru_gen_eviction(struct page *page);
+void lru_gen_refault(struct page *page, void *shadow);
 
 #else /* CONFIG_LRU_GEN */
 
@@ -297,6 +300,15 @@ static inline void lru_gen_init_lruvec(struct lruvec *lruvec)
 }
 
 static inline void lru_gen_set_state(bool enable, bool main, bool swap)
+{
+}
+
+static inline void *lru_gen_eviction(struct page *page)
+{
+	return NULL;
+}
+
+static inline void lru_gen_refault(struct page *page, void *shadow)
 {
 }
 

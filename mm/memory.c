@@ -3500,12 +3500,12 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	 * space.  Kernel faults are handled more gracefully.
 	 */
 	if (flags & FAULT_FLAG_USER)
-		mem_cgroup_oom_enable();
+		task_enter_user_fault();
 
 	ret = __handle_mm_fault(mm, vma, address, flags);
 
 	if (flags & FAULT_FLAG_USER) {
-		mem_cgroup_oom_disable();
+		task_exit_user_fault();
                 /*
                  * The task may have entered a memcg OOM situation but
                  * if the allocation error was handled gracefully (no

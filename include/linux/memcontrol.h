@@ -114,6 +114,9 @@ struct cg_proto {
 };
 
 #ifdef CONFIG_MEMCG
+
+#define MEM_CGROUP_ID_SHIFT	16
+#define MEM_CGROUP_ID_MAX	USHRT_MAX
 struct mem_cgroup_stat_cpu {
 	long count[MEM_CGROUP_STAT_NSTATS];
 	unsigned long events[MEMCG_NR_EVENTS];
@@ -360,6 +363,16 @@ static inline bool mem_cgroup_disabled(void)
 	return !cgroup_subsys_enabled(memory_cgrp_subsys);
 }
 
+static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
+{
+	if (mem_cgroup_disabled())
+		return 0;
+
+	return memcg->id.id;
+}
+
+struct mem_cgroup *mem_cgroup_from_id(unsigned short id);
+
 /*
  * For memory reclaim.
  */
@@ -414,18 +427,6 @@ void mem_cgroup_handle_over_high(void);
 
 void mem_cgroup_print_oom_info(struct mem_cgroup *memcg,
 				struct task_struct *p);
-
-static inline void mem_cgroup_oom_enable(void)
-{
-	WARN_ON(current->memcg_may_oom);
-	current->memcg_may_oom = 1;
-}
-
-static inline void mem_cgroup_oom_disable(void)
-{
-	WARN_ON(!current->memcg_may_oom);
-	current->memcg_may_oom = 0;
-}
 
 static inline bool task_in_memcg_oom(struct task_struct *p)
 {
@@ -505,6 +506,10 @@ void mem_cgroup_split_huge_fixup(struct page *head);
 #endif
 
 #else /* CONFIG_MEMCG */
+
+#define MEM_CGROUP_ID_SHIFT	0
+#define MEM_CGROUP_ID_MAX	0
+
 struct mem_cgroup;
 
 static inline void mem_cgroup_events(struct mem_cgroup *memcg,
@@ -592,6 +597,17 @@ static inline bool mem_cgroup_disabled(void)
 	return true;
 }
 
+static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
+{
+	return 0;
+}
+
+static inline struct mem_cgroup *mem_cgroup_from_id(unsigned short id)
+{
+	WARN_ON_ONCE(id);
+	return NULL;
+}
+
 static inline bool
 mem_cgroup_inactive_anon_is_low(struct lruvec *lruvec)
 {
@@ -630,14 +646,6 @@ static inline void mem_cgroup_end_page_stat(struct mem_cgroup *memcg)
 }
 
 static inline void mem_cgroup_handle_over_high(void)
-{
-}
-
-static inline void mem_cgroup_oom_enable(void)
-{
-}
-
-static inline void mem_cgroup_oom_disable(void)
 {
 }
 
