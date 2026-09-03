@@ -1,0 +1,38 @@
+name: v7halo MGLRU fix tabs
+on:
+  push:
+    branches: [v7halo]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[mglru-tabs]') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v7halo
+      - name: Fix generated indentation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('mm/vmscan.c')
+          s = p.read_text()
+          start = s.find('static void lru_gen_prepare_reclaim(')
+          end = s.find('static int __init init_lru_gen(void)', start)
+          if start < 0 or end < 0:
+              raise SystemExit('MGLRU bridge not found')
+          block = s[start:end]
+          fixed = block.replace('\\t', '\t')
+          if block == fixed:
+              print('No literal backslash-t found')
+          else:
+              p.write_text(s[:start] + fixed + s[end:])
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mm/vmscan.c
+          git commit -m 'mm: fix MGLRU bridge formatting [mglru-tabs]'
+          git push origin v7halo
