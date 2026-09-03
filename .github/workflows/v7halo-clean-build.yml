@@ -1,0 +1,134 @@
+name: v7halo scheduler clean build
+
+on:
+  push:
+    branches:
+      - v7halo
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout v7halo
+        uses: actions/checkout@v4
+        with:
+          ref: v7halo
+          fetch-depth: 0
+
+      - name: Remove Samsung custom sched/schedutil deltas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Restore the scheduler/schedutil state immediately before the
+          # ca151/f6 custom EAS/schedutil changes, without touching unrelated MM,
+          # thermal, watchdog, KSU or suspend work.
+          p = Path('kernel/sched/cpufreq_schedutil.c')
+          s = p.read_text()
+          s = s.replace('#define SUGOV_DEFAULT_UP_RATE_LIMIT_US\t\t(2500)',
+                        '#define SUGOV_DEFAULT_UP_RATE_LIMIT_US\t\t(5000)', 1)
+          s = s.replace('#define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US\t(8000)',
+                        '#define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US\t(20000)', 1)
+          old = '''\t\t/*\n\t\t * Exynos8895 does not publish separate transition delays.  Scaling\n\t\t * the hardware latency by 1000 delayed both directions by about\n\t\t * 100 ms, which is visible as launch and scrolling stutter.  Use a\n\t\t * short 2.5 ms response window, then release a stale high OPP after\n\t\t * 8 ms.  This keeps UI bursts responsive without pinning the Exynos M2\n\t\t * cluster at an overclocked OPP between frames.\n\t\t */'''
+          new = '''\t\t/*\n\t\t * Exynos8895 does not publish separate transition delays.  Scaling\n\t\t * the hardware latency by 1000 delayed both directions by about\n\t\t * 100 ms, which is visible as launch and scrolling stutter.  Raise\n\t\t * frequency quickly, then retain it a little longer to avoid ping-\n\t\t * pong transitions while keeping idle power low.\n\t\t */'''
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('kernel/sched/fair.c')
+          s = p.read_text()
+          old = '''/*\n * Use the standard EAS capacity headroom.  Keeping this aligned with\n * schedutil's 1.25 tipping factor lets EAS select a suitable cluster and\n * schedutil select its frequency from the same utilization signal, without\n * an A53-first 85% spill gate.\n */\nunsigned int capacity_margin = 1280;'''
+          new = '''/*\n * Keep CFS tasks on the energy-efficient LITTLE cluster while a CPU can\n * accept the projected load below 85% of its original capacity.  Schedutil\n * reaches the policy maximum at about 80%, so the LITTLE policy is already\n * at its top OPP before EAS starts spilling work onto the big cluster.\n *\n * 1024 / 0.85 = 1204.7, rounded up so the boundary is never above 85%.\n */\nunsigned int capacity_margin = 1205;'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'unsigned int capacity_margin = 1280;' in s:
+              s = s.replace('unsigned int capacity_margin = 1280;',
+                            'unsigned int capacity_margin = 1205;', 1)
+          old = '''static int start_cpu(struct task_struct *p)\n{\n\tstruct root_domain *rd = cpu_rq(smp_processor_id())->rd;\n\tint cpu = task_cpu(p);\n\n\tRCU_LOCKDEP_WARN(rcu_read_lock_sched_held(),\n\t\t\t   \"sched RCU must be held\");\n\n\t/*\n\t * Preserve cache and cluster affinity for short UI wakeups.  Starting\n\t * every boosted/prefer-idle search on the maximum-capacity cluster wakes\n\t * all M2 cores for small frame work and causes thermal oscillation.  EAS\n\t * still scans every capacity class and can select M2 when utilization no\n\t * longer fits A53; this seed only avoids an unconditional cross-cluster\n\t * jump.\n\t */\n\tif (cpu_online(cpu) && cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))\n\t\treturn cpu;\n\n\treturn rd->min_cap_orig_cpu;\n}'''
+          new = '''static int start_cpu(bool boosted)\n{\n\tstruct root_domain *rd = cpu_rq(smp_processor_id())->rd;\n\n\tRCU_LOCKDEP_WARN(rcu_read_lock_sched_held(),\n\t\t\t   \"sched RCU must be held\");\n\n\treturn boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;\n}'''
+          if old in s:
+              s = s.replace(old, new, 1)
+              s = s.replace('''static inline int find_best_target(struct task_struct *p, int *backup_cpu,\n\t\t\t\t\t   bool prefer_idle)''',
+                            '''static inline int find_best_target(struct task_struct *p, int *backup_cpu,\n\t\t\t\t\t   bool boosted, bool prefer_idle)''', 1)
+              s = s.replace('''\t/* Start close to the task; EAS remains free to choose either cluster. */\n\tcpu = start_cpu(p);''',
+                            '''\t/* Boosted work may start on M2; normal work starts on efficient A53. */\n\tcpu = start_cpu(boosted);''', 1)
+              s = s.replace('''\ttmp_target = find_best_target(p, &tmp_backup, prefer_idle);''',
+                            '''\ttmp_target = find_best_target(p, &tmp_backup, boosted, prefer_idle);''', 1)
+          p.write_text(s)
+
+          p = Path('.github/workflows/build.yml')
+          s = p.read_text()
+          s = s.replace("grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c",
+                        "grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c")
+          s = s.replace("grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c",
+                        "grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c")
+          s = s.replace("grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c",
+                        "grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c")
+          p.write_text(s)
+          PY
+
+      - name: Verify MGLRU port point
+        run: |
+          set -euo pipefail
+          if grep -RqsE 'CONFIG_LRU_GEN|struct lru_gen_struct|mm/mglru' include mm kernel arch/arm64/configs; then
+            echo 'MGLRU code/config detected'
+          else
+            echo 'MGLRU port is not yet present in this source snapshot; build is scheduler-clean baseline.'
+          fi
+
+      - name: Configure toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+          mkdir -p "$HOME/tools"
+          wget -q -O "$HOME/tools/gcc.tar.xz" https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=halo" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=v7halo-ci" >> "$GITHUB_ENV"
+
+      - name: Build kernel
+        run: |
+          set -o pipefail
+          make O=out-v7halo exynos8895-dream2lte_defconfig
+          make O=out-v7halo -j"$(nproc)" Image dtb.img 2>&1 | tee build-v7halo.log
+
+      - name: Validate build
+        run: |
+          test -s out-v7halo/arch/arm64/boot/Image
+          test -s out-v7halo/arch/arm64/boot/dtb.img
+          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+
+      - name: Commit scheduler cleanup to v7halo
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add kernel/sched/cpufreq_schedutil.c kernel/sched/fair.c .github/workflows/build.yml
+          if git diff --cached --quiet; then
+            echo 'No scheduler cleanup delta.'
+          else
+            git commit -m 'sched: remove Samsung schedutil and EAS customizations'
+            git push origin HEAD:v7halo
+          fi
+
+      - name: Package kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v7halo-scheduler-clean-${{ github.sha }}
+          path: |
+            out-v7halo/arch/arm64/boot/Image
+            out-v7halo/arch/arm64/boot/dtb.img
+            out-v7halo/System.map
+            out-v7halo/.config
+            build-v7halo.log
+          if-no-files-found: error
