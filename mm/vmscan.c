@@ -3049,83 +3049,83 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
 
 static void lru_gen_prepare_reclaim(struct lruvec *lruvec)
 {
-\tint type, zone;
-\tunsigned long max_seq;
-\tstruct lrugen *lrugen = &lruvec->evictable;
+	int type, zone;
+	unsigned long max_seq;
+	struct lrugen *lrugen = &lruvec->evictable;
 
-\tif (!lru_gen_enabled())
-\t\treturn;
+	if (!lru_gen_enabled())
+		return;
 
-\tlockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
 
-\tmax_seq = READ_ONCE(lrugen->max_seq);
-\tfor (type = 0; type < ANON_AND_FILE; type++) {
-\t\tif (!lrugen->enabled[type])
-\t\t\tcontinue;
-\t\tif (max_seq - READ_ONCE(lrugen->min_seq[type]) + 1 >= MAX_NR_GENS)
-\t\t\tgoto scan;
-\t}
+	max_seq = READ_ONCE(lrugen->max_seq);
+	for (type = 0; type < ANON_AND_FILE; type++) {
+		if (!lrugen->enabled[type])
+			continue;
+		if (max_seq - READ_ONCE(lrugen->min_seq[type]) + 1 >= MAX_NR_GENS)
+			goto scan;
+	}
 
-\tmax_seq++;
-\tWRITE_ONCE(lrugen->max_seq, max_seq);
-\tlrugen->timestamps[lru_gen_from_seq(max_seq)] = jiffies;
+	max_seq++;
+	WRITE_ONCE(lrugen->max_seq, max_seq);
+	lrugen->timestamps[lru_gen_from_seq(max_seq)] = jiffies;
 
 scan:
-\tfor (type = 0; type < ANON_AND_FILE; type++) {
-\t\tunsigned int budget = SWAP_CLUSTER_MAX;
-\t\tunsigned int scanned = 0;
-\t\tint oldest;
-\t\tenum lru_list lru = type * LRU_FILE;
+	for (type = 0; type < ANON_AND_FILE; type++) {
+		unsigned int budget = SWAP_CLUSTER_MAX;
+		unsigned int scanned = 0;
+		int oldest;
+		enum lru_list lru = type * LRU_FILE;
 
-\t\tif (!lrugen->enabled[type])
-\t\t\tcontinue;
-\t\tif (lrugen->max_seq - lrugen->min_seq[type] + 1 < MIN_NR_GENS)
-\t\t\tcontinue;
+		if (!lrugen->enabled[type])
+			continue;
+		if (lrugen->max_seq - lrugen->min_seq[type] + 1 < MIN_NR_GENS)
+			continue;
 
-\t\toldest = lru_gen_from_seq(lrugen->min_seq[type]);
-\t\tfor (zone = 0; zone < MAX_NR_ZONES && scanned < budget; zone++) {
-\t\t\tstruct page *page, *next;
-\t\t\tstruct list_head *head = &lrugen->lists[oldest][type][zone];
+		oldest = lru_gen_from_seq(lrugen->min_seq[type]);
+		for (zone = 0; zone < MAX_NR_ZONES && scanned < budget; zone++) {
+			struct page *page, *next;
+			struct list_head *head = &lrugen->lists[oldest][type][zone];
 
-\t\t\tlist_for_each_entry_safe(page, next, head, lru) {
-\t\t\t\tint new_gen = lru_gen_from_seq(lrugen->max_seq);
-\t\t\t\tbool referenced;
-\t\t\t\tunsigned long flags;
-\t\t\t\tint delta = hpage_nr_pages(page);
+			list_for_each_entry_safe(page, next, head, lru) {
+				int new_gen = lru_gen_from_seq(lrugen->max_seq);
+				bool referenced;
+				unsigned long flags;
+				int delta = hpage_nr_pages(page);
 
-\t\t\t\tif (scanned >= budget)
-\t\t\t\t\tbreak;
-\t\t\t\tscanned += delta;
-\t\t\t\treferenced = PageReferenced(page);
-\t\t\t\tif (referenced)
-\t\t\t\t\tClearPageReferenced(page);
+				if (scanned >= budget)
+					break;
+				scanned += delta;
+				referenced = PageReferenced(page);
+				if (referenced)
+					ClearPageReferenced(page);
 
-\t\t\t\tlist_del(&page->lru);
-\t\t\t\tlrugen->sizes[oldest][type][zone] -= delta;
+				list_del(&page->lru);
+				lrugen->sizes[oldest][type][zone] -= delta;
 
-\t\t\t\tflags = READ_ONCE(page->flags);
-\t\t\t\tflags &= ~LRU_GEN_MASK;
-\t\t\t\tif (referenced && new_gen != oldest) {
-\t\t\t\t\tflags |= (new_gen + 1UL) << LRU_GEN_PGOFF;
-\t\t\t\t\tWRITE_ONCE(page->flags, flags);
-\t\t\t\t\tlrugen->sizes[new_gen][type][zone] += delta;
-\t\t\t\t\tlist_add_tail(&page->lru, &lrugen->lists[new_gen][type][zone]);
-\t\t\t\t} else {
-\t\t\t\t\tWRITE_ONCE(page->flags, flags);
-\t\t\t\t\tupdate_lru_size(lruvec, lru, zone, delta);
-\t\t\t\t\tlist_add_tail(&page->lru, &lruvec->lists[lru]);
-\t\t\t\t}
-\t\t\t}
-\t\t}
+				flags = READ_ONCE(page->flags);
+				flags &= ~LRU_GEN_MASK;
+				if (referenced && new_gen != oldest) {
+					flags |= (new_gen + 1UL) << LRU_GEN_PGOFF;
+					WRITE_ONCE(page->flags, flags);
+					lrugen->sizes[new_gen][type][zone] += delta;
+					list_add_tail(&page->lru, &lrugen->lists[new_gen][type][zone]);
+				} else {
+					WRITE_ONCE(page->flags, flags);
+					update_lru_size(lruvec, lru, zone, delta);
+					list_add_tail(&page->lru, &lruvec->lists[lru]);
+				}
+			}
+		}
 
-\t\tif (!lrugen->sizes[oldest][type][0]) {
-\t\t\tbool empty = true;
-\t\t\tfor (zone = 0; zone < MAX_NR_ZONES; zone++)
-\t\t\t\tempty &= !lrugen->sizes[oldest][type][zone];
-\t\t\tif (empty)
-\t\t\t\tWRITE_ONCE(lrugen->min_seq[type], lrugen->min_seq[type] + 1);
-\t\t}
-\t}
+		if (!lrugen->sizes[oldest][type][0]) {
+			bool empty = true;
+			for (zone = 0; zone < MAX_NR_ZONES; zone++)
+				empty &= !lrugen->sizes[oldest][type][zone];
+			if (empty)
+				WRITE_ONCE(lrugen->min_seq[type], lrugen->min_seq[type] + 1);
+		}
+	}
 }
 
 static int __init init_lru_gen(void)
