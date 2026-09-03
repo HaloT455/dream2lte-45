@@ -79,6 +79,7 @@ enum pageflags {
 	PG_dirty,
 	PG_lru,
 	PG_active,
+	PG_workingset,
 	PG_slab,
 	PG_owner_priv_1,	/* Owner use. If pagecache, fs may use*/
 	PG_arch_1,
@@ -217,6 +218,8 @@ PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
 PAGEFLAG(LRU, lru) __CLEARPAGEFLAG(LRU, lru)
 PAGEFLAG(Active, active) __CLEARPAGEFLAG(Active, active)
 	TESTCLEARFLAG(Active, active)
+PAGEFLAG(Workingset, workingset)
+	TESTCLEARFLAG(Workingset, workingset)
 __PAGEFLAG(Slab, slab)
 PAGEFLAG(Checked, checked)		/* Used by some filesystems */
 PAGEFLAG(Pinned, pinned) TESTSCFLAG(Pinned, pinned)	/* Xen */
@@ -617,7 +620,7 @@ static inline void ClearPageSlabPfmemalloc(struct page *page)
 	 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
 	 1 << PG_unevictable | __PG_MLOCKED | \
-	 __PG_COMPOUND_LOCK)
+	 __PG_COMPOUND_LOCK | LRU_GEN_MASK)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.
@@ -628,7 +631,8 @@ static inline void ClearPageSlabPfmemalloc(struct page *page)
  * alloc-free cycle to prevent from reusing the page.
  */
 #define PAGE_FLAGS_CHECK_AT_PREP	\
-	(((1 << NR_PAGEFLAGS) - 1) & ~__PG_HWPOISON)
+	((((1 << NR_PAGEFLAGS) - 1) & ~__PG_HWPOISON) | \
+	  LRU_GEN_MASK | LRU_USAGE_MASK)
 
 #define PAGE_FLAGS_PRIVATE				\
 	(1 << PG_private | 1 << PG_private_2)

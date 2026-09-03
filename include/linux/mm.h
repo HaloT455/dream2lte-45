@@ -21,6 +21,7 @@
 #include <linux/resource.h>
 #include <linux/page_ext.h>
 #include <linux/err.h>
+#include <linux/sched.h>
 
 struct mempolicy;
 struct anon_vma;
@@ -771,10 +772,12 @@ void do_set_pte(struct vm_area_struct *vma, unsigned long address,
  */
 
 /* Page flags: | [SECTION] | [NODE] | ZONE | [LAST_CPUPID] | ... | FLAGS | */
-#define SECTIONS_PGOFF		((sizeof(unsigned long)*8) - SECTIONS_WIDTH)
+#define SECTIONS_PGOFF		(BITS_PER_LONG - SECTIONS_WIDTH)
 #define NODES_PGOFF		(SECTIONS_PGOFF - NODES_WIDTH)
 #define ZONES_PGOFF		(NODES_PGOFF - ZONES_WIDTH)
 #define LAST_CPUPID_PGOFF	(ZONES_PGOFF - LAST_CPUPID_WIDTH)
+#define LRU_GEN_PGOFF		(LAST_CPUPID_PGOFF - LRU_GEN_WIDTH)
+#define LRU_USAGE_PGOFF		(LRU_GEN_PGOFF - LRU_USAGE_WIDTH)
 
 /*
  * Define the bit shifts to access each section.  For non-existent
@@ -799,8 +802,8 @@ void do_set_pte(struct vm_area_struct *vma, unsigned long address,
 
 #define ZONEID_PGSHIFT		(ZONEID_PGOFF * (ZONEID_SHIFT != 0))
 
-#if SECTIONS_WIDTH+NODES_WIDTH+ZONES_WIDTH > BITS_PER_LONG - NR_PAGEFLAGS
-#error SECTIONS_WIDTH+NODES_WIDTH+ZONES_WIDTH > BITS_PER_LONG - NR_PAGEFLAGS
+#if LRU_USAGE_PGOFF < NR_PAGEFLAGS
+#error LRU_USAGE_PGOFF < NR_PAGEFLAGS
 #endif
 
 #define ZONES_MASK		((1UL << ZONES_WIDTH) - 1)
@@ -1318,6 +1321,23 @@ extern int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long address, unsigned int flags);
 extern int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 			    unsigned long address, unsigned int fault_flags);
+
+static inline void task_enter_user_fault(void)
+{
+	WARN_ON(current->in_user_fault);
+	current->in_user_fault = 1;
+}
+
+static inline void task_exit_user_fault(void)
+{
+	WARN_ON(!current->in_user_fault);
+	current->in_user_fault = 0;
+}
+
+static inline bool task_in_user_fault(void)
+{
+	return current->in_user_fault;
+}
 #else
 static inline int handle_mm_fault(struct mm_struct *mm,
 			struct vm_area_struct *vma, unsigned long address,
@@ -1334,6 +1354,19 @@ static inline int fixup_user_fault(struct task_struct *tsk,
 	/* should never happen if there's no MMU */
 	BUG();
 	return -EFAULT;
+}
+
+static inline void task_enter_user_fault(void)
+{
+}
+
+static inline void task_exit_user_fault(void)
+{
+}
+
+static inline bool task_in_user_fault(void)
+{
+	return false;
 }
 #endif
 

@@ -10,6 +10,7 @@
 
 #include "sched.h"
 #include "tune.h"
+#include "cpu_ui.h"
 
 #ifdef CONFIG_CGROUP_SCHEDTUNE
 bool schedtune_initialized = false;
@@ -184,12 +185,17 @@ schedtune_accept_deltas(int nrg_delta, int cap_delta,
 		return -INT_MAX;
 	}
 
-	/* Get task specific perf Boost/Constraints indexes */
-	rcu_read_lock();
-	ct = task_schedtune(task);
-	perf_boost_idx = ct->perf_boost_idx;
-	perf_constrain_idx = ct->perf_constrain_idx;
-	rcu_read_unlock();
+	/* Use the same boost in both the utilization and energy decisions. */
+	if (sched_cpu_ui_active()) {
+		perf_boost_idx = sched_cpu_ui_task_boost(task) / 10;
+		perf_constrain_idx = perf_boost_idx;
+	} else {
+		rcu_read_lock();
+		ct = task_schedtune(task);
+		perf_boost_idx = ct->perf_boost_idx;
+		perf_constrain_idx = ct->perf_constrain_idx;
+		rcu_read_unlock();
+	}
 
 	return __schedtune_accept_deltas(nrg_delta, cap_delta,
 			perf_boost_idx, perf_constrain_idx);
@@ -518,6 +524,9 @@ int schedtune_cpu_boost(int cpu)
 {
 	struct boost_groups *bg;
 
+	if (sched_cpu_ui_active())
+		return sched_cpu_ui_cpu_boost(cpu);
+
 	bg = &per_cpu(cpu_boost_groups, cpu);
 	return bg->boost_max;
 }
@@ -529,6 +538,9 @@ int schedtune_task_boost(struct task_struct *p)
 
 	if (!unlikely(schedtune_initialized))
 		return 0;
+
+	if (sched_cpu_ui_active())
+		return sched_cpu_ui_task_boost(p);
 
 	/* Get task boost value */
 	rcu_read_lock();
@@ -546,6 +558,9 @@ int schedtune_prefer_idle(struct task_struct *p)
 
 	if (!unlikely(schedtune_initialized))
 		return 0;
+
+	if (sched_cpu_ui_active())
+		return sched_cpu_ui_prefer_idle(p);
 
 	/* Get prefer_idle value */
 	rcu_read_lock();

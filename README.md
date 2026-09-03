@@ -49,6 +49,9 @@ new/empty output directory when producing the reproducible release build.
   Its stock power allocator starts at 65 degrees C and targets 70 degrees C.
   GPU limits, CPU voltage tables, battery charging protection, and CPU hot
   safety trips remain in place.
+- Screen-off sleep uses the known-good V6 Samsung watchdog syscore path.
+  Schedutil workers remain bound to their own policy CPU masks; the later
+  device-PM watchdog conversion and forced CPU0 worker binding are removed.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
 
 To create a flashable image while preserving a known-good boot image ramdisk

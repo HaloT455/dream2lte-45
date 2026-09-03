@@ -84,6 +84,7 @@
 #endif
 
 #include "sched.h"
+#include "cpu_ui.h"
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
@@ -2757,8 +2758,10 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		next->active_mm = oldmm;
 		atomic_inc(&oldmm->mm_count);
 		enter_lazy_tlb(oldmm, next);
-	} else
+	} else {
 		switch_mm_irqs_off(oldmm, mm, next);
+		lru_gen_switch_mm(oldmm, mm);
+	}
 
 	if (!prev->mm) {
 		prev->active_mm = NULL;
@@ -5426,6 +5429,7 @@ void idle_task_exit(void)
 
 	if (mm != &init_mm) {
 		switch_mm(mm, &init_mm, current);
+		lru_gen_switch_mm(mm, &init_mm);
 		finish_arch_post_lock_switch();
 	}
 	mmdrop(mm);
@@ -8697,8 +8701,10 @@ static int cpu_cgroup_css_online(struct cgroup_subsys_state *css)
 	struct task_group *tg = css_tg(css);
 	struct task_group *parent = css_tg(css->parent);
 
-	if (parent)
+	if (parent) {
 		sched_online_group(tg, parent);
+		sched_cpu_ui_online(tg);
+	}
 	return 0;
 }
 
@@ -8706,6 +8712,7 @@ static void cpu_cgroup_css_released(struct cgroup_subsys_state *css)
 {
 	struct task_group *tg = css_tg(css);
 
+	sched_cpu_ui_released(tg);
 	sched_offline_group(tg);
 }
 
@@ -9035,7 +9042,32 @@ static u64 cpu_rt_period_read_uint(struct cgroup_subsys_state *css,
 }
 #endif /* CONFIG_RT_GROUP_SCHED */
 
+#ifdef CONFIG_SCHED_CPU_UI_HINTS
+static u64
+cpu_ui_boost_read(struct cgroup_subsys_state *css, struct cftype *cft)
+{
+	if (!sched_cpu_ui_active())
+		return 0;
+	return sched_cpu_ui_group_boost(css_tg(css));
+}
+
+static u64 cpu_ui_idle_read(struct cgroup_subsys_state *css, struct cftype *cft)
+{
+	return sched_cpu_ui_active() ? sched_cpu_ui_group_idle(css_tg(css)) : 0;
+}
+#endif
+
 static struct cftype cpu_files[] = {
+#ifdef CONFIG_SCHED_CPU_UI_HINTS
+	{
+		.name = "ui_hint_boost",
+		.read_u64 = cpu_ui_boost_read,
+	},
+	{
+		.name = "ui_hint_prefer_idle",
+		.read_u64 = cpu_ui_idle_read,
+	},
+#endif
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	{
 		.name = "shares",

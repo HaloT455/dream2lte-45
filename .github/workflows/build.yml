@@ -1,10 +1,10 @@
-name: Build V6 SimpleLMK Note10 EAS 65C Suspend Fix
+name: Build V6 Kernel UI1 Trace
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - backup/v6-simplelmk-note10-eas-20260828
+      - agent/ems-v5-ui1-trace
 
 jobs:
   build:
@@ -38,9 +38,18 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-ui1-trace" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Mon Aug 31 00:00:00 UTC 2026" >> "$GITHUB_ENV"
+
+      - name: Host scheduler regression checks
+        run: |
+          python3 scripts/test_schedutil_work.py
+          python3 scripts/test_cpu_ui_hints.py
+          python3 scripts/test_ui_trace.py
+          sh -n scripts/collect_ui_perf.sh
+          sh -n scripts/collect_ui_trace.sh
+          git diff --check
 
       - name: Configure ${{ matrix.variant }} kernel
         run: |
@@ -50,15 +59,34 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-UI1-Trace-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive"
+              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-UI1-Trace-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
+
+      - name: Verify tracing-only configuration delta
+        run: |
+          BASE=887e9cc5e5678e6c8ee92bd9c8e0edecdaef4856
+          git fetch --no-tags --depth=1 origin "$BASE"
+          mkdir -p out-ui1-base
+          git show "$BASE:arch/arm64/configs/exynos8895-dream2lte_defconfig" > out-ui1-base/.config
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            scripts/config --file out-ui1-base/.config \
+              --disable ALWAYS_PERMISSIVE --disable SECURITY_SELINUX_DEVELOP
+          else
+            scripts/config --file out-ui1-base/.config \
+              --enable ALWAYS_PERMISSIVE --enable SECURITY_SELINUX_DEVELOP
+          fi
+          make O=out-ui1-base olddefconfig
+          python3 scripts/verify_ui_trace_config.py \
+            out-ui1-base/.config "out-${{ matrix.variant }}/.config"
+          git diff --exit-code "$BASE" -- kernel drivers mm fs include \
+            arch/arm64/boot/dts
 
       - name: Validate integration
         run: |
@@ -72,6 +100,9 @@ jobs:
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
+          grep -q '^CONFIG_SCHED_CPU_UI_HINTS=y$' "$OUT/.config"
+          grep -q '^CONFIG_CGROUP_SCHEDTUNE=y$' "$OUT/.config"
+          grep -q '^CONFIG_FAIR_GROUP_SCHED=y$' "$OUT/.config"
           grep -q '^CONFIG_F2FS_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_KSU=y$' "$OUT/.config"
@@ -81,10 +112,10 @@ jobs:
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
-          grep -q '\.pm.*= &s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
-          ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
-          grep -q 'kthread_bind_mask(thread, cpumask_of(SUGOV_WORKER_CPU))' kernel/sched/cpufreq_schedutil.c
+          grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
+          ! grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'kthread_bind_mask(thread, policy->related_cpus)' kernel/sched/cpufreq_schedutil.c
+          ! grep -q 'SUGOV_WORKER_CPU' kernel/sched/cpufreq_schedutil.c
           grep -q 'APOLLO_COOLING_RELEASE_TEMP.*64000' drivers/thermal/samsung/exynos_tmu.c
           grep -A2 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
           grep -A2 'mngs_alert1: mngs-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '70000'
@@ -109,7 +140,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v6-ui1-trace-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -120,10 +151,19 @@ jobs:
           test -s "$OUT/arch/arm64/boot/dtb.img"
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
+          grep -q ' sched_cpu_ui_cpu_boost$' "$OUT/System.map"
+          grep -q ' sched_cpu_ui_task_boost$' "$OUT/System.map"
+          grep -a -q 'ui_hint_prefer_idle' "$OUT/arch/arm64/boot/Image"
+          for sym in tracefs_init tracing_init_dentry event_sched_switch \
+              event_sched_wakeup event_cpu_frequency event_cpu_idle \
+              event_binder_transaction event_binder_transaction_received \
+              event_mm_vmscan_direct_reclaim_begin event_mm_vmscan_direct_reclaim_end; do
+            grep -q " $sym$" "$OUT/System.map"
+          done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-UI1-Trace-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-UI1-Trace-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -140,6 +180,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-simplelmk-note10-eas-65c-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v6-ui1-trace-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

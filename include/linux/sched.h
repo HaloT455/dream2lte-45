@@ -1639,8 +1639,8 @@ struct task_struct {
 	/* unserialized, strictly 'current' */
 	unsigned in_execve:1; /* bit to tell LSMs we're in execve */
 	unsigned in_iowait:1;
-#ifdef CONFIG_MEMCG
-	unsigned memcg_may_oom:1;
+#ifdef CONFIG_MMU
+	unsigned in_user_fault:1;
 #endif
 #ifdef CONFIG_MEMCG_KMEM
 	unsigned memcg_kmem_skip_account:1;

@@ -43,6 +43,7 @@
 #include <linux/regmap.h>
 #include <linux/reboot.h>
 #include <linux/delay.h>
+#include <linux/syscore_ops.h>
 
 #define S3C2410_WTCON		0x00
 #define S3C2410_WTDAT		0x04
@@ -705,47 +706,36 @@ static struct notifier_block nb_panic_block = {
 };
 #endif
 
-#ifdef CONFIG_PM_SLEEP
-static int s3c2410wdt_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int s3c2410wdt_suspend(void)
 {
-	int ret;
-	struct s3c2410_wdt *wdt = dev_get_drvdata(dev);
+	struct s3c2410_wdt *wdt = s3c_wdt;
 
 	if (!wdt)
 		return 0;
 
 	s3c2410wdt_keepalive(&wdt->wdt_device);
-	/* Save the watchdog state before disabling it for system sleep. */
+	/* Save watchdog state, and turn it off. */
 	wdt->wtcon_save = readl(wdt->reg_base + S3C2410_WTCON);
 	wdt->wtdat_save = readl(wdt->reg_base + S3C2410_WTDAT);
-
-	ret = s3c2410wdt_mask_wdt_reset(wdt, true);
-	if (ret < 0)
-		return ret;
-
-	ret = s3c2410wdt_automatic_disable_wdt(wdt, true);
-	if (ret < 0) {
-		s3c2410wdt_mask_wdt_reset(wdt, false);
-		return ret;
-	}
-
-	s3c2410wdt_stop_intclear(wdt);
 
 	return 0;
 }
 
-static int s3c2410wdt_resume(struct device *dev)
+static void s3c2410wdt_resume(void)
 {
 	int ret;
 	unsigned int val;
-	struct s3c2410_wdt *wdt = dev_get_drvdata(dev);
+	struct s3c2410_wdt *wdt = s3c_wdt;
 
 	if (!wdt)
-		return 0;
+		return;
 
 	ret = s3c2410wdt_automatic_disable_wdt(wdt, false);
-	if (ret < 0)
-		return ret;
+	if (ret < 0) {
+		dev_info(wdt->dev, "automatic_dsiable fail");
+		return;
+	}
 
 	s3c2410wdt_stop_intclear(wdt);
 	/* Restore watchdog state. */
@@ -754,21 +744,26 @@ static int s3c2410wdt_resume(struct device *dev)
 	writel(wdt->wtcon_save, wdt->reg_base + S3C2410_WTCON);
 
 	ret = s3c2410wdt_mask_wdt_reset(wdt, false);
-	if (ret < 0)
-		return ret;
+	if (ret < 0) {
+		dev_info(wdt->dev, "wdt reset mask fail");
+		return;
+	}
 
 	val = readl(wdt->reg_base + S3C2410_WTCON);
 	dev_info(wdt->dev, "watchdog %sabled, con: 0x%08x, dat: 0x%08x, cnt: 0x%08x\n",
 		(val & S3C2410_WTCON_ENABLE) ? "en" : "dis", val,
 		readl(wdt->reg_base + S3C2410_WTDAT),
 		readl(wdt->reg_base + S3C2410_WTCNT));
-
-	return 0;
 }
+#else
+#define s3c2410_wdt_suspend		NULL
+#define s3c2410_wdt_resume		NULL
 #endif
 
-static SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops, s3c2410wdt_suspend,
-			 s3c2410wdt_resume);
+static struct syscore_ops s3c2410wdt_syscore_ops = {
+	.suspend	= s3c2410wdt_suspend,
+	.resume		= s3c2410wdt_resume,
+};
 
 static int s3c2410wdt_probe(struct platform_device *pdev)
 {
@@ -944,6 +939,7 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
 
 	wtcon = readl(wdt->reg_base + S3C2410_WTCON);
 
+	register_syscore_ops(&s3c2410wdt_syscore_ops);
 #ifdef CONFIG_EXYNOS_SNAPSHOT_WATCHDOG_RESET
 	/* register panic handler for watchdog reset */
 	atomic_notifier_chain_register(&panic_notifier_list, &nb_panic_block);
@@ -1007,7 +1003,6 @@ static struct platform_driver s3c2410wdt_driver = {
 	.id_table	= s3c2410_wdt_ids,
 	.driver		= {
 		.name	= "s3c2410-wdt",
-		.pm	= &s3c2410wdt_pm_ops,
 		.of_match_table	= of_match_ptr(s3c2410_wdt_match),
 	},
 };

@@ -34,6 +34,7 @@
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
 #include <linux/rmap.h>
+#include <linux/mm_inline.h>
 #include "internal.h"
 
 #ifdef CONFIG_PAGE_BOOST_RECORDING
@@ -716,11 +717,9 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 		 * recently, in which case it should be activated like
 		 * any other repeatedly accessed page.
 		 */
-		if (shadow && workingset_refault(shadow)) {
-			SetPageActive(page);
-			workingset_activation(page);
-		} else
-			ClearPageActive(page);
+		ClearPageActive(page);
+		if (shadow)
+			workingset_refault(page, shadow);
 		lru_cache_add(page);
 	}
 	return ret;

@@ -17,6 +17,9 @@
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
 #include <linux/soc/samsung/exynos-soc.h>
+#ifdef CONFIG_SEC_REBOOT
+#include <linux/sec_ext.h>
+#endif
 #include <soc/samsung/acpm_ipc_ctrl.h>
 
 #ifdef CONFIG_SEC_DEBUG
@@ -174,10 +177,6 @@ void mngs_reset_control(int en)
 	}
 }
 
-#define INFORM_NONE		0x0
-#define INFORM_RAMDUMP		0xd
-#define INFORM_RECOVERY		0xf
-
 #if !defined(CONFIG_SEC_REBOOT)
 #ifdef CONFIG_OF
 static void exynos_power_off(void)
@@ -198,21 +197,24 @@ static void exynos_power_off(void)
 
 static void exynos_reboot(enum reboot_mode mode, const char *cmd)
 {
-	u32 restart_inform, soc_id;
+	u32 soc_id;
+#ifdef CONFIG_SEC_REBOOT
+	u32 inform2, inform3;
+#endif
 
 	if (!exynos_pmu_base)
 		return;
 
+#ifdef CONFIG_SEC_REBOOT
+	/*
+	 * sec_reboot records the boot target before entering this handler.
+	 * Preserve it while ACPM is stopped, then commit it immediately before
+	 * SWRESET so the bootloader cannot observe a stale reboot reason.
+	 */
+	inform2 = readl(exynos_pmu_base + EXYNOS_PMU_INFORM2);
+	inform3 = readl(exynos_pmu_base + EXYNOS_PMU_INFORM3);
+#endif
 	exynos_acpm_reboot();
-
-	restart_inform = INFORM_NONE;
-
-	if (cmd) {
-		if (!strcmp((char *)cmd, "recovery"))
-			restart_inform = INFORM_RECOVERY;
-		else if(!strcmp((char *)cmd, "ramdump"))
-			restart_inform = INFORM_RAMDUMP;
-	}
 
 	/* Check by each SoC */
 	soc_id = exynos_soc_info.product_id & EXYNOS_SOC_MASK;
@@ -228,6 +230,13 @@ static void exynos_reboot(enum reboot_mode mode, const char *cmd)
 	default:
 		break;
 	}
+
+#ifdef CONFIG_SEC_REBOOT
+	writel(inform2, exynos_pmu_base + EXYNOS_PMU_INFORM2);
+	writel(inform3, exynos_pmu_base + EXYNOS_PMU_INFORM3);
+	/* Complete the posted PMU writes before asserting the reset. */
+	readl(exynos_pmu_base + EXYNOS_PMU_INFORM3);
+#endif
 
 	/* Do S/W Reset */
 	pr_emerg("%s: Exynos SoC reset right now\n", __func__);
