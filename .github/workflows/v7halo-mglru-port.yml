@@ -1,0 +1,173 @@
+name: v7halo MGLRU port and kernel build
+
+on:
+  push:
+    branches:
+      - v7halo
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-build:
+    if: ${{ !contains(github.event.head_commit.message, '[mglru-port]') }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [enforcing, permissive]
+
+    steps:
+      - name: Checkout v7halo
+        uses: actions/checkout@v4
+        with:
+          ref: v7halo
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex build-essential libssl-dev libelf-dev \
+            python3 wget tar xz-utils
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Port MGLRU and clean custom scheduler changes
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin agent/ems-v6-mglru-simplelmk --no-tags
+
+          # Real 4.4 MGLRU port series already developed and build-verified on the
+          # donor branch. Cherry-pick the port commits onto the v7halo base instead
+          # of importing an unrelated 4.14 tree wholesale.
+          git cherry-pick \
+            6aac5ceac624ade952d210525d64c92a21e08203 \
+            0a0db3215c4008e57c2c205d54f1b96954e9d422 \
+            d5e735d9de508df0f0d8c5cc398da4d4c37d4939 \
+            52c44f4a334d1612c1eee78e5fb363ceb84968ef
+
+          # Remove the Samsung/custom schedutil + EAS changes from the scheduler
+          # while leaving the rest of the tree intact.
+          git checkout 9aae414af2445004ae10096ae289dafe4fe1c494 -- \
+            kernel/sched/fair.c \
+            kernel/sched/cpufreq_schedutil.c
+
+          # Keep MGLRU permanently enabled in the shipping dream2lte defconfig.
+          DEFCONFIG=arch/arm64/configs/exynos8895-dream2lte_defconfig
+          grep -q '^CONFIG_LRU_GEN=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN=y' >> "$DEFCONFIG"
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN_ENABLED=y' >> "$DEFCONFIG"
+
+          # Remove the earlier helper workflow; this workflow is the single owner
+          # of the v7halo port/build pipeline.
+          rm -f .github/workflows/agent-v7-scheduler.yml
+
+          git add -A
+          git commit -m '[mglru-port] port 4.4 MGLRU and restore clean scheduler'
+          git push origin HEAD:v7halo
+
+      - name: Download GCC 14.2
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/tools"
+          wget -O "$HOME/tools/gcc.tar.xz" \
+            https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+
+      - name: Configure toolchain
+        run: |
+          set -euxo pipefail
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v7halo" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Thu Sep 03 12:00:00 UTC 2026" >> "$GITHUB_ENV"
+
+      - name: Configure ${{ matrix.variant }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" exynos8895-dream2lte_defconfig
+
+          scripts/config --file "$OUT/.config" \
+            --enable LRU_GEN \
+            --enable LRU_GEN_ENABLED
+
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            scripts/config --file "$OUT/.config" \
+              --disable ALWAYS_PERMISSIVE \
+              --disable SECURITY_SELINUX_DEVELOP \
+              --set-str LOCALVERSION "-v7halo-MGLRU-Enforcing"
+          else
+            scripts/config --file "$OUT/.config" \
+              --enable ALWAYS_PERMISSIVE \
+              --enable SECURITY_SELINUX_DEVELOP \
+              --set-str LOCALVERSION "-v7halo-MGLRU-Permissive"
+          fi
+
+          scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
+          make O="$OUT" olddefconfig
+
+      - name: Validate MGLRU and clean scheduler
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT="out-${{ matrix.variant }}"
+          grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$OUT/.config"
+          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+
+      - name: Build kernel and DTB
+        shell: bash
+        run: |
+          set -o pipefail
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT="out-${{ matrix.variant }}"
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dtb.img"
+          strings -a "$OUT/arch/arm64/boot/Image" | grep -q 'Linux version 4.4.302-v7halo-MGLRU'
+
+      - name: Package build artifacts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT="out-${{ matrix.variant }}"
+          DEST="output-${{ matrix.variant }}"
+          mkdir -p "$DEST"
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
+          cp "$OUT/System.map" "$DEST/System.map"
+          cp "$OUT/.config" "$DEST/kernel.config"
+          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v7halo-mglru-build-log-${{ matrix.variant }}-${{ github.sha }}
+          path: build-${{ matrix.variant }}.log
+          if-no-files-found: error
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v7halo-mglru-kernel-${{ matrix.variant }}-${{ github.sha }}
+          path: output-${{ matrix.variant }}/
+          if-no-files-found: error
