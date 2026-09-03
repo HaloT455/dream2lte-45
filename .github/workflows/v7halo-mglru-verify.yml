@@ -1,0 +1,88 @@
+name: v7halo MGLRU SimpleLMK verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v7halo
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout v7halo
+        uses: actions/checkout@v4
+        with:
+          ref: v7halo
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils cpio rsync
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Install AArch64 cross compiler
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/tools"
+          wget -q -O "$HOME/tools/gcc.tar.xz" https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          make O=out-v7halo ARCH=arm64 exynos8895-dream2lte_defconfig
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' out-v7halo/.config
+          grep -q '^CONFIG_LRU_GEN=y$' out-v7halo/.config
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' out-v7halo/.config
+          make O=out-v7halo ARCH=arm64 olddefconfig
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' out-v7halo/.config
+          grep -q '^CONFIG_LRU_GEN=y$' out-v7halo/.config
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' out-v7halo/.config
+
+      - name: Verify source integration
+        run: |
+          set -euo pipefail
+          grep -q 'struct lrugen' include/linux/mmzone.h
+          grep -q 'lru_gen_init_lruvec' include/linux/mmzone.h
+          grep -q 'lru_gen_prepare_reclaim' mm/vmscan.c
+          grep -q 'lru_gen_set_state' mm/vmscan.c
+          grep -q 'lru_gen_enter_fault' mm/memory.c
+          grep -q 'lru_gen_add_mm' fs/exec.c kernel/fork.c
+          grep -q 'lru_gen_eviction' mm/workingset.c
+          grep -q 'CONFIG_LRU_GEN' mm/Kconfig
+          grep -q 'ANDROID_SIMPLE_LMK' mm/vmscan.c
+          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
+
+      - name: Build kernel and DTB
+        run: |
+          set -o pipefail
+          make O=out-v7halo ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)" Image dtb.img 2>&1 | tee build-v7halo.log
+
+      - name: Validate outputs
+        run: |
+          set -euo pipefail
+          test -s out-v7halo/arch/arm64/boot/Image
+          test -s out-v7halo/arch/arm64/boot/dtb.img
+          sha256sum out-v7halo/arch/arm64/boot/Image out-v7halo/arch/arm64/boot/dtb.img
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v7halo-mglru-simplelmk-${{ github.sha }}
+          path: |
+            out-v7halo/arch/arm64/boot/Image
+            out-v7halo/arch/arm64/boot/dtb.img
+            out-v7halo/System.map
+            out-v7halo/.config
+            build-v7halo.log
+          if-no-files-found: error
