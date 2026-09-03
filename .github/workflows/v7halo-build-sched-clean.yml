@@ -1,0 +1,90 @@
+name: v7halo scheduler clean build artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v7halo
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: v7halo
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Clean Samsung sched/schedutil customizations in workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('kernel/sched/cpufreq_schedutil.c')
+          s = p.read_text()
+          s = s.replace('#define SUGOV_DEFAULT_UP_RATE_LIMIT_US\t\t(2500)', '#define SUGOV_DEFAULT_UP_RATE_LIMIT_US\t\t(5000)', 1)
+          s = s.replace('#define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US\t(8000)', '#define SUGOV_DEFAULT_DOWN_RATE_LIMIT_US\t(20000)', 1)
+          p.write_text(s)
+
+          p = Path('kernel/sched/fair.c')
+          s = p.read_text()
+          s = s.replace('unsigned int capacity_margin = 1280;', 'unsigned int capacity_margin = 1205;', 1)
+          start = s.find('static int start_cpu(struct task_struct *p)')
+          end = s.find('static inline int find_best_target', start)
+          if start >= 0 and end > start:
+              s = s[:start] + '''static int start_cpu(bool boosted)\n{\n\tstruct root_domain *rd = cpu_rq(smp_processor_id())->rd;\n\n\tRCU_LOCKDEP_WARN(rcu_read_lock_sched_held(),\n\t\t\t   "sched RCU must be held");\n\n\treturn boosted ? rd->max_cap_orig_cpu : rd->min_cap_orig_cpu;\n}\n\n''' + s[end:]
+          s = s.replace('static inline int find_best_target(struct task_struct *p, int *backup_cpu,\n\t\t\t\t   bool prefer_idle)', 'static inline int find_best_target(struct task_struct *p, int *backup_cpu,\n\t\t\t\t   bool boosted, bool prefer_idle)', 1)
+          s = s.replace('cpu = start_cpu(p);', 'cpu = start_cpu(boosted);', 1)
+          s = s.replace('tmp_target = find_best_target(p, &tmp_backup, prefer_idle);', 'tmp_target = find_best_target(p, &tmp_backup, boosted, prefer_idle);', 1)
+          p.write_text(s)
+          PY
+
+      - name: Toolchain
+        run: |
+          mkdir -p "$HOME/tools"
+          wget -q -O "$HOME/tools/gcc.tar.xz" https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=halo" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=v7halo-ci" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: make O=out-v7halo exynos8895-dream2lte_defconfig
+
+      - name: Validate scheduler state
+        run: |
+          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
+
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          make O=out-v7halo -j"$(nproc)" Image dtb.img 2>&1 | tee build.log
+
+      - name: Package
+        run: |
+          mkdir -p artifact
+          cp out-v7halo/arch/arm64/boot/Image artifact/Image
+          cp out-v7halo/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-v7halo/.config artifact/kernel.config
+          cp build.log artifact/build.log
+          sha256sum artifact/* > artifact/SHA256SUMS
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v7halo-sched-clean
+          path: artifact/
+          if-no-files-found: error
