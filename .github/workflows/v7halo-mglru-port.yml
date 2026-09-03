@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   port-and-build:
     if: ${{ !contains(github.event.head_commit.message, '[mglru-port]') }}
@@ -41,32 +44,26 @@ jobs:
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch origin agent/ems-v6-mglru-simplelmk --no-tags
 
-          # Real 4.4 MGLRU port series already developed and build-verified on the
-          # donor branch. Cherry-pick the port commits onto the v7halo base instead
-          # of importing an unrelated 4.14 tree wholesale.
+          # Real 4.4 MGLRU port series. These commits were developed against
+          # the same 4.4.302 base; cherry-pick them rather than copying a 4.14 tree.
           git cherry-pick \
             6aac5ceac624ade952d210525d64c92a21e08203 \
             0a0db3215c4008e57c2c205d54f1b96954e9d422 \
             d5e735d9de508df0f0d8c5cc398da4d4c37d4939 \
             52c44f4a334d1612c1eee78e5fb363ceb84968ef
 
-          # Remove the Samsung/custom schedutil + EAS changes from the scheduler
-          # while leaving the rest of the tree intact.
+          # Restore the clean scheduler baseline for the Samsung/custom
+          # schedutil + EAS changes, without reverting unrelated kernel work.
           git checkout 9aae414af2445004ae10096ae289dafe4fe1c494 -- \
             kernel/sched/fair.c \
             kernel/sched/cpufreq_schedutil.c
 
-          # Keep MGLRU permanently enabled in the shipping dream2lte defconfig.
           DEFCONFIG=arch/arm64/configs/exynos8895-dream2lte_defconfig
           grep -q '^CONFIG_LRU_GEN=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN=y' >> "$DEFCONFIG"
           grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN_ENABLED=y' >> "$DEFCONFIG"
 
-          # Remove the earlier helper workflow; this workflow is the single owner
-          # of the v7halo port/build pipeline.
           rm -f .github/workflows/agent-v7-scheduler.yml
 
           git add -A
