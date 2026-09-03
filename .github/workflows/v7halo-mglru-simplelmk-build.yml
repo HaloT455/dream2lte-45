@@ -1,0 +1,49 @@
+name: v7halo MGLRU SimpleLMK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v7halo
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev python3 cpio unzip rsync
+
+      - name: Verify source state
+        run: |
+          set -e
+          grep -n 'capacity_margin' kernel/sched/fair.c | head
+          grep -n 'SUGOV_DEFAULT_.*RATE_LIMIT_US' kernel/sched/cpufreq_schedutil.c
+          grep -Rnw --include='*.c' --include='*.h' --include='Kconfig' 'CONFIG_LRU_GEN' . | head -20 || true
+          grep -Rnw --include='*.c' --include='*.h' 'simple_lmk_trigger' . | head -20 || true
+
+      - name: Configure
+        run: |
+          make ARCH=arm64 exynos8895-dream2lte_defconfig
+          scripts/config --enable LRU_GEN || true
+          scripts/config --enable LRU_GEN_ENABLED || true
+          scripts/config --enable ANDROID_SIMPLE_LMK || true
+          make ARCH=arm64 olddefconfig
+
+      - name: Build
+        env:
+          ARCH: arm64
+          CROSS_COMPILE: aarch64-linux-android-
+        run: |
+          make -j$(nproc) ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} Image.gz dtbs
+
+      - name: Validate outputs
+        run: |
+          test -s arch/arm64/boot/Image.gz
+          test -s arch/arm64/boot/dtb.img || true
+          grep -q '^CONFIG_LRU_GEN=y$' .config
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' .config
