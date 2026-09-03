@@ -1,0 +1,62 @@
+name: v7halo current kernel build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v7halo]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Download GCC 14.2
+        run: |
+          mkdir -p "$HOME/tools"
+          wget -q -O "$HOME/tools/gcc.tar.xz" https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          make exynos8895-dream2lte_defconfig
+          scripts/config --enable LRU_GEN
+          scripts/config --enable LRU_GEN_ENABLED
+          scripts/config --enable ANDROID_SIMPLE_LMK
+          scripts/config --disable LOCALVERSION_AUTO
+          scripts/config --set-str LOCALVERSION "-Alice-V7-MGLRU-SLMK"
+          make olddefconfig
+          grep -q '^CONFIG_LRU_GEN=y$' .config
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' .config
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' .config
+
+      - name: Build kernel and dtb
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" Image dtb.img 2>&1 | tee build.log
+
+      - name: Validate output
+        run: |
+          test -s arch/arm64/boot/Image
+          test -s arch/arm64/boot/dtb.img
+          grep -a -q 'Linux version 4.4.302-Alice-V7-MGLRU-SLMK' arch/arm64/boot/Image
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v7halo-kernel-${{ github.sha }}
+          path: |
+            arch/arm64/boot/Image
+            arch/arm64/boot/dtb.img
+            build.log
+            .config
+            System.map
