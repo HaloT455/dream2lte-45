@@ -1,4 +1,4 @@
-name: v7halo MGLRU port and kernel build
+name: v7halo MGLRU kernel build
 
 on:
   push:
@@ -7,14 +7,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  contents: read
 
 jobs:
-  port-and-build:
-    if: ${{ !contains(github.event.head_commit.message, '[mglru-port]') }}
+  verify-and-build:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -26,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: v7halo
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Install build dependencies
         run: |
@@ -36,39 +32,6 @@ jobs:
             bc bison flex build-essential libssl-dev libelf-dev \
             python3 wget tar xz-utils
           sudo ln -sf /usr/bin/python3 /usr/bin/python
-
-      - name: Port MGLRU and clean custom scheduler changes
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin agent/ems-v6-mglru-simplelmk --no-tags
-
-          # Real 4.4 MGLRU port series. These commits were developed against
-          # the same 4.4.302 base; cherry-pick them rather than copying a 4.14 tree.
-          git cherry-pick \
-            6aac5ceac624ade952d210525d64c92a21e08203 \
-            0a0db3215c4008e57c2c205d54f1b96954e9d422 \
-            d5e735d9de508df0f0d8c5cc398da4d4c37d4939 \
-            52c44f4a334d1612c1eee78e5fb363ceb84968ef
-
-          # Restore the clean scheduler baseline for the Samsung/custom
-          # schedutil + EAS changes, without reverting unrelated kernel work.
-          git checkout 9aae414af2445004ae10096ae289dafe4fe1c494 -- \
-            kernel/sched/fair.c \
-            kernel/sched/cpufreq_schedutil.c
-
-          DEFCONFIG=arch/arm64/configs/exynos8895-dream2lte_defconfig
-          grep -q '^CONFIG_LRU_GEN=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN=y' >> "$DEFCONFIG"
-          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$DEFCONFIG" || echo 'CONFIG_LRU_GEN_ENABLED=y' >> "$DEFCONFIG"
-
-          rm -f .github/workflows/agent-v7-scheduler.yml
-
-          git add -A
-          git commit -m '[mglru-port] port 4.4 MGLRU and restore clean scheduler'
-          git push origin HEAD:v7halo
 
       - name: Download GCC 14.2
         run: |
@@ -114,14 +77,16 @@ jobs:
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
 
-      - name: Validate MGLRU and clean scheduler
+      - name: Validate MGLRU and scheduler state
         shell: bash
         run: |
           set -euxo pipefail
           OUT="out-${{ matrix.variant }}"
           grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
           grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$OUT/.config"
-          grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
+          test -f mm/page_vma_mapped.c
+          grep -q 'lru_gen_' mm/vmscan.c
+          grep -q 'unsigned int capacity_margin = 1205;' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(5000)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(20000)' kernel/sched/cpufreq_schedutil.c
 
