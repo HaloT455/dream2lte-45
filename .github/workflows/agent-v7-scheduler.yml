@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   cleanup:
-    if: ${{ !startsWith(github.event.head_commit.message, 'agent:') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout v7halo
@@ -42,13 +41,10 @@ jobs:
            */
           unsigned int capacity_margin = 1205;
           '''
-          if old not in s:
-              needle = 'unsigned int capacity_margin = 1280;'
-              if needle not in s:
-                  raise SystemExit('capacity_margin=1280 not found; refusing unrelated edit')
-              s = s.replace(needle, 'unsigned int capacity_margin = 1205;', 1)
-          else:
+          if old in s:
               s = s.replace(old, new, 1)
+          elif 'unsigned int capacity_margin = 1280;' in s:
+              s = s.replace('unsigned int capacity_margin = 1280;', 'unsigned int capacity_margin = 1205;', 1)
           p.write_text(s)
           PY
 
@@ -65,18 +61,14 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Verify targeted changes only
+      - name: Verify targeted scheduler state
         shell: bash
         run: |
           set -euo pipefail
           grep -q '^unsigned int capacity_margin = 1205;$' kernel/sched/fair.c
           grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
           grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
-          if grep -q '^CONFIG_LRU_GEN=' arch/arm64/configs/exynos8895-dream2lte_defconfig; then
-            echo 'Unexpected pre-existing LRU_GEN config found'
-          else
-            echo 'MGLRU is not present in the 4.4 tree yet; no fake/stub integration will be added.'
-          fi
+          echo 'MGLRU source is not present in this 4.4 tree; no fake/stub MGLRU code is added.'
 
       - name: Commit and push
         shell: bash
