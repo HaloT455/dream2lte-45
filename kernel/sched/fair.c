@@ -128,12 +128,14 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
 #endif
 
 /*
- * Use the standard EAS capacity headroom.  Keeping this aligned with
- * schedutil's 1.25 tipping factor lets EAS select a suitable cluster and
- * schedutil select its frequency from the same utilization signal, without
- * an A53-first 85% spill gate.
+ * Keep CFS tasks on the energy-efficient LITTLE cluster while a CPU can
+ * accept the projected load below 85% of its original capacity.  Schedutil
+ * reaches the policy maximum at about 80%, so the LITTLE policy is already
+ * at its top OPP before EAS starts spilling work onto the big cluster.
+ *
+ * 1024 / 0.85 = 1204.7, rounded up so the boundary is never above 85%.
  */
-unsigned int capacity_margin = 1280;
+unsigned int capacity_margin = 1205;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {
@@ -6313,25 +6315,18 @@ static int cpu_util_wake(int cpu, struct task_struct *p)
 	return (util >= capacity) ? capacity : util;
 }
 
-static int start_cpu(struct task_struct *p)
+static int start_cpu(void)
 {
 	struct root_domain *rd = cpu_rq(smp_processor_id())->rd;
-	int cpu = task_cpu(p);
 
 	RCU_LOCKDEP_WARN(rcu_read_lock_sched_held(),
 			   "sched RCU must be held");
 
 	/*
-	 * Preserve cache and cluster affinity for short UI wakeups.  Starting
-	 * every boosted/prefer-idle search on the maximum-capacity cluster wakes
-	 * all M2 cores for small frame work and causes thermal oscillation.  EAS
-	 * still scans every capacity class and can select M2 when utilization no
-	 * longer fits A53; this seed only avoids an unconditional cross-cluster
-	 * jump.
+	 * Always begin the EAS search on the most efficient capacity class.
+	 * A boosted task still carries boosted utilization, and will therefore
+	 * move to the big cluster when it no longer fits below the 85% margin.
 	 */
-	if (cpu_online(cpu) && cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
-		return cpu;
-
 	return rd->min_cap_orig_cpu;
 }
 
@@ -6357,8 +6352,8 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 	schedstat_inc(p, se.statistics.nr_wakeups_fbt_attempts);
 	schedstat_inc(this_rq(), eas_stats.fbt_attempts);
 
-	/* Start close to the task; EAS remains free to choose either cluster. */
-	cpu = start_cpu(p);
+	/* Prefer LITTLE; boosted utilization decides when the task needs big. */
+	cpu = start_cpu();
 	if (cpu < 0) {
 		schedstat_inc(p, se.statistics.nr_wakeups_fbt_no_cpu);
 		schedstat_inc(this_rq(), eas_stats.fbt_no_cpu);
