@@ -114,6 +114,9 @@ struct cg_proto {
 };
 
 #ifdef CONFIG_MEMCG
+
+#define MEM_CGROUP_ID_SHIFT	16
+#define MEM_CGROUP_ID_MAX	USHRT_MAX
 struct mem_cgroup_stat_cpu {
 	long count[MEM_CGROUP_STAT_NSTATS];
 	unsigned long events[MEMCG_NR_EVENTS];
@@ -178,6 +181,8 @@ struct mem_cgroup_id {
 	int id;
 	atomic_t ref;
 };
+
+struct lru_gen_mm_list;
 
 /*
  * The memory controller data structure. The memory controller controls both
@@ -280,10 +285,15 @@ struct mem_cgroup {
 	struct list_head event_list;
 	spinlock_t event_list_lock;
 
+#ifdef CONFIG_LRU_GEN
+	struct lru_gen_mm_list *mm_list;
+#endif
+
 	struct mem_cgroup_per_node *nodeinfo[0];
 	/* WARNING: nodeinfo must be the last member here */
 };
 extern struct cgroup_subsys_state *mem_cgroup_root_css;
+extern struct mem_cgroup *root_mem_cgroup;
 
 /**
  * mem_cgroup_events - count memory events against a cgroup
@@ -360,6 +370,16 @@ static inline bool mem_cgroup_disabled(void)
 	return !cgroup_subsys_enabled(memory_cgrp_subsys);
 }
 
+static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
+{
+	if (mem_cgroup_disabled())
+		return 0;
+
+	return memcg->id.id;
+}
+
+struct mem_cgroup *mem_cgroup_from_id(unsigned short id);
+
 /*
  * For memory reclaim.
  */
@@ -414,18 +434,6 @@ void mem_cgroup_handle_over_high(void);
 
 void mem_cgroup_print_oom_info(struct mem_cgroup *memcg,
 				struct task_struct *p);
-
-static inline void mem_cgroup_oom_enable(void)
-{
-	WARN_ON(current->memcg_may_oom);
-	current->memcg_may_oom = 1;
-}
-
-static inline void mem_cgroup_oom_disable(void)
-{
-	WARN_ON(!current->memcg_may_oom);
-	current->memcg_may_oom = 0;
-}
 
 static inline bool task_in_memcg_oom(struct task_struct *p)
 {
@@ -504,7 +512,19 @@ out:
 void mem_cgroup_split_huge_fixup(struct page *head);
 #endif
 
+struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm);
+
+static inline void mem_cgroup_put(struct mem_cgroup *memcg)
+{
+	if (memcg)
+		css_put(&memcg->css);
+}
+
 #else /* CONFIG_MEMCG */
+
+#define MEM_CGROUP_ID_SHIFT	0
+#define MEM_CGROUP_ID_MAX	0
+
 struct mem_cgroup;
 
 static inline void mem_cgroup_events(struct mem_cgroup *memcg,
@@ -592,6 +612,17 @@ static inline bool mem_cgroup_disabled(void)
 	return true;
 }
 
+static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
+{
+	return 0;
+}
+
+static inline struct mem_cgroup *mem_cgroup_from_id(unsigned short id)
+{
+	WARN_ON_ONCE(id);
+	return NULL;
+}
+
 static inline bool
 mem_cgroup_inactive_anon_is_low(struct lruvec *lruvec)
 {
@@ -633,14 +664,6 @@ static inline void mem_cgroup_handle_over_high(void)
 {
 }
 
-static inline void mem_cgroup_oom_enable(void)
-{
-}
-
-static inline void mem_cgroup_oom_disable(void)
-{
-}
-
 static inline bool task_in_memcg_oom(struct task_struct *p)
 {
 	return false;
@@ -670,6 +693,15 @@ unsigned long mem_cgroup_soft_limit_reclaim(struct zone *zone, int order,
 }
 
 static inline void mem_cgroup_split_huge_fixup(struct page *head)
+{
+}
+
+static inline struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
+{
+	return NULL;
+}
+
+static inline void mem_cgroup_put(struct mem_cgroup *memcg)
 {
 }
 

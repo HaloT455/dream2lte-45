@@ -12,6 +12,7 @@
 #include <linux/swap.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/mm_inline.h>
 
 /*
  *		Double CLOCK lists
@@ -202,6 +203,140 @@ static void unpack_shadow(void *shadow,
 	*distance = (refault - eviction) & mask;
 }
 
+#ifdef CONFIG_LRU_GEN
+
+#define LRU_GEN_TOKEN_WIDTH	(BITS_PER_LONG - RADIX_TREE_EXCEPTIONAL_SHIFT - \
+				 ZONES_SHIFT - NODES_SHIFT - MEM_CGROUP_ID_SHIFT)
+#define LRU_GEN_TOKEN_MASK	(BIT(LRU_GEN_TOKEN_WIDTH) - 1)
+
+#if LRU_GEN_SHIFT + LRU_USAGE_SHIFT >= LRU_GEN_TOKEN_WIDTH
+#error "Please try smaller NODES_SHIFT, NR_LRU_GENS and TIERS_PER_GEN configurations"
+#endif
+
+static void *pack_lru_gen_shadow(int memcg_id, struct zone *zone,
+				 unsigned long token)
+{
+	token &= LRU_GEN_TOKEN_MASK;
+	token = (token << MEM_CGROUP_ID_SHIFT) | memcg_id;
+	token = (token << NODES_SHIFT) | zone_to_nid(zone);
+	token = (token << ZONES_SHIFT) | zone_idx(zone);
+	token = (token << RADIX_TREE_EXCEPTIONAL_SHIFT) |
+		RADIX_TREE_EXCEPTIONAL_ENTRY;
+
+	return (void *)token;
+}
+
+static unsigned long unpack_lru_gen_shadow(void *shadow, int *memcg_id,
+					   struct zone **zone)
+{
+	unsigned long token = (unsigned long)shadow;
+	int zid, nid;
+
+	token >>= RADIX_TREE_EXCEPTIONAL_SHIFT;
+	zid = token & (BIT(ZONES_SHIFT) - 1);
+	token >>= ZONES_SHIFT;
+	nid = token & (BIT(NODES_SHIFT) - 1);
+	token >>= NODES_SHIFT;
+	*memcg_id = token & (BIT(MEM_CGROUP_ID_SHIFT) - 1);
+	token >>= MEM_CGROUP_ID_SHIFT;
+	*zone = NODE_DATA(nid)->node_zones + zid;
+
+	return token;
+}
+
+static void page_set_usage(struct page *page, int usage)
+{
+	unsigned long old_flags, new_flags;
+
+	VM_BUG_ON(usage > BIT(LRU_USAGE_WIDTH));
+
+	if (!usage)
+		return;
+
+	do {
+		old_flags = READ_ONCE(page->flags);
+		new_flags = (old_flags & ~LRU_USAGE_MASK) | LRU_TIER_FLAGS |
+			    ((usage - 1UL) << LRU_USAGE_PGOFF);
+	} while (new_flags != old_flags &&
+		 cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+}
+
+void *lru_gen_eviction(struct page *page)
+{
+	int hist, tier;
+	unsigned long token;
+	unsigned long min_seq;
+	struct lruvec *lruvec;
+	struct lrugen *lrugen;
+	struct zone *zone = page_zone(page);
+	struct mem_cgroup *memcg = NULL;
+	int type = page_is_file_cache(page);
+	int usage = page_tier_usage(page);
+
+#ifdef CONFIG_MEMCG
+	memcg = page->mem_cgroup;
+#endif
+	if (!mem_cgroup_disabled() && !memcg)
+		return NULL;
+
+	lruvec = mem_cgroup_page_lruvec(page, zone);
+	lrugen = &lruvec->evictable;
+	min_seq = READ_ONCE(lrugen->min_seq[type]);
+	token = (min_seq << LRU_USAGE_SHIFT) | usage;
+
+	hist = hist_from_seq_or_gen(min_seq);
+	tier = lru_tier_from_usage(usage);
+	atomic_long_add(hpage_nr_pages(page),
+			&lrugen->evicted[hist][type][tier]);
+
+	return pack_lru_gen_shadow(mem_cgroup_id(memcg), zone, token);
+}
+
+void lru_gen_refault(struct page *page, void *shadow)
+{
+	int hist, tier, usage;
+	int memcg_id;
+	unsigned long token;
+	unsigned long min_seq;
+	struct lruvec *lruvec;
+	struct lrugen *lrugen;
+	struct zone *zone;
+	struct mem_cgroup *memcg;
+	int type = page_is_file_cache(page);
+
+	token = unpack_lru_gen_shadow(shadow, &memcg_id, &zone);
+	if (page_zone(page) != zone)
+		return;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_id(memcg_id);
+	if (!mem_cgroup_disabled() && !memcg)
+		goto unlock;
+
+	usage = token & (BIT(LRU_USAGE_SHIFT) - 1);
+	token >>= LRU_USAGE_SHIFT;
+
+	lruvec = mem_cgroup_zone_lruvec(zone, memcg);
+	lrugen = &lruvec->evictable;
+	min_seq = READ_ONCE(lrugen->min_seq[type]);
+	if (token != (min_seq & (LRU_GEN_TOKEN_MASK >> LRU_USAGE_SHIFT)))
+		goto unlock;
+
+	page_set_usage(page, usage);
+
+	hist = hist_from_seq_or_gen(min_seq);
+	tier = lru_tier_from_usage(usage);
+	atomic_long_add(hpage_nr_pages(page),
+			&lrugen->refaulted[hist][type][tier]);
+	inc_zone_state(zone, WORKINGSET_REFAULT);
+	if (tier)
+		inc_zone_state(zone, WORKINGSET_RESTORE);
+unlock:
+	rcu_read_unlock();
+}
+
+#endif /* CONFIG_LRU_GEN */
+
 /**
  * workingset_eviction - note the eviction of a page from memory
  * @mapping: address space the page was backing
@@ -214,6 +349,9 @@ void *workingset_eviction(struct address_space *mapping, struct page *page)
 {
 	struct zone *zone = page_zone(page);
 	unsigned long eviction;
+
+	if (lru_gen_enabled())
+		return lru_gen_eviction(page);
 
 	eviction = atomic_long_inc_return(&zone->inactive_age);
 	return pack_shadow(eviction, zone);
@@ -228,19 +366,24 @@ void *workingset_eviction(struct address_space *mapping, struct page *page)
  *
  * Returns %true if the page should be activated, %false otherwise.
  */
-bool workingset_refault(void *shadow)
+void workingset_refault(struct page *page, void *shadow)
 {
 	unsigned long refault_distance;
 	struct zone *zone;
+
+	if (lru_gen_enabled()) {
+		lru_gen_refault(page, shadow);
+		return;
+	}
 
 	unpack_shadow(shadow, &zone, &refault_distance);
 	inc_zone_state(zone, WORKINGSET_REFAULT);
 
 	if (refault_distance <= zone_page_state(zone, NR_ACTIVE_FILE)) {
 		inc_zone_state(zone, WORKINGSET_ACTIVATE);
-		return true;
+		SetPageActive(page);
+		workingset_activation(page);
 	}
-	return false;
 }
 
 /**
