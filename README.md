@@ -41,6 +41,10 @@ new/empty output directory when producing the reproducible release build.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Complete SimpleLMK is enabled with global and memcg vmpressure triggers,
   bounded victim waits and the original OOM fallback when reclaim cannot run.
+- Functional MGLRU is enabled at boot with 7 generations and 4 tiers; the
+  optional debug statistics are intentionally disabled to keep reclaim
+  overhead and battery impact low. SimpleLMK remains the severe-pressure
+  backstop, with all threads in a shared address space marked consistently.
   Rescue2 tracks SimpleLMK victims separately from genuine OOM victims so the
   OOM counter cannot underflow and deadlock the suspend freezer. Disabling the
   OOM killer is also bounded to five seconds so a stuck victim aborts suspend
