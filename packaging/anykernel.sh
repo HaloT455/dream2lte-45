@@ -1,7 +1,7 @@
 ### AnyKernel3 Ramdisk Mod Script
 
 properties() { '
-kernel.string=ALice V8 Rescue SimpleLMK Universal
+kernel.string=ALice V8 Full MGLRU SimpleLMK SuspendFix
 do.devicecheck=1
 do.modules=0
 do.systemless=1
