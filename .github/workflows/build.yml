@@ -59,8 +59,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: v8-dream2lte-ccache-${{ matrix.variant }}-${{ hashFiles('arch/arm64/configs/exynos8895-dream2lte_defconfig') }}
+          key: v8-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
           restore-keys: |
+            v8-dream2lte-ccache-${{ matrix.variant }}-
             v8-dream2lte-ccache-
 
       - name: Configure toolchain
@@ -180,7 +181,12 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
           cp "$OUT/System.map" "$DEST/System.map"
           cp "$OUT/.config" "$DEST/kernel.config"
-          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
+          (
+            cd "$DEST"
+            sha256sum \
+              ALice-V8-MGLRU-SLMK-Universal-*.zip \
+              Image dtb.img System.map kernel.config > SHA256SUMS
+          )
 
       - name: Upload build log
         if: always()
