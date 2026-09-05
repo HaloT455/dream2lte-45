@@ -45,6 +45,9 @@ new/empty output directory when producing the reproducible release build.
   optional debug statistics are intentionally disabled to keep reclaim
   overhead and battery impact low. SimpleLMK remains the severe-pressure
   backstop, with all threads in a shared address space marked consistently.
+  The lockup detector remains compiled for diagnostics, but hard- and soft-lockup
+  panic defaults are disabled so a transient scheduler stall does not reboot the
+  daily build; a real kernel panic still follows the existing five-second reset.
   Rescue2 tracks SimpleLMK victims separately from genuine OOM victims so the
   OOM counter cannot underflow and deadlock the suspend freezer. Disabling the
   OOM killer is also bounded to five seconds so a stuck victim aborts suspend
