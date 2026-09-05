@@ -62,6 +62,8 @@ static void __page_cache_release(struct page *page)
 		VM_BUG_ON_PAGE(!PageLRU(page), page);
 		__ClearPageLRU(page);
 		del_page_from_lru_list(page, lruvec, page_off_lru(page));
+		/* MGLRU may restore PG_active while removing its generation. */
+		__ClearPageActive(page);
 		spin_unlock_irqrestore(&zone->lru_lock, flags);
 	}
 	mem_cgroup_uncharge(page);
