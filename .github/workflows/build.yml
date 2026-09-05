@@ -101,7 +101,7 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           CFG="$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
-          grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$CFG"
+          ! grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$CFG"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$CFG"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$CFG"
