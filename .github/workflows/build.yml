@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v8-dream2lte-\${{ github.ref }}
+  group: v8-dream2lte-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -35,7 +35,7 @@ jobs:
         id: gcc-cache
         uses: actions/cache@v4
         with:
-          path: \${{ env.TOOLCHAIN_DIR }}
+          path: ${{ env.TOOLCHAIN_DIR }}
           key: arm-gnu-14.2.rel1-aarch64
 
       - name: Install dependencies
@@ -58,8 +58,8 @@ jobs:
       - name: Cache compiler results
         uses: actions/cache@v4
         with:
-          path: \${{ env.CCACHE_DIR }}
-          key: v8-dream2lte-ccache-\${{ matrix.variant }}-\${{ hashFiles('arch/arm64/configs/exynos8895-dream2lte_defconfig') }}
+          path: ${{ env.CCACHE_DIR }}
+          key: v8-dream2lte-ccache-${{ matrix.variant }}-${{ hashFiles('arch/arm64/configs/exynos8895-dream2lte_defconfig') }}
           restore-keys: |
             v8-dream2lte-ccache-
 
@@ -73,11 +73,11 @@ jobs:
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Sat Sep 5 00:00:00 UTC 2026" >> "$GITHUB_ENV"
 
-      - name: Configure \${{ matrix.variant }} kernel
+      - name: Configure ${{ matrix.variant }} kernel
         run: |
-          OUT="out-\${{ matrix.variant }}"
+          OUT="out-${{ matrix.variant }}"
           make O="$OUT" exynos8895-dream2lte_defconfig
-          if [ "\${{ matrix.variant }}" = "enforcing" ]; then
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
@@ -94,7 +94,7 @@ jobs:
       - name: Validate V8 integration
         run: |
           set -eu
-          OUT="out-\${{ matrix.variant }}"
+          OUT="out-${{ matrix.variant }}"
           CFG="$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
           grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
@@ -129,7 +129,7 @@ jobs:
           done
           grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
           ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
-          if [ "\${{ matrix.variant }}" = "enforcing" ]; then
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$CFG"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$CFG"
           else
@@ -140,14 +140,14 @@ jobs:
       - name: Build kernel and DTB
         run: |
           set -o pipefail
-          OUT="out-\${{ matrix.variant }}"
-          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-\${{ matrix.variant }}.log"
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
           ccache --show-stats
 
       - name: Validate output
         run: |
           set -eu
-          OUT="out-\${{ matrix.variant }}"
+          OUT="out-${{ matrix.variant }}"
           NM="$TOOLCHAIN_DIR/bin/aarch64-none-linux-gnu-nm"
           test -s "$OUT/arch/arm64/boot/Image"
           test -s "$OUT/arch/arm64/boot/dtb.img"
@@ -160,9 +160,9 @@ jobs:
       - name: Package flashable kernel
         run: |
           set -eu
-          OUT="out-\${{ matrix.variant }}"
-          DEST="output-\${{ matrix.variant }}"
-          AK3="anykernel-\${{ matrix.variant }}"
+          OUT="out-${{ matrix.variant }}"
+          DEST="output-${{ matrix.variant }}"
+          AK3="anykernel-${{ matrix.variant }}"
           mkdir -p "$DEST"
           git init "$AK3"
           git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
@@ -174,7 +174,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V8-MGLRU-SLMK-Universal-\${{ matrix.variant }}-\${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V8-MGLRU-SLMK-Universal-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -186,13 +186,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-build-log-\${{ matrix.variant }}-\${{ github.sha }}
-          path: build-\${{ matrix.variant }}.log
+          name: dream2lte-v8-build-log-${{ matrix.variant }}-${{ github.sha }}
+          path: build-${{ matrix.variant }}.log
           if-no-files-found: warn
 
       - name: Upload V8 flash package
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-mglru-simplelmk-\${{ matrix.variant }}-\${{ github.sha }}
-          path: output-\${{ matrix.variant }}/
+          name: dream2lte-v8-mglru-simplelmk-${{ matrix.variant }}-${{ github.sha }}
+          path: output-${{ matrix.variant }}/
           if-no-files-found: error
