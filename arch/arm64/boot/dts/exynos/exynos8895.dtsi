@@ -4667,8 +4667,8 @@
 					type = "active";
 				};
 				mngs_alert0: mngs-alert0 {
-					/* Full M2 OPP range remains available below 65C. */
-					temperature = <65000>; /* millicelsius */
+					/* Start budgeting M2 power early to reduce surface heat. */
+					temperature = <55000>; /* millicelsius */
 					hysteresis = <2000>; /* millicelsius */
 					type = "active";
 				};

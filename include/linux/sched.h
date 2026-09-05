@@ -2010,6 +2010,7 @@ struct task_struct {
 	int pagefault_disabled;
 #ifdef CONFIG_ANDROID_SIMPLE_LMK
 	struct task_struct	*simple_lmk_next;
+	bool			simple_lmk_victim;
 #endif
 /* CPU-specific state of this task */
 	struct thread_struct thread;

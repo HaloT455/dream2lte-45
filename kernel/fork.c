@@ -404,6 +404,10 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	tsk->splice_pipe = NULL;
 	tsk->task_frag.page = NULL;
 	tsk->wake_q.next = NULL;
+#ifdef CONFIG_ANDROID_SIMPLE_LMK
+	tsk->simple_lmk_next = NULL;
+	tsk->simple_lmk_victim = false;
+#endif
 
 	account_kernel_stack(stack, 1);
 

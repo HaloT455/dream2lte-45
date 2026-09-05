@@ -41,12 +41,17 @@ new/empty output directory when producing the reproducible release build.
 - Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
 - Complete SimpleLMK is enabled with global and memcg vmpressure triggers,
   bounded victim waits and the original OOM fallback when reclaim cannot run.
+  Rescue2 tracks SimpleLMK victims separately from genuine OOM victims so the
+  OOM counter cannot underflow and deadlock the suspend freezer. Disabling the
+  OOM killer is also bounded to five seconds so a stuck victim aborts suspend
+  instead of allowing the hardware watchdog to reset the phone.
 - KernelSU 32590 uses manual Samsung 4.4 security hooks; automated LSM hook
   insertion, kprobes, syscall-table tampering, and hosts redirect are disabled.
 - The permissive build pins the SELinux runtime state to permissive, including
   when Android init later requests enforcing mode.
-- M2 retains the complete 741MHz..2.704GHz schedutil range below 65 degrees C.
-  Its stock power allocator starts at 65 degrees C and targets 70 degrees C.
+- M2 retains the complete 741MHz..2.704GHz schedutil range while cool. Its
+  power allocator now starts budgeting at 55 degrees C and targets 70 degrees
+  C, reducing surface heat without removing the top OPP from schedutil.
   GPU limits, CPU voltage tables, battery charging protection, and CPU hot
   safety trips remain in place.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.

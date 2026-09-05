@@ -1,10 +1,10 @@
-name: Build V8 Rescue SimpleLMK
+name: Build V8 Rescue2 SuspendFix Cool
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - v8haloT45-rescue
+      - v8haloT45-rescue-suspendfix
     paths-ignore:
       - "tools/alice-kernel-trace/**"
       - ".github/workflows/build-alice-kernel-trace.yml"
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v8-rescue-dream2lte-${{ github.ref }}
+  group: v8-rescue2-suspendfix-dream2lte-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,8 +62,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: v8-rescue-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
+          key: v8-rescue2-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
           restore-keys: |
+            v8-rescue2-dream2lte-ccache-${{ matrix.variant }}-
             v8-rescue-dream2lte-ccache-${{ matrix.variant }}-
             v8-rescue-dream2lte-ccache-
 
@@ -85,12 +86,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-Rescue-SLMK-Universal-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-Rescue2-SuspendFix-Cool-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-Rescue-SLMK-Universal-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-Rescue2-SuspendFix-Cool-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -135,6 +136,13 @@ jobs:
           ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
           grep -q 'Hard Reset keys held; waiting for PMIC reset' drivers/staging/samsung/sec_debug_hard_reset_hook.c
           ! sed -n '/hard_reset_hook_callback/,/^}/p' drivers/staging/samsung/sec_debug_hard_reset_hook.c | grep -q '^[[:space:]]*BUG();'
+          grep -q 'simple_lmk_victim' include/linux/sched.h
+          grep -q 'task_group_has_memdie' drivers/android/simple_lmk.c
+          grep -q 'WRITE_ONCE(t->simple_lmk_victim, true)' drivers/android/simple_lmk.c
+          grep -q 'READ_ONCE(current->simple_lmk_victim)' kernel/exit.c
+          grep -q 'wait_event_timeout(oom_victims_wait' mm/oom_kill.c
+          grep -q 'OOM_DISABLE_TIMEOUT.*(5 \* HZ)' mm/oom_kill.c
+          grep -A3 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '55000'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$CFG"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$CFG"
@@ -162,6 +170,11 @@ jobs:
           "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_scan_around$'
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            grep -a -q 'Linux version 4.4.302-ALice-V8-Rescue2-SuspendFix-Cool-Enforcing' "$OUT/arch/arm64/boot/Image"
+          else
+            grep -a -q 'Linux version 4.4.302-ALice-V8-Rescue2-SuspendFix-Cool-Permissive' "$OUT/arch/arm64/boot/Image"
+          fi
 
       - name: Package flashable kernel
         run: |
@@ -180,7 +193,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V8-Rescue-SLMK-Universal-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V8-Rescue2-SuspendFix-Cool-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -189,7 +202,7 @@ jobs:
           (
             cd "$DEST"
             sha256sum \
-              ALice-V8-Rescue-SLMK-Universal-*.zip \
+              ALice-V8-Rescue2-SuspendFix-Cool-*.zip \
               Image dtb.img System.map kernel.config > SHA256SUMS
           )
 
@@ -197,13 +210,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v8-rescue2-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: warn
 
       - name: Upload V8 flash package
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-rescue-simplelmk-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v8-rescue2-suspendfix-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

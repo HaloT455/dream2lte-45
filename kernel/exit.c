@@ -447,8 +447,21 @@ static void exit_mm(struct task_struct *tsk)
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
 	mmput(mm);
-	if (test_thread_flag(TIF_MEMDIE))
+	if (test_thread_flag(TIF_MEMDIE)) {
+#ifdef CONFIG_ANDROID_SIMPLE_LMK
+		/*
+		 * SimpleLMK marks every victim thread TIF_MEMDIE directly so
+		 * it can finish exiting during memory pressure. Those marks
+		 * are not registered in oom_victims and must not decrement it.
+		 */
+		if (READ_ONCE(current->simple_lmk_victim)) {
+			WRITE_ONCE(current->simple_lmk_victim, false);
+			clear_thread_flag(TIF_MEMDIE);
+			return;
+		}
+#endif
 		exit_oom_victim();
+	}
 }
 
 static struct task_struct *find_alive_thread(struct task_struct *p)

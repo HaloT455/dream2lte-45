@@ -406,6 +406,9 @@ static void dump_header(struct oom_control *oc, struct task_struct *p,
 static atomic_t oom_victims = ATOMIC_INIT(0);
 static DECLARE_WAIT_QUEUE_HEAD(oom_victims_wait);
 
+/* Abort suspend instead of letting a stuck victim trigger the HW watchdog. */
+#define OOM_DISABLE_TIMEOUT	(5 * HZ)
+
 bool oom_killer_disabled __read_mostly;
 
 /**
@@ -470,7 +473,14 @@ bool oom_killer_disable(void)
 	oom_killer_disabled = true;
 	mutex_unlock(&oom_lock);
 
-	wait_event(oom_victims_wait, !atomic_read(&oom_victims));
+	if (!wait_event_timeout(oom_victims_wait,
+				!atomic_read(&oom_victims),
+				OOM_DISABLE_TIMEOUT)) {
+		pr_warn("Timed out disabling OOM killer; victims=%d\n",
+			atomic_read(&oom_victims));
+		oom_killer_disabled = false;
+		return false;
+	}
 
 	return true;
 }

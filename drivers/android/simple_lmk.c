@@ -76,6 +76,18 @@ static unsigned long get_total_mm_pages(struct mm_struct *mm)
 	return pages;
 }
 
+static bool task_group_has_memdie(struct task_struct *tsk)
+{
+	struct task_struct *t;
+
+	for_each_thread(tsk, t) {
+		if (test_tsk_thread_flag(t, TIF_MEMDIE))
+			return true;
+	}
+
+	return false;
+}
+
 static unsigned long find_victims(int *vindex)
 {
 	short i, min_adj = SHRT_MAX, max_adj = 0;
@@ -118,6 +130,13 @@ static unsigned long find_victims(int *vindex)
 			vtsk = find_lock_task_mm(tsk);
 			if (!vtsk)
 				continue;
+			/*
+			 * Keep counted OOM victims out of SimpleLMK accounting.
+			 */
+			if (task_group_has_memdie(vtsk)) {
+				task_unlock(vtsk);
+				continue;
+			}
 
 			victims[*vindex].tsk = vtsk;
 			victims[*vindex].mm = vtsk->mm;
@@ -205,8 +224,10 @@ static bool scan_and_kill(void)
 		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, true);
 
 		rcu_read_lock();
-		for_each_thread(vtsk, t)
+		for_each_thread(vtsk, t) {
+			WRITE_ONCE(t->simple_lmk_victim, true);
 			set_tsk_thread_flag(t, TIF_MEMDIE);
+		}
 		for_each_thread(vtsk, t)
 			sched_setscheduler_nocheck(t, SCHED_RR, &min_rt_prio);
 		rcu_read_unlock();
