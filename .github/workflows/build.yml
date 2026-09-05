@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - v8haloT45
+    paths-ignore:
+      - "tools/alice-kernel-trace/**"
+      - ".github/workflows/build-alice-kernel-trace.yml"
 
 permissions:
   contents: read
