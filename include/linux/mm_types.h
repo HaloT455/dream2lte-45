@@ -15,6 +15,7 @@
 #include <linux/workqueue.h>
 #include <linux/nodemask.h>
 #include <linux/mmdebug.h>
+#include <linux/bitmap.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 
@@ -535,8 +536,8 @@ struct mm_struct {
 		/* points to the memcg of the owner task */
 		struct mem_cgroup *memcg;
 #endif
-		/* whether this mm_struct has been used since the last walk */
-		nodemask_t nodes;
+		/* whether this mm_struct has been used by each reclaim zone */
+		DECLARE_BITMAP(zones, MAX_NUMNODES * MAX_NR_ZONES);
 #ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
 		/* the number of CPUs using this mm_struct */
 		atomic_t nr_cpus;
@@ -578,7 +579,7 @@ static inline void lru_gen_switch_mm(struct mm_struct *old,
 {
 	/* arm64 only uses init_mm as its static kernel address space. */
 	if (old != &init_mm) {
-		nodes_setall(old->lrugen.nodes);
+		bitmap_fill(old->lrugen.zones, MAX_NUMNODES * MAX_NR_ZONES);
 #ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
 		atomic_dec(&old->lrugen.nr_cpus);
 		VM_BUG_ON_MM(atomic_read(&old->lrugen.nr_cpus) < 0, old);

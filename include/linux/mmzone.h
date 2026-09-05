@@ -257,6 +257,8 @@ struct zone_reclaim_stat {
 };
 
 struct lruvec;
+struct page_vma_mapped_walk;
+struct mm_walk_args;
 
 #define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
 #define LRU_USAGE_MASK		((BIT(LRU_USAGE_WIDTH) - 1) << LRU_USAGE_PGOFF)
@@ -290,6 +292,7 @@ struct lrugen {
 
 void lru_gen_init_lruvec(struct lruvec *lruvec);
 void lru_gen_set_state(bool enable, bool main, bool swap);
+void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw);
 void *lru_gen_eviction(struct page *page);
 void lru_gen_refault(struct page *page, void *shadow);
 
@@ -309,6 +312,10 @@ static inline void *lru_gen_eviction(struct page *page)
 }
 
 static inline void lru_gen_refault(struct page *page, void *shadow)
+{
+}
+
+static inline void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 {
 }
 
@@ -599,6 +606,10 @@ struct zone {
 	/* Fields commonly accessed by the page reclaim scanner */
 	spinlock_t		lru_lock;
 	struct lruvec		lruvec;
+#ifdef CONFIG_LRU_GEN
+	/* Reused by kswapd to avoid reclaim-time allocation failures. */
+	struct mm_walk_args	*mm_walk_args;
+#endif
 
 	/* Evictions & activations on the inactive file list */
 	atomic_long_t		inactive_age;

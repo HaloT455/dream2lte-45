@@ -255,6 +255,18 @@ static __always_inline void add_page_to_lru_list(struct page *page,
 	list_add(&page->lru, &lruvec->lists[lru]);
 }
 
+static __always_inline void add_page_to_lru_list_tail(struct page *page,
+				struct lruvec *lruvec, enum lru_list lru)
+{
+	int nr_pages = hpage_nr_pages(page);
+
+	if (lru_gen_addition(page, lruvec, false))
+		return;
+
+	update_lru_size(lruvec, lru, page_zonenum(page), nr_pages);
+	list_add_tail(&page->lru, &lruvec->lists[lru]);
+}
+
 static __always_inline void del_page_from_lru_list(struct page *page,
 				struct lruvec *lruvec, enum lru_list lru)
 {

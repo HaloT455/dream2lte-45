@@ -1,16 +1,29 @@
-name: Build V6 SimpleLMK Note10 EAS 65C Suspend Fix
+name: Build V8 Universal MGLRU SimpleLMK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - backup/v6-simplelmk-note10-eas-20260828
+      - v8haloT45
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v8-dream2lte-\${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  TOOLCHAIN_DIR: /home/runner/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu
+  CCACHE_DIR: /home/runner/.cache/ccache
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: [enforcing, permissive]
 
@@ -18,128 +31,168 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Cache GCC 14.2
+        id: gcc-cache
+        uses: actions/cache@v4
+        with:
+          path: \${{ env.TOOLCHAIN_DIR }}
+          key: arm-gnu-14.2.rel1-aarch64
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc bison flex build-essential libssl-dev libelf-dev \
-            python3 wget tar xz-utils
+            bc bison flex build-essential ccache libssl-dev libelf-dev \
+            python3 wget tar xz-utils zip
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
       - name: Download GCC 14.2
+        if: steps.gcc-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$HOME/tools"
-          wget -O "$HOME/tools/gcc.tar.xz" \
+          mkdir -p /home/runner/tools
+          wget -q -O /home/runner/tools/gcc.tar.xz \
             https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
-          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+          tar -xJf /home/runner/tools/gcc.tar.xz -C /home/runner/tools
+          test -x "$TOOLCHAIN_DIR/bin/aarch64-none-linux-gnu-gcc"
+
+      - name: Cache compiler results
+        uses: actions/cache@v4
+        with:
+          path: \${{ env.CCACHE_DIR }}
+          key: v8-dream2lte-ccache-\${{ matrix.variant }}-\${{ hashFiles('arch/arm64/configs/exynos8895-dream2lte_defconfig') }}
+          restore-keys: |
+            v8-dream2lte-ccache-
 
       - name: Configure toolchain
         run: |
+          ccache --max-size=2G
           echo "ARCH=arm64" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=ccache $TOOLCHAIN_DIR/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=ALice" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v8" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=Sat Sep 5 00:00:00 UTC 2026" >> "$GITHUB_ENV"
 
-      - name: Configure ${{ matrix.variant }} kernel
+      - name: Configure \${{ matrix.variant }} kernel
         run: |
-          OUT="out-${{ matrix.variant }}"
+          OUT="out-\${{ matrix.variant }}"
           make O="$OUT" exynos8895-dream2lte_defconfig
-          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+          if [ "\${{ matrix.variant }}" = "enforcing" ]; then
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
 
-      - name: Validate integration
+      - name: Validate V8 integration
         run: |
-          OUT="out-${{ matrix.variant }}"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$OUT/.config"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$OUT/.config"
-          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
-          grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
-          grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
-          grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
-          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
-          grep -q '^CONFIG_F2FS_FS=y$' "$OUT/.config"
-          grep -q '^CONFIG_EROFS_FS=y$' "$OUT/.config"
-          grep -q '^CONFIG_KSU=y$' "$OUT/.config"
-          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$OUT/.config"
-          grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
-          grep -q 'KSU_EXPECTED_SIZE := 0x0363' drivers/kernelsu/Makefile
-          grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
+          set -eu
+          OUT="out-\${{ matrix.variant }}"
+          CFG="$OUT/.config"
+          grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
+          grep -q '^CONFIG_NR_LRU_GENS=7$' "$CFG"
+          grep -q '^CONFIG_TIERS_PER_GEN=4$' "$CFG"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$CFG"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$CFG"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$CFG"
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$CFG"
+          grep -q '^CONFIG_MEMCG=y$' "$CFG"
+          grep -q '^CONFIG_SWAP=y$' "$CFG"
+          grep -q '^CONFIG_ZRAM=y$' "$CFG"
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$CFG"
+          grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$CFG"
+          grep -q '^CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"$' "$CFG"
+          grep -q '^CONFIG_ASHMEM=y$' "$CFG"
+          grep -q '^CONFIG_F2FS_FS=y$' "$CFG"
+          grep -q '^CONFIG_EROFS_FS=y$' "$CFG"
+          grep -q '^CONFIG_OVERLAY_FS=y$' "$CFG"
+          grep -q '^CONFIG_SECURITY_SELINUX=y$' "$CFG"
+          grep -q '^CONFIG_KSU=y$' "$CFG"
+          grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$CFG"
+          echo '0d6cc7fdbf41b4f301745f3ad93f87b6d0ef7962cbe77b435c80400a251768a7  kernel/sched/fair.c' | sha256sum -c -
+          echo 'ac40d196c38e7e833779f80db478d2c77fa5f46fbda5445ce8e6378b67a17ded  kernel/sched/cpufreq_schedutil.c' | sha256sum -c -
+          grep -q 'iod,name = "umts_ipc0"' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          grep -q 'iod,name = "umts_ipc1"' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          grep -q 'iod,id = <235>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          grep -q 'iod,id = <236>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          grep -q 'sbi_ds_det_mask = <0x3>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          for index in 0 1 2 3 4 5 6 7; do
+            grep -q "iod,name = \"rmnet$index\"" arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          done
           grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
-          grep -q '\.pm.*= &s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
           ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
-          grep -q 'kthread_bind_mask(thread, cpumask_of(SUGOV_WORKER_CPU))' kernel/sched/cpufreq_schedutil.c
-          grep -q 'APOLLO_COOLING_RELEASE_TEMP.*64000' drivers/thermal/samsung/exynos_tmu.c
-          grep -A2 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
-          grep -A2 'mngs_alert1: mngs-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '70000'
-          grep -A2 'apo_alert1: apo-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
-          grep -q 'cooling-device = <&cpu0 1 1>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
-          grep -q 'cooling-device = <&cpu0 11 11>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
-          if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
-            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
+          if [ "\${{ matrix.variant }}" = "enforcing" ]; then
+            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$CFG"
+            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$CFG"
           else
-            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
-            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
+            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$CFG"
+            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$CFG"
           fi
 
       - name: Build kernel and DTB
         run: |
           set -o pipefail
-          OUT="out-${{ matrix.variant }}"
-          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
+          OUT="out-\${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-\${{ matrix.variant }}.log"
+          ccache --show-stats
+
+      - name: Validate output
+        run: |
+          set -eu
+          OUT="out-\${{ matrix.variant }}"
+          NM="$TOOLCHAIN_DIR/bin/aarch64-none-linux-gnu-nm"
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dtb.img"
+          test -s "$OUT/vmlinux"
+          "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_set_state$'
+          "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_scan_around$'
+          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
+          strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
+
+      - name: Package flashable kernel
+        run: |
+          set -eu
+          OUT="out-\${{ matrix.variant }}"
+          DEST="output-\${{ matrix.variant }}"
+          AK3="anykernel-\${{ matrix.variant }}"
+          mkdir -p "$DEST"
+          git init "$AK3"
+          git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C "$AK3" fetch --depth=1 origin "$AK3_COMMIT"
+          git -C "$AK3" checkout --detach FETCH_HEAD
+          rm -rf "$AK3/.git" "$AK3/README.md" "$AK3/.github"
+          cp packaging/anykernel.sh "$AK3/anykernel.sh"
+          cp "$OUT/arch/arm64/boot/Image" "$AK3/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
+          (
+            cd "$AK3"
+            zip -qr9 "../$DEST/ALice-V8-MGLRU-SLMK-Universal-\${{ matrix.variant }}-\${GITHUB_SHA::8}.zip" .
+          )
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
+          cp "$OUT/System.map" "$DEST/System.map"
+          cp "$OUT/.config" "$DEST/kernel.config"
+          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
-          path: build-${{ matrix.variant }}.log
-          if-no-files-found: error
+          name: dream2lte-v8-build-log-\${{ matrix.variant }}-\${{ github.sha }}
+          path: build-\${{ matrix.variant }}.log
+          if-no-files-found: warn
 
-      - name: Validate output
-        run: |
-          OUT="out-${{ matrix.variant }}"
-          test -s "$OUT/arch/arm64/boot/Image"
-          test -s "$OUT/arch/arm64/boot/dtb.img"
-          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
-          strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
-          if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
-          else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
-          fi
-
-      - name: Package output
-        run: |
-          OUT="out-${{ matrix.variant }}"
-          DEST="output-${{ matrix.variant }}"
-          mkdir -p "$DEST"
-          cp "$OUT/arch/arm64/boot/Image" "$DEST/"
-          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
-          cp "$OUT/System.map" "$DEST/"
-          cp "$OUT/.config" "$DEST/kernel.config"
-          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
-
-      - name: Upload ${{ matrix.variant }} kernel
+      - name: Upload V8 flash package
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-simplelmk-note10-eas-65c-${{ matrix.variant }}-${{ github.sha }}
-          path: output-${{ matrix.variant }}/
+          name: dream2lte-v8-mglru-simplelmk-\${{ matrix.variant }}-\${{ github.sha }}
+          path: output-\${{ matrix.variant }}/
           if-no-files-found: error

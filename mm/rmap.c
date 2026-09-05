@@ -60,6 +60,7 @@
 #include <linux/hugetlb.h>
 #include <linux/backing-dev.h>
 #include <linux/page_idle.h>
+#include <linux/mm_inline.h>
 
 #include <asm/tlbflush.h>
 
@@ -896,6 +897,18 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			pte_unmap_unlock(pte, ptl);
 			pra->vm_flags |= VM_LOCKED;
 			return SWAP_FAIL; /* To break the loop */
+		}
+
+		if (lru_gen_enabled()) {
+			struct page_vma_mapped_walk pvmw = {
+				.page = page,
+				.vma = vma,
+				.address = address,
+				.pte = pte,
+				.ptl = ptl,
+			};
+
+			lru_gen_scan_around(&pvmw);
 		}
 
 		if (ptep_clear_flush_young_notify(vma, address, pte)) {
