@@ -95,12 +95,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Enforcing-${GITHUB_SHA::8}"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Permissive-${GITHUB_SHA::8}"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
