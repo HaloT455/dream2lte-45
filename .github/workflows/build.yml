@@ -1,4 +1,4 @@
-name: Build V8 Universal MGLRU SimpleLMK
+name: Build V8 V6Base MGLRU SimpleLMK
 
 on:
   workflow_dispatch:
@@ -33,6 +33,11 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Check restored V6 scheduler behavior
+        run: |
+          python3 scripts/test_cpu_ui_hints.py
+          python3 scripts/test_schedutil_work.py
 
       - name: Cache GCC 14.2
         id: gcc-cache
@@ -85,12 +90,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-V6Base-MGLRU-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -113,6 +118,13 @@ jobs:
           grep -q '^CONFIG_ZRAM=y$' "$CFG"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$CFG"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$CFG"
+          grep -q '^CONFIG_SCHED_CPU_UI_HINTS=y$' "$CFG"
+          grep -q '^CONFIG_DEBUG_FS=y$' "$CFG"
+          grep -q '^CONFIG_EVENT_TRACING=y$' "$CFG"
+          grep -q '^CONFIG_TRACEPOINTS=y$' "$CFG"
+          grep -q '^CONFIG_CONTEXT_SWITCH_TRACER=y$' "$CFG"
+          grep -q '^# CONFIG_BT_DEBUGFS is not set$' "$CFG"
+          grep -q '^# CONFIG_F2FS_STAT_FS is not set$' "$CFG"
           grep -q '^CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"$' "$CFG"
           grep -q '^CONFIG_ASHMEM=y$' "$CFG"
           grep -q '^CONFIG_F2FS_FS=y$' "$CFG"
@@ -122,7 +134,11 @@ jobs:
           grep -q '^CONFIG_KSU=y$' "$CFG"
           grep -q '^# CONFIG_KSU_STRIP_READPROC_GID is not set$' "$CFG"
           echo '0d6cc7fdbf41b4f301745f3ad93f87b6d0ef7962cbe77b435c80400a251768a7  kernel/sched/fair.c' | sha256sum -c -
-          echo 'ac40d196c38e7e833779f80db478d2c77fa5f46fbda5445ce8e6378b67a17ded  kernel/sched/cpufreq_schedutil.c' | sha256sum -c -
+          # Exact platform paths from the bootable UI1-Trace b70a07db baseline.
+          echo 'c4f59d85cca8d79873e8bedc319801159a13668e951e9b665e47b1f2bc92b1b5  kernel/sched/cpufreq_schedutil.c' | sha256sum -c -
+          echo '17a551e00394a25bb742a2cdddceee442e075da0ade4967c92764399514f31c1  drivers/watchdog/s3c2410_wdt.c' | sha256sum -c -
+          echo '7db46362687ade9cc22ed7aa8857468e48eefcb95ab7ee39dbc8174ca19486b4  drivers/soc/samsung/exynos-reboot.c' | sha256sum -c -
+          echo 'deafad37aeaef6bcb5e87da12eb917c15859664969c413148897d0ef8362fd68  drivers/staging/samsung/sec_reboot.c' | sha256sum -c -
           grep -q 'iod,name = "umts_ipc0"' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           grep -q 'iod,name = "umts_ipc1"' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           grep -q 'iod,id = <235>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
@@ -131,8 +147,11 @@ jobs:
           for index in 0 1 2 3 4 5 6 7; do
             grep -q "iod,name = \"rmnet$index\"" arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           done
-          grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
-          ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
+          ! grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'mark_oom_victim(vtsk)' drivers/android/simple_lmk.c
+          ! grep -q 'set_tsk_thread_flag(t, TIF_MEMDIE)' drivers/android/simple_lmk.c
+          grep -q 'module_param_array_named(adj,' drivers/android/simple_lmk.c
           grep -q 'Hard Reset keys held; waiting for PMIC reset' drivers/staging/samsung/sec_debug_hard_reset_hook.c
           ! sed -n '/hard_reset_hook_callback/,/^}/p' drivers/staging/samsung/sec_debug_hard_reset_hook.c | grep -q '^[[:space:]]*BUG();'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
@@ -158,6 +177,7 @@ jobs:
           test -s "$OUT/arch/arm64/boot/Image"
           test -s "$OUT/arch/arm64/boot/dtb.img"
           test -s "$OUT/vmlinux"
+          echo "d3907f8e50d3d66c193eb800bafdc20e356bdb400ccefc140074cfe92c155c20  $OUT/arch/arm64/boot/dtb.img" | sha256sum -c -
           "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_set_state$'
           "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_scan_around$'
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
@@ -180,7 +200,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V8-MGLRU-SLMK-Universal-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V8-V6Base-MGLRU-SLMK-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -189,7 +209,7 @@ jobs:
           (
             cd "$DEST"
             sha256sum \
-              ALice-V8-MGLRU-SLMK-Universal-*.zip \
+              ALice-V8-V6Base-MGLRU-SLMK-*.zip \
               Image dtb.img System.map kernel.config > SHA256SUMS
           )
 

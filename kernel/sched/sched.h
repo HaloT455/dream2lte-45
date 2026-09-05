@@ -242,6 +242,11 @@ struct cfs_bandwidth {
 struct task_group {
 	struct cgroup_subsys_state css;
 
+#ifdef CONFIG_SCHED_CPU_UI_HINTS
+	/* Immutable after css_online; zero means no UI hint. */
+	unsigned int ui_hint;
+#endif
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/* schedulable entities of this group on each cpu */
 	struct sched_entity **se;

@@ -103,6 +103,10 @@ static inline unsigned int get_sysctl_sched_cfs_boost(void)
 }
 #endif
 
+#ifdef CONFIG_SCHED_CPU_UI_HINTS
+extern int sysctl_sched_cpu_ui_hints;
+#endif
+
 #ifdef CONFIG_SCHED_AUTOGROUP
 extern unsigned int sysctl_sched_autogroup_enabled;
 #endif

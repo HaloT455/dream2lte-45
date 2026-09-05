@@ -1337,6 +1337,18 @@ config SCHED_TUNE
 
 	  If unsure, say N.
 
+config SCHED_CPU_UI_HINTS
+	bool "Android CPU cgroup UI hints when SchedTune is unmounted"
+	depends on SMP && FAIR_GROUP_SCHED && CGROUP_SCHEDTUNE
+	help
+	  Use the existing top-app, foreground and foreground_window CPU
+	  cgroups as modest EAS/Schedutil hints on Android ROMs which no
+	  longer mount SchedTune. No userspace configuration is required.
+	  A mounted SchedTune controller always takes precedence. Disable
+	  this fallback at runtime with kernel.sched_cpu_ui_hints=0.
+	  This is a device-specific policy, not a uclamp implementation.
+	  If unsure, say N.
+
 config SCHED_USE_FLUID_RT
 	bool "Enable Fluid RT scheduler feature"
 	depends on SMP

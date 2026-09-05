@@ -35,7 +35,6 @@ static int nr_victims;
 static atomic_t nr_killed = ATOMIC_INIT(0);
 static atomic_t lmk_ready = ATOMIC_INIT(0);
 static atomic_t init_done = ATOMIC_INIT(0);
-static atomic_t oom_fallback = ATOMIC_INIT(0);
 
 /*
  * Android's lmkd detects an in-kernel LMK through the legacy minfree node
@@ -175,16 +174,24 @@ static int process_victims(int vlen)
 	return nr_to_kill;
 }
 
-static bool scan_and_kill(void)
+static void scan_and_kill(void)
 {
 	int i, nr_to_kill, nr_found = 0;
 	unsigned long pages_found;
-	bool completed, reclaimed;
+	bool completed;
+
+	/* Serialize TIF_MEMDIE accounting with regular and memcg OOM paths. */
+	mutex_lock(&oom_lock);
+	if (oom_killer_disabled) {
+		mutex_unlock(&oom_lock);
+		return;
+	}
 
 	pages_found = find_victims(&nr_found);
 	if (unlikely(!nr_found)) {
 		pr_err_ratelimited("No processes available to kill\n");
-		return false;
+		mutex_unlock(&oom_lock);
+		return;
 	}
 
 	if (pages_found > MIN_FREE_PAGES) {
@@ -213,9 +220,14 @@ static bool scan_and_kill(void)
 
 		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, true);
 
+		/*
+		 * Account exactly one victim per process, as the regular OOM
+		 * killer does. vtsk is task-locked with a live mm, so exit_mm()
+		 * cannot race the mark and miss exit_oom_victim().
+		 */
+		mark_oom_victim(vtsk);
+
 		rcu_read_lock();
-		for_each_thread(vtsk, t)
-			set_tsk_thread_flag(t, TIF_MEMDIE);
 		for_each_thread(vtsk, t)
 			sched_setscheduler_nocheck(t, SCHED_RR, &min_rt_prio);
 		rcu_read_unlock();
@@ -224,19 +236,17 @@ static bool scan_and_kill(void)
 		__thaw_task(vtsk);
 		task_unlock(vtsk);
 	}
+	mutex_unlock(&oom_lock);
 
 	completed = wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES);
 	if (!completed)
 		pr_info("Timeout waiting for victims, continuing\n");
 
 	write_lock(&mm_free_lock);
-	reclaimed = completed || atomic_read(&nr_killed) > 0;
 	reinit_completion(&reclaim_done);
 	nr_victims = 0;
 	atomic_set(&nr_killed, 0);
 	write_unlock(&mm_free_lock);
-
-	return reclaimed;
 }
 
 static int simple_lmk_reclaim_thread(void *data)
@@ -258,8 +268,7 @@ static int simple_lmk_reclaim_thread(void *data)
 		if (old_state != SIMPLE_LMK_QUEUED)
 			continue;
 
-		if (!scan_and_kill())
-			atomic_set_release(&oom_fallback, 1);
+		scan_and_kill();
 
 		atomic_set_release(&reclaim_state, SIMPLE_LMK_IDLE);
 	}
@@ -267,7 +276,7 @@ static int simple_lmk_reclaim_thread(void *data)
 	return 0;
 }
 
-static bool simple_lmk_queue_reclaim(bool reset_fallback)
+static bool simple_lmk_queue_reclaim(void)
 {
 	if (!atomic_read(&lmk_ready))
 		return false;
@@ -276,24 +285,17 @@ static bool simple_lmk_queue_reclaim(bool reset_fallback)
 				   SIMPLE_LMK_QUEUED) != SIMPLE_LMK_IDLE)
 		return false;
 
-	if (reset_fallback)
-		atomic_set_release(&oom_fallback, 0);
-
 	wake_up(&oom_waitq);
 	return true;
 }
 
 bool simple_lmk_oom_reclaim(void)
 {
-	if (!atomic_read(&lmk_ready))
+	if (!atomic_read_acquire(&lmk_ready))
 		return false;
 
-	/* Fall back once only after Simple LMK could not make progress. */
-	if (atomic_xchg(&oom_fallback, 0))
-		return false;
-
-	/* A queued/running reclaim already indicates OOM progress. */
-	simple_lmk_queue_reclaim(false);
+	/* A queued or running reclaim already represents OOM progress. */
+	simple_lmk_queue_reclaim();
 	return true;
 }
 
@@ -319,7 +321,7 @@ static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
 	if (pressure >= 100)
-		simple_lmk_queue_reclaim(true);
+		simple_lmk_queue_reclaim();
 
 	return NOTIFY_OK;
 }
@@ -354,7 +356,7 @@ static int simple_lmk_start(void)
 	}
 
 	atomic_set_release(&lmk_ready, 1);
-	pr_info("Ready with global vmpressure and serialized OOM fallback\n");
+	pr_info("Ready with global vmpressure and serialized reclaim\n");
 	return 0;
 }
 

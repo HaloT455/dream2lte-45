@@ -689,7 +689,7 @@ bool out_of_memory(struct oom_control *oc)
 	if (oom_killer_disabled)
 		return false;
 
-	/* SimpleLMK handles the first request; regular OOM is the fallback. */
+	/* Use regular OOM only before Android has initialized Simple LMK. */
 	if (simple_lmk_oom_reclaim())
 		return true;
 
