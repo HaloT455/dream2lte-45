@@ -1,10 +1,10 @@
-name: Build V8 Universal MGLRU SimpleLMK
+name: Build V8 Rescue SimpleLMK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - v8haloT45
+      - v8haloT45-rescue
     paths-ignore:
       - "tools/alice-kernel-trace/**"
       - ".github/workflows/build-alice-kernel-trace.yml"
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v8-dream2lte-${{ github.ref }}
+  group: v8-rescue-dream2lte-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,10 +62,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: v8-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
+          key: v8-rescue-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
           restore-keys: |
-            v8-dream2lte-ccache-${{ matrix.variant }}-
-            v8-dream2lte-ccache-
+            v8-rescue-dream2lte-ccache-${{ matrix.variant }}-
+            v8-rescue-dream2lte-ccache-
 
       - name: Configure toolchain
         run: |
@@ -85,12 +85,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-Rescue-SLMK-Universal-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-MGLRU-SLMK-Universal-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-Rescue-SLMK-Universal-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -101,7 +101,7 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           CFG="$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
-          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
+          grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$CFG"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$CFG"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$CFG"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$CFG"
@@ -180,7 +180,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V8-MGLRU-SLMK-Universal-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V8-Rescue-SLMK-Universal-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -189,7 +189,7 @@ jobs:
           (
             cd "$DEST"
             sha256sum \
-              ALice-V8-MGLRU-SLMK-Universal-*.zip \
+              ALice-V8-Rescue-SLMK-Universal-*.zip \
               Image dtb.img System.map kernel.config > SHA256SUMS
           )
 
@@ -204,6 +204,6 @@ jobs:
       - name: Upload V8 flash package
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-mglru-simplelmk-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v8-rescue-simplelmk-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
