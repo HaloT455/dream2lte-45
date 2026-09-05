@@ -39,6 +39,9 @@ jobs:
           python3 scripts/test_cpu_ui_hints.py
           python3 scripts/test_schedutil_work.py
 
+      - name: Check MGLRU reclaim output contract
+        run: python3 scripts/test_mglru_reclaim_args.py
+
       - name: Cache GCC 14.2
         id: gcc-cache
         uses: actions/cache@v4

@@ -4016,6 +4016,8 @@ static bool evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swap
 	int type;
 	int isolated;
 	int reclaimed;
+	unsigned long nr_dirty = 0, nr_unqueued_dirty = 0;
+	unsigned long nr_congested = 0, nr_writeback = 0, nr_immediate = 0;
 	LIST_HEAD(list);
 	struct page *page;
 	struct zone *zone = lruvec_zone(lruvec);
@@ -4033,8 +4035,10 @@ static bool evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swap
 	if (!isolated)
 		goto done;
 
+	/* The 4.4 API unconditionally accumulates into all five outputs. */
 	reclaimed = shrink_page_list(&list, zone, sc, TTU_UNMAP,
-				     NULL, NULL, NULL, NULL, NULL, false);
+				     &nr_dirty, &nr_unqueued_dirty, &nr_congested,
+				     &nr_writeback, &nr_immediate, false);
 	/*
 	 * We need to prevent rejected pages from being added back to the same
 	 * lists they were isolated from. Otherwise we may risk looping on them
