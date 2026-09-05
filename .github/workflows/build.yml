@@ -1,4 +1,4 @@
-name: Build V8 Rescue2 SuspendFix Cool
+name: Build V8 Full MGLRU SimpleLMK SuspendFix
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v8-rescue2-suspendfix-dream2lte-${{ github.ref }}
+  group: v8-full-mglru-suspendfix-dream2lte-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,8 +62,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: v8-rescue2-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
+          key: v8-full-mglru-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
           restore-keys: |
+            v8-full-mglru-dream2lte-ccache-${{ matrix.variant }}-
             v8-rescue2-dream2lte-ccache-${{ matrix.variant }}-
             v8-rescue-dream2lte-ccache-${{ matrix.variant }}-
             v8-rescue-dream2lte-ccache-
@@ -82,16 +83,20 @@ jobs:
         run: |
           OUT="out-${{ matrix.variant }}"
           make O="$OUT" exynos8895-dream2lte_defconfig
+          scripts/config --file "$OUT/.config" \
+            --enable LRU_GEN \
+            --enable LRU_GEN_ENABLED \
+            --disable LRU_GEN_STATS
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-Rescue2-SuspendFix-Cool-Enforcing"
+              --set-str LOCALVERSION "-ALice-V8-FullMGLRU-SLMK-SuspendFix-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V8-Rescue2-SuspendFix-Cool-Permissive"
+              --set-str LOCALVERSION "-ALice-V8-FullMGLRU-SLMK-SuspendFix-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -102,7 +107,9 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           CFG="$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
-          ! grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
+          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$CFG"
+          ! grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$CFG"
+          ! grep -q '^CONFIG_LRU_GEN_STATS=y$' "$CFG"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$CFG"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$CFG"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$CFG"
@@ -138,7 +145,8 @@ jobs:
           ! sed -n '/hard_reset_hook_callback/,/^}/p' drivers/staging/samsung/sec_debug_hard_reset_hook.c | grep -q '^[[:space:]]*BUG();'
           grep -q 'simple_lmk_victim' include/linux/sched.h
           grep -q 'task_group_has_memdie' drivers/android/simple_lmk.c
-          grep -q 'WRITE_ONCE(t->simple_lmk_victim, true)' drivers/android/simple_lmk.c
+          grep -q 'test_tsk_thread_flag(tsk, TIF_MEMDIE)' drivers/android/simple_lmk.c
+          grep -q 'WRITE_ONCE(vtsk->simple_lmk_victim, true)' drivers/android/simple_lmk.c
           grep -q 'READ_ONCE(current->simple_lmk_victim)' kernel/exit.c
           grep -q 'wait_event_timeout(oom_victims_wait' mm/oom_kill.c
           grep -q 'OOM_DISABLE_TIMEOUT.*(5 \* HZ)' mm/oom_kill.c
@@ -171,9 +179,9 @@ jobs:
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-ALice-V8-Rescue2-SuspendFix-Cool-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V8-FullMGLRU-SLMK-SuspendFix-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-ALice-V8-Rescue2-SuspendFix-Cool-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V8-FullMGLRU-SLMK-SuspendFix-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package flashable kernel
@@ -193,7 +201,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V8-Rescue2-SuspendFix-Cool-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V8-FullMGLRU-SLMK-SuspendFix-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -202,7 +210,7 @@ jobs:
           (
             cd "$DEST"
             sha256sum \
-              ALice-V8-Rescue2-SuspendFix-Cool-*.zip \
+              ALice-V8-FullMGLRU-SLMK-SuspendFix-*.zip \
               Image dtb.img System.map kernel.config > SHA256SUMS
           )
 
@@ -210,13 +218,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-rescue2-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v8-full-mglru-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: warn
 
       - name: Upload V8 flash package
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v8-rescue2-suspendfix-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v8-full-mglru-suspendfix-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
