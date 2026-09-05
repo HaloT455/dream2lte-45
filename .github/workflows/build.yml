@@ -97,7 +97,7 @@ jobs:
 
       - name: Validate V8 integration
         run: |
-          set -eu
+          set -eux
           OUT="out-${{ matrix.variant }}"
           CFG="$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$CFG"
