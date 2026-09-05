@@ -3654,9 +3654,8 @@ static bool walk_mm_list(struct lruvec *lruvec, unsigned long max_seq,
 	VM_BUG_ON(max_seq != READ_ONCE(lrugen->max_seq));
 
 	inc_max_seq(lruvec, max_seq);
-	/* either we see any waiters or they will see updated max_seq */
-	if (wq_has_sleeper(&mm_list->walkers[wid].wait))
-		wake_up_all(&mm_list->walkers[wid].wait);
+	/* The 4.4 waitqueue API has no generic wq_has_sleeper() helper. */
+	wake_up_all(&mm_list->walkers[wid].wait);
 
 	return true;
 }
@@ -3841,7 +3840,6 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 	bool success;
 	int gen;
 	int zid;
-	enum vm_event_item item;
 	int sorted = 0;
 	int scanned = 0;
 	int isolated = 0;
@@ -3895,9 +3893,11 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 
 	success = try_inc_min_seq(lruvec, type);
 
-	item = current_is_kswapd() ? PGSCAN_KSWAPD : PGSCAN_DIRECT;
 	if (global_reclaim(sc)) {
-		__count_zone_vm_events(item, zone, isolated);
+		if (current_is_kswapd())
+			__count_zone_vm_events(PGSCAN_KSWAPD, zone, isolated);
+		else
+			__count_zone_vm_events(PGSCAN_DIRECT, zone, isolated);
 		__count_zone_vm_events(PGREFILL, zone, sorted);
 	}
 
@@ -4018,7 +4018,6 @@ static bool evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swap
 	int reclaimed;
 	LIST_HEAD(list);
 	struct page *page;
-	enum vm_event_item item;
 	struct zone *zone = lruvec_zone(lruvec);
 
 	spin_lock_irq(&zone->lru_lock);
@@ -4059,9 +4058,12 @@ static bool evict_pages(struct lruvec *lruvec, struct scan_control *sc, int swap
 
 	__mod_zone_page_state(zone, NR_ISOLATED_ANON + type, -isolated);
 
-	item = current_is_kswapd() ? PGSTEAL_KSWAPD : PGSTEAL_DIRECT;
-	if (global_reclaim(sc))
-		__count_zone_vm_events(item, zone, reclaimed);
+	if (global_reclaim(sc)) {
+		if (current_is_kswapd())
+			__count_zone_vm_events(PGSTEAL_KSWAPD, zone, reclaimed);
+		else
+			__count_zone_vm_events(PGSTEAL_DIRECT, zone, reclaimed);
+	}
 
 	spin_unlock_irq(&zone->lru_lock);
 
