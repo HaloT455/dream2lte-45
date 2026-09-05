@@ -37,6 +37,15 @@ static atomic_t lmk_ready = ATOMIC_INIT(0);
 static atomic_t init_done = ATOMIC_INIT(0);
 static atomic_t oom_fallback = ATOMIC_INIT(0);
 
+/*
+ * Android's lmkd detects an in-kernel LMK through the legacy minfree node
+ * and always writes the matching adj array afterwards. SimpleLMK only needs
+ * oom_score_adj from each task, but exposing the companion node keeps the
+ * userspace handshake intact without enabling the legacy shrinker too.
+ */
+static short simple_lmk_adj[6];
+static int simple_lmk_adj_size;
+
 enum simple_lmk_reclaim_state {
 	SIMPLE_LMK_IDLE,
 	SIMPLE_LMK_QUEUED,
@@ -364,3 +373,5 @@ static const struct kernel_param_ops simple_lmk_init_ops = {
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "lowmemorykiller."
 module_param_cb(minfree, &simple_lmk_init_ops, NULL, 0200);
+module_param_array_named(adj, simple_lmk_adj, short,
+			 &simple_lmk_adj_size, 0200);
