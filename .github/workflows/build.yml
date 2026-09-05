@@ -68,8 +68,10 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: v8-dream2lte-ccache-${{ matrix.variant }}-${{ github.sha }}
+          # Use the latest cache across variants: the serial permissive job
+          # can reuse the common objects just built by enforcing. ccache
+          # still validates compiler options and source/config contents.
           restore-keys: |
-            v8-dream2lte-ccache-${{ matrix.variant }}-
             v8-dream2lte-ccache-
 
       - name: Configure toolchain
