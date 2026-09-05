@@ -133,6 +133,8 @@ jobs:
           done
           grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
           ! grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
+          grep -q 'Hard Reset keys held; waiting for PMIC reset' drivers/staging/samsung/sec_debug_hard_reset_hook.c
+          ! sed -n '/hard_reset_hook_callback/,/^}/p' drivers/staging/samsung/sec_debug_hard_reset_hook.c | grep -q '^[[:space:]]*BUG();'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$CFG"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$CFG"
