@@ -80,6 +80,10 @@ static bool task_group_has_memdie(struct task_struct *tsk)
 {
 	struct task_struct *t;
 
+	/* for_each_thread() starts after tsk; include the leader explicitly. */
+	if (test_tsk_thread_flag(tsk, TIF_MEMDIE))
+		return true;
+
 	for_each_thread(tsk, t) {
 		if (test_tsk_thread_flag(t, TIF_MEMDIE))
 			return true;
@@ -224,12 +228,19 @@ static bool scan_and_kill(void)
 		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, true);
 
 		rcu_read_lock();
+		/*
+		 * for_each_thread() excludes its starting task. Mark the
+		 * selected thread explicitly so every thread in a shared mm
+		 * follows the same non-OOM victim exit path.
+		 */
+		WRITE_ONCE(vtsk->simple_lmk_victim, true);
+		set_tsk_thread_flag(vtsk, TIF_MEMDIE);
+		sched_setscheduler_nocheck(vtsk, SCHED_RR, &min_rt_prio);
 		for_each_thread(vtsk, t) {
 			WRITE_ONCE(t->simple_lmk_victim, true);
 			set_tsk_thread_flag(t, TIF_MEMDIE);
-		}
-		for_each_thread(vtsk, t)
 			sched_setscheduler_nocheck(t, SCHED_RR, &min_rt_prio);
+		}
 		rcu_read_unlock();
 
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
