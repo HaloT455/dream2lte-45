@@ -40,7 +40,8 @@ new/empty output directory when producing the reproducible release build.
   responsive bursts without retaining a stale overclocked OPP.
 - Mongoose M2 maximum OPP remains the firmware-backed 2704 MHz step; the A53
   2002 MHz and M2 2704 MHz ceilings are retained as the requested performance
-  profile while GPU limits remain stock.
+  profile. Mali-G71 is hard-capped at 455 MHz, including Samsung's temporary
+  max-limit boost path, to avoid an unintended return to 546 MHz.
 - Complete SimpleLMK is enabled with global and memcg vmpressure triggers, a
   64 MiB emergency batch, a one-second critical-pressure cooldown, bounded
   victim waits and an immediate OOM fallback when reclaim cannot run.
@@ -65,10 +66,11 @@ new/empty output directory when producing the reproducible release build.
   GPU limits, CPU voltage tables, battery charging protection, and CPU hot
   safety trips remain in place.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
-- The dream2lte modem interface defaults to two SIM slots even without a
-  DS_DET GPIO and publishes `/proc/simslot_count`. The Shannon modem remains
-  dual-standby: the selected mobile-data SIM gets LTE while the opposite SIM
-  falls back to Auto/3G/2G; simultaneous LTE/LTE is not forced.
+- The dream2lte DT declares two SIM slots; modem control and modem interface
+  consume the same declaration, retain a dual-slot fallback when CBD cannot
+  write DS_DET, and publish `/proc/simslot_count`. The Shannon modem remains
+  dual-standby: either selected mobile-data SIM can use LTE while the opposite
+  SIM falls back to Auto/3G/2G; simultaneous LTE/LTE is not forced.
 
 To create a flashable image while preserving a known-good boot image ramdisk
 and footer:

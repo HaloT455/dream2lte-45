@@ -192,8 +192,21 @@ MODULE_PARM_DESC(ds_detect, "Dual SIM detect");
 
 static int get_ds_detect(struct device_node *np)
 {
-	mif_info("Dual SIM detect = %d\n", ds_detect);
-	return ds_detect - 1;
+	u32 sim_mode;
+	int detected = ds_detect;
+
+	/* Prefer the board declaration; keep the module parameter as fallback. */
+	if (!of_property_read_u32(np, "mif,sim_mode", &sim_mode))
+		detected = sim_mode;
+
+	if (detected < 1 || detected > 3) {
+		mif_err("Invalid SIM mode %d, falling back to single SIM\n",
+			detected);
+		detected = 1;
+	}
+
+	mif_info("Dual SIM detect = %d\n", detected);
+	return detected - 1;
 }
 #endif
 

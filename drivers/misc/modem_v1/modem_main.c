@@ -720,13 +720,21 @@ make_proc:
 static enum mif_sim_mode get_sim_mode(struct device_node *of_node)
 {
 	enum mif_sim_mode mode = MIF_SIM_SINGLE;
+	u32 dt_mode;
 
+	if (!of_property_read_u32(of_node, "mif,sim_mode", &dt_mode)) {
+		if (dt_mode >= MIF_SIM_SINGLE && dt_mode <= MIF_SIM_TRIPLE)
+			mode = dt_mode;
+		else
+			mif_err("Invalid DT SIM mode: %u\n", dt_mode);
+	} else {
 #if defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_EUR_OPEN) || \
 	defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_KOR)
-	mode = MIF_SIM_DUAL;
+		mode = MIF_SIM_DUAL;
 #endif
+	}
 
-	mif_info("sim_mode: %d (board default)\n", mode);
+	mif_info("sim_mode: %d (board configuration)\n", mode);
 	if (!proc_create_data("simslot_count", 0, NULL, &simslot_count_fops,
 			(void *)(long)mode))
 		mif_err("Failed to create proc\n");
