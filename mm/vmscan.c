@@ -1603,8 +1603,12 @@ putback_inactive_pages(struct lruvec *lruvec, struct list_head *page_list)
 		}
 		if (put_page_testzero(page)) {
 			__ClearPageLRU(page);
-			__ClearPageActive(page);
 			del_page_from_lru_list(page, lruvec, lru);
+			/*
+			 * lru_gen_deletion() can restore PG_active. A freed page
+			 * must not carry it into free_pages_prepare().
+			 */
+			__ClearPageActive(page);
 
 			if (unlikely(PageCompound(page))) {
 				spin_unlock_irq(&zone->lru_lock);
@@ -1828,8 +1832,12 @@ static void move_active_pages_to_lru(struct lruvec *lruvec,
 
 		if (put_page_testzero(page)) {
 			__ClearPageLRU(page);
-			__ClearPageActive(page);
 			del_page_from_lru_list(page, lruvec, lru);
+			/*
+			 * lru_gen_deletion() can restore PG_active. A freed page
+			 * must not carry it into free_pages_prepare().
+			 */
+			__ClearPageActive(page);
 
 			if (unlikely(PageCompound(page))) {
 				spin_unlock_irq(&zone->lru_lock);
