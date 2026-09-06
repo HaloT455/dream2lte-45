@@ -1,16 +1,27 @@
-name: Build V6 SimpleLMK Note10 EAS 65C Suspend Fix
+name: Build V9 V6 Stable Rebuild
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - backup/v6-simplelmk-note10-eas-20260828
+      - v9haloT45-v6-rebuild
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v9-v6-rebuild-dream2lte-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: [enforcing, permissive]
 
@@ -23,7 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             bc bison flex build-essential libssl-dev libelf-dev \
-            python3 wget tar xz-utils
+            python3 wget tar xz-utils zip
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
       - name: Download GCC 14.2
@@ -38,7 +49,7 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v9" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
 
@@ -50,12 +61,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive"
+              --set-str LOCALVERSION "-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -91,6 +102,8 @@ jobs:
           grep -A2 'apo_alert1: apo-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
           grep -q 'cooling-device = <&cpu0 1 1>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'cooling-device = <&cpu0 11 11>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
@@ -109,37 +122,63 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v9-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
       - name: Validate output
         run: |
+          set -eu
           OUT="out-${{ matrix.variant }}"
+          DTC="$OUT/scripts/dtc/dtc"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte_eur_open_10.dtb"
+          VALIDATED_DTS="$OUT/dream2lte-validated.dts"
           test -s "$OUT/arch/arm64/boot/Image"
           test -s "$OUT/arch/arm64/boot/dtb.img"
+          test -x "$DTC"
+          test -s "$DTB"
+          "$DTC" -I dtb -O dts -o "$VALIDATED_DTS" "$DTB"
+          grep -q 'max-freq = <0x1e8c50>;' "$VALIDATED_DTS"
+          grep -q 'max-freq = <0x294280>;' "$VALIDATED_DTS"
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
-      - name: Package output
+      - name: Package flashable V9 baseline
         run: |
+          set -eu
           OUT="out-${{ matrix.variant }}"
           DEST="output-${{ matrix.variant }}"
+          AK3="anykernel-${{ matrix.variant }}"
           mkdir -p "$DEST"
-          cp "$OUT/arch/arm64/boot/Image" "$DEST/"
-          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
-          cp "$OUT/System.map" "$DEST/"
+          git init "$AK3"
+          git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C "$AK3" fetch --depth=1 origin "$AK3_COMMIT"
+          git -C "$AK3" checkout --detach FETCH_HEAD
+          rm -rf "$AK3/.git" "$AK3/README.md" "$AK3/.github"
+          cp packaging/anykernel.sh "$AK3/anykernel.sh"
+          cp "$OUT/arch/arm64/boot/Image" "$AK3/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
+          (
+            cd "$AK3"
+            zip -qr9 "../$DEST/ALice-V9-V6Base-SLMK-EAS-SuspendFix-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+          )
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
+          cp "$OUT/System.map" "$DEST/System.map"
           cp "$OUT/.config" "$DEST/kernel.config"
-          sha256sum "$DEST"/* > "$DEST/SHA256SUMS"
+          (
+            cd "$DEST"
+            sha256sum ALice-V9-V6Base-*.zip Image dtb.img System.map kernel.config > SHA256SUMS
+          )
 
-      - name: Upload ${{ matrix.variant }} kernel
+      - name: Upload ${{ matrix.variant }} V9 baseline
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-simplelmk-note10-eas-65c-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v9-v6base-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
