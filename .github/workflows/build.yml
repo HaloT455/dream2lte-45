@@ -113,8 +113,9 @@ jobs:
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$CFG"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$CFG"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK=y$' "$CFG"
-          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128$' "$CFG"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_MINFREE=64$' "$CFG"
           grep -q '^CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC=200$' "$CFG"
+          grep -q '^CONFIG_ANDROID_SIMPLE_LMK_COOLDOWN_MSEC=1000$' "$CFG"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$CFG"
           grep -q '^# CONFIG_BOOTPARAM_HARDLOCKUP_PANIC is not set$' "$CFG"
           grep -q '^CONFIG_BOOTPARAM_HARDLOCKUP_PANIC_VALUE=0$' "$CFG"
@@ -141,6 +142,12 @@ jobs:
           grep -q 'iod,id = <235>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           grep -q 'iod,id = <236>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           grep -q 'sbi_ds_det_mask = <0x3>' arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
+          grep -q 'static int ds_detect = 2;' drivers/misc/modem_v1/modem_ctrl_ss310ap.c
+          grep -q 'mode = MIF_SIM_DUAL;' drivers/misc/modem_v1/modem_main.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'jump_label_init();' init/main.c
+          test "$(grep -c 'unlikely(!pfn_valid(pfn))' mm/vmscan.c)" -ge 4
           for index in 0 1 2 3 4 5 6 7; do
             grep -q "iod,name = \"rmnet$index\"" arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           done
@@ -181,7 +188,7 @@ jobs:
           test -s "$OUT/vmlinux"
           "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_set_state$'
           "$NM" "$OUT/vmlinux" | grep -q ' lru_gen_scan_around$'
-          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
+          grep -a -q 'simple_lmk: Ready: minfree=64 MiB, vmpressure cooldown=1000 ms, serialized OOM fallback' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -a -q 'Linux version 4.4.302-ALice-V8-FullMGLRU-SLMK-SuspendFix-Enforcing' "$OUT/arch/arm64/boot/Image"

@@ -12,6 +12,7 @@
 #include <linux/oom.h>
 #include <linux/ratelimit.h>
 #include <linux/sort.h>
+#include <linux/spinlock.h>
 #include <linux/vmpressure.h>
 
 #define MIN_FREE_PAGES \
@@ -19,6 +20,8 @@
 #define MAX_VICTIMS 1024
 #define RECLAIM_EXPIRES \
 	msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC)
+#define VMPRESSURE_RECLAIM_COOLDOWN \
+	msecs_to_jiffies(CONFIG_ANDROID_SIMPLE_LMK_COOLDOWN_MSEC)
 
 struct victim_info {
 	struct task_struct *tsk;
@@ -36,6 +39,8 @@ static atomic_t nr_killed = ATOMIC_INIT(0);
 static atomic_t lmk_ready = ATOMIC_INIT(0);
 static atomic_t init_done = ATOMIC_INIT(0);
 static atomic_t oom_fallback = ATOMIC_INIT(0);
+static DEFINE_SPINLOCK(vmpressure_lock);
+static unsigned long next_vmpressure_reclaim;
 
 enum simple_lmk_reclaim_state {
 	SIMPLE_LMK_IDLE,
@@ -341,7 +346,26 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
-	if (pressure >= 100)
+	unsigned long flags, now;
+	bool reclaim = false;
+
+	if (pressure < 100)
+		return NOTIFY_OK;
+
+	/*
+	 * A single low-memory episode can emit critical notifications faster
+	 * than killed address spaces are reclaimed. Rate-limit only this
+	 * proactive path; the direct OOM callback remains immediate.
+	 */
+	now = jiffies;
+	spin_lock_irqsave(&vmpressure_lock, flags);
+	if (!time_before(now, next_vmpressure_reclaim)) {
+		next_vmpressure_reclaim = now + VMPRESSURE_RECLAIM_COOLDOWN;
+		reclaim = true;
+	}
+	spin_unlock_irqrestore(&vmpressure_lock, flags);
+
+	if (reclaim)
 		simple_lmk_queue_reclaim(true);
 
 	return NOTIFY_OK;
@@ -377,7 +401,9 @@ static int simple_lmk_start(void)
 	}
 
 	atomic_set_release(&lmk_ready, 1);
-	pr_info("Ready with global vmpressure and serialized OOM fallback\n");
+	pr_info("Ready: minfree=%d MiB, vmpressure cooldown=%d ms, serialized OOM fallback\n",
+		CONFIG_ANDROID_SIMPLE_LMK_MINFREE,
+		CONFIG_ANDROID_SIMPLE_LMK_COOLDOWN_MSEC);
 	return 0;
 }
 

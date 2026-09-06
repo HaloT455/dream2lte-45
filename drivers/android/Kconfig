@@ -54,9 +54,11 @@ if ANDROID_SIMPLE_LMK
 config ANDROID_SIMPLE_LMK_MINFREE
 	int "Minimum MiB of memory to free per reclaim"
 	range 8 512
-	default 128
+	default 64
 	help
 	  Simple LMK will try to free at least this much memory per reclaim.
+	  MGLRU remains the primary reclaim path, so keep this emergency batch
+	  small enough to avoid evicting several cached applications at once.
 
 config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	int "Reclaim timeout in milliseconds"
@@ -65,6 +67,15 @@ config ANDROID_SIMPLE_LMK_TIMEOUT_MSEC
 	help
 	  Maximum time to wait for a victim batch to release its memory before
 	  Simple LMK accepts another reclaim request.
+
+config ANDROID_SIMPLE_LMK_COOLDOWN_MSEC
+	int "Critical-vmpressure reclaim cooldown in milliseconds"
+	range 0 5000
+	default 1000
+	help
+	  Minimum interval between critical-vmpressure victim batches. Direct
+	  OOM requests bypass this cooldown so allocation failure can still make
+	  immediate progress.
 
 endif
 

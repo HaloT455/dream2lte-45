@@ -38,9 +38,12 @@ new/empty output directory when producing the reproducible release build.
   clusters and can select M2 when utilization requires it. There is no fixed
   85% A53 gate; schedutil uses a 2.5 ms up delay and 8 ms down delay for short
   responsive bursts without retaining a stale overclocked OPP.
-- Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
-- Complete SimpleLMK is enabled with global and memcg vmpressure triggers,
-  bounded victim waits and the original OOM fallback when reclaim cannot run.
+- Mongoose M2 maximum OPP remains the firmware-backed 2704 MHz step; the A53
+  2002 MHz and M2 2704 MHz ceilings are retained as the requested performance
+  profile while GPU limits remain stock.
+- Complete SimpleLMK is enabled with global and memcg vmpressure triggers, a
+  64 MiB emergency batch, a one-second critical-pressure cooldown, bounded
+  victim waits and an immediate OOM fallback when reclaim cannot run.
 - Functional MGLRU is enabled at boot with 7 generations and 4 tiers; the
   optional debug statistics are intentionally disabled to keep reclaim
   overhead and battery impact low. SimpleLMK remains the severe-pressure
@@ -62,6 +65,10 @@ new/empty output directory when producing the reproducible release build.
   GPU limits, CPU voltage tables, battery charging protection, and CPU hot
   safety trips remain in place.
 - ABOX SRAM IPC uses the required I/O-memory copy helpers.
+- The dream2lte modem interface defaults to two SIM slots even without a
+  DS_DET GPIO and publishes `/proc/simslot_count`. The Shannon modem remains
+  dual-standby: the selected mobile-data SIM gets LTE while the opposite SIM
+  falls back to Auto/3G/2G; simultaneous LTE/LTE is not forced.
 
 To create a flashable image while preserving a known-good boot image ramdisk
 and footer:

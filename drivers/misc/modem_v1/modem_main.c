@@ -719,7 +719,19 @@ make_proc:
 #else
 static enum mif_sim_mode get_sim_mode(struct device_node *of_node)
 {
-	return MIF_SIM_SINGLE;
+	enum mif_sim_mode mode = MIF_SIM_SINGLE;
+
+#if defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_EUR_OPEN) || \
+	defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_KOR)
+	mode = MIF_SIM_DUAL;
+#endif
+
+	mif_info("sim_mode: %d (board default)\n", mode);
+	if (!proc_create_data("simslot_count", 0, NULL, &simslot_count_fops,
+			(void *)(long)mode))
+		mif_err("Failed to create proc\n");
+
+	return mode;
 }
 #endif
 

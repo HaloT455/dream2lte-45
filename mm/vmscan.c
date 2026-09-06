@@ -3155,7 +3155,10 @@ restart:
 			continue;
 		}
 
-		VM_BUG_ON(!pfn_valid(pfn));
+		if (unlikely(!pfn_valid(pfn))) {
+			args->mm_stats[MM_LEAF_HOLE]++;
+			continue;
+		}
 		if (pfn < args->start_pfn || pfn >= args->end_pfn) {
 			args->mm_stats[MM_LEAF_OTHER_NODE]++;
 			remote++;
@@ -3238,7 +3241,10 @@ static void __walk_pmd_range(pud_t *pud, unsigned long start,
 			continue;
 		}
 
-		VM_BUG_ON(!pfn_valid(pfn));
+		if (unlikely(!pfn_valid(pfn))) {
+			args->mm_stats[MM_LEAF_HOLE]++;
+			continue;
+		}
 		if (pfn < args->start_pfn || pfn >= args->end_pfn) {
 			args->mm_stats[MM_LEAF_OTHER_NODE]++;
 			continue;
@@ -3326,6 +3332,11 @@ restart:
 
 			if (!pmd_young(val)) {
 				args->mm_stats[MM_LEAF_OLD]++;
+				continue;
+			}
+
+			if (unlikely(!pfn_valid(pfn))) {
+				args->mm_stats[MM_LEAF_HOLE]++;
 				continue;
 			}
 
@@ -3722,7 +3733,8 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 		if (!pte_young(pte[i]))
 			continue;
 
-		VM_BUG_ON(!pfn_valid(pfn));
+		if (unlikely(!pfn_valid(pfn)))
+			continue;
 		if (pfn < zone->zone_start_pfn || pfn >= zone_end_pfn(zone))
 			continue;
 
