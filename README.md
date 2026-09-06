@@ -47,8 +47,11 @@ new/empty output directory when producing the reproducible release build.
   victim waits and an immediate OOM fallback when reclaim cannot run.
 - Functional MGLRU is enabled at boot with 7 generations and 4 tiers; the
   optional debug statistics are intentionally disabled to keep reclaim
-  overhead and battery impact low. SimpleLMK remains the severe-pressure
-  backstop, with all threads in a shared address space marked consistently.
+  overhead and battery impact low. Reclaim deletion now clears transient page
+  state atomically, and writeback rotation/deactivation always uses
+  generation-aware helpers instead of moving MGLRU pages into legacy lists.
+  SimpleLMK remains the severe-pressure backstop, with all threads in a shared
+  address space marked consistently.
   The lockup detector remains compiled for diagnostics, but hard- and soft-lockup
   panic defaults are disabled so a transient scheduler stall does not reboot the
   daily build; a real kernel panic still follows the existing five-second reset.

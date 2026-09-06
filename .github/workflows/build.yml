@@ -152,6 +152,9 @@ jobs:
           grep -q 'platform->gpu_max_clock_limit = min_t(int,' drivers/gpu/arm/b_r19p0/platform/exynos/mali_kbase_platform.c
           grep -q 'jump_label_init();' init/main.c
           test "$(grep -c 'unlikely(!pfn_valid(pfn))' mm/vmscan.c)" -ge 4
+          grep -q 'struct lruvec \*lruvec, bool reclaiming)' include/linux/mm_inline.h
+          grep -q 'lru_gen_deletion(page, lruvec, true)' mm/vmscan.c
+          ! grep -q 'list_move_tail(&page->lru, &lruvec->lists' mm/swap.c
           for index in 0 1 2 3 4 5 6 7; do
             grep -q "iod,name = \"rmnet$index\"" arch/arm64/boot/dts/exynos/modem-ss355ap-pdata.dtsi
           done

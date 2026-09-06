@@ -161,7 +161,7 @@ static inline bool lru_gen_addition(struct page *page,
 }
 
 static inline bool lru_gen_deletion(struct page *page,
-		struct lruvec *lruvec)
+		struct lruvec *lruvec, bool reclaiming)
 {
 	int gen;
 	unsigned long old_flags, new_flags;
@@ -177,7 +177,18 @@ static inline bool lru_gen_deletion(struct page *page,
 		gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 
 		new_flags = old_flags & ~LRU_GEN_MASK;
-		if (lru_gen_is_active(lruvec, gen))
+		if (!(new_flags & BIT(PG_referenced)))
+			new_flags &= ~(LRU_USAGE_MASK | LRU_TIER_FLAGS);
+
+		/*
+		 * A page isolated for reclaim must enter shrink_page_list()
+		 * without legacy active/reclaim/reference state. Restoring
+		 * PG_active here lets a freed page retain an LRU-only flag.
+		 */
+		if (reclaiming)
+			new_flags &= ~(BIT(PG_active) | BIT(PG_referenced) |
+				       BIT(PG_reclaim));
+		else if (lru_gen_is_active(lruvec, gen))
 			new_flags |= BIT(PG_active);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
 
@@ -232,7 +243,7 @@ static inline bool lru_gen_addition(struct page *page,
 }
 
 static inline bool lru_gen_deletion(struct page *page,
-		struct lruvec *lruvec)
+		struct lruvec *lruvec, bool reclaiming)
 {
 	return false;
 }
@@ -272,7 +283,7 @@ static __always_inline void del_page_from_lru_list(struct page *page,
 {
 	int nr_pages = hpage_nr_pages(page);
 
-	if (lru_gen_deletion(page, lruvec))
+	if (lru_gen_deletion(page, lruvec, false))
 		return;
 
 	update_lru_size(lruvec, lru, page_zonenum(page), -nr_pages);

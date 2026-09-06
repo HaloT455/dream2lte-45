@@ -3797,9 +3797,22 @@ static bool sort_page(struct page *page, struct lruvec *lruvec, int tier_to_isol
 	VM_BUG_ON_PAGE(gen == -1, page);
 	VM_BUG_ON_PAGE(tier_to_isolate < 0, page);
 
+	/*
+	 * mlock can race with the generation scan. Move the page to the
+	 * unevictable list before reclaim sees it.
+	 */
+	if (unlikely(!page_evictable(page))) {
+		success = lru_gen_deletion(page, lruvec, true);
+		VM_BUG_ON_PAGE(!success, page);
+		SetPageUnevictable(page);
+		add_page_to_lru_list(page, lruvec, LRU_UNEVICTABLE);
+		__count_vm_events(UNEVICTABLE_PGCULLED, hpage_nr_pages(page));
+		return true;
+	}
+
 	/* a lazy-free page that has been written into? */
 	if (type && PageDirty(page) && PageAnon(page)) {
-		success = lru_gen_deletion(page, lruvec);
+		success = lru_gen_deletion(page, lruvec, true);
 		VM_BUG_ON_PAGE(!success, page);
 		SetPageSwapBacked(page);
 		add_page_to_lru_list_tail(page, lruvec, page_lru(page));
@@ -3836,22 +3849,10 @@ static void isolate_page(struct page *page, struct lruvec *lruvec)
 {
 	bool success;
 
-	success = lru_gen_deletion(page, lruvec);
-	VM_BUG_ON_PAGE(!success, page);
-
 	ClearPageLRU(page);
 
-	if (PageActive(page)) {
-		ClearPageActive(page);
-		/* make sure shrink_page_list() rejects this page */
-		SetPageReferenced(page);
-		return;
-	}
-
-	/* make sure shrink_page_list() doesn't try to write this page */
-	ClearPageReclaim(page);
-	/* make sure shrink_page_list() doesn't reject this page */
-	ClearPageReferenced(page);
+	success = lru_gen_deletion(page, lruvec, true);
+	VM_BUG_ON_PAGE(!success, page);
 }
 
 static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_to_scan,
@@ -4250,7 +4251,7 @@ static bool drain_lru_gen_lists(struct lruvec *lruvec)
 			VM_BUG_ON_PAGE(page_zonenum(page) != zone, page);
 
 			prefetchw_prev_lru_page(page, head, flags);
-			success = lru_gen_deletion(page, lruvec);
+			success = lru_gen_deletion(page, lruvec, false);
 			VM_BUG_ON(!success);
 			add_page_to_lru_list(page, lruvec, page_lru(page));
 

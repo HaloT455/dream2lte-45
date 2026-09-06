@@ -452,8 +452,17 @@ static void pagevec_move_tail_fn(struct page *page, struct lruvec *lruvec,
 	int *pgmoved = arg;
 
 	if (PageLRU(page) && !PageActive(page) && !PageUnevictable(page)) {
-		enum lru_list lru = page_lru_base_type(page);
-		list_move_tail(&page->lru, &lruvec->lists[lru]);
+		enum lru_list lru = page_lru(page);
+
+		/*
+		 * MGLRU pages live on generation lists, not lruvec->lists[].
+		 * Remove and re-add through the common helpers so list links,
+		 * generation bits and counters stay synchronized.
+		 */
+		del_page_from_lru_list(page, lruvec, lru);
+		ClearPageActive(page);
+		lru = page_lru(page);
+		add_page_to_lru_list_tail(page, lruvec, lru);
 		(*pgmoved)++;
 	}
 }
@@ -793,9 +802,9 @@ static void lru_deactivate_file_fn(struct page *page, struct lruvec *lruvec,
 	del_page_from_lru_list(page, lruvec, lru + active);
 	ClearPageActive(page);
 	ClearPageReferenced(page);
-	add_page_to_lru_list(page, lruvec, lru);
 
 	if (PageWriteback(page) || PageDirty(page)) {
+		add_page_to_lru_list(page, lruvec, lru);
 		/*
 		 * PG_reclaim could be raced with end_page_writeback
 		 * It can make readahead confusing.  But race window
@@ -804,10 +813,10 @@ static void lru_deactivate_file_fn(struct page *page, struct lruvec *lruvec,
 		SetPageReclaim(page);
 	} else {
 		/*
-		 * The page's writeback ends up during pagevec
-		 * We moves tha page into tail of inactive.
+		 * The page's writeback ends up during pagevec. Use the
+		 * generation-aware tail helper when MGLRU is enabled.
 		 */
-		list_move_tail(&page->lru, &lruvec->lists[lru]);
+		add_page_to_lru_list_tail(page, lruvec, lru);
 		__count_vm_event(PGROTATED);
 	}
 
