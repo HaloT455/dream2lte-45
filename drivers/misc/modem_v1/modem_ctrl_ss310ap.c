@@ -180,14 +180,33 @@ static int get_ds_detect(struct device_node *np)
 	return gpio_get_value(gpio_ds_det);
 }
 #else
+#if defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_EUR_OPEN) || \
+	defined(CONFIG_MACH_EXYNOS8895_DREAM2LTE_KOR)
+/* dream2lte is a dual-SIM target even when the board has no DS_DET GPIO. */
+static int ds_detect = 2;
+#else
 static int ds_detect = 1;
+#endif
 module_param(ds_detect, int, S_IRUGO | S_IWUSR | S_IWGRP);
 MODULE_PARM_DESC(ds_detect, "Dual SIM detect");
 
 static int get_ds_detect(struct device_node *np)
 {
-	mif_info("Dual SIM detect = %d\n", ds_detect);
-	return ds_detect - 1;
+	u32 sim_mode;
+	int detected = ds_detect;
+
+	/* Prefer the board declaration; keep the module parameter as fallback. */
+	if (!of_property_read_u32(np, "mif,sim_mode", &sim_mode))
+		detected = sim_mode;
+
+	if (detected < 1 || detected > 3) {
+		mif_err("Invalid SIM mode %d, falling back to single SIM\n",
+			detected);
+		detected = 1;
+	}
+
+	mif_info("Dual SIM detect = %d\n", detected);
+	return detected - 1;
 }
 #endif
 

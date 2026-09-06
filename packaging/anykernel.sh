@@ -1,7 +1,7 @@
 ### AnyKernel3 Ramdisk Mod Script
 
 properties() { '
-kernel.string=ALice V9 V6 Stable Rebuild
+kernel.string=ALice V9 V6 Rebuild - DSDS GPU455
 do.devicecheck=1
 do.modules=0
 do.systemless=1

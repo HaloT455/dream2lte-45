@@ -20,3 +20,15 @@ V9 starts from the known-good V6 commit `a15290cd8ce62e309d6c071df4cebd9177d9e4a
    bulk merge.
 4. Keep a no-MGLRU V9 package as the recovery/control build when testing MGLRU.
 5. Require compile, DTB decompile and package-integrity checks at every stage.
+
+## Verified stage layout
+
+- `v9haloT45-v6-rebuild` at `4345fb58` is the untouched V6 runtime
+  control build. It has no MGLRU code.
+- `v9haloT45-hw-stage` adds only the board-level dual-slot declaration,
+  modem dual-slot fallback and the Mali 455 MHz ceiling.
+- The CPU ceilings remain Cortex-A53 2002 MHz and Mongoose M2 2704 MHz.
+- Exynos8895 is DSDS: either selected data SIM may use LTE, but this kernel
+  does not falsely advertise simultaneous LTE/LTE on both slots.
+- MGLRU work must start from a hardware-stage commit that has passed an actual
+  device boot test, and must stay on a separate lab branch until proven.

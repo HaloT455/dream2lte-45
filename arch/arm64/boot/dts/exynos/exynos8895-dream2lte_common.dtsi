@@ -20,7 +20,7 @@
 
 	/*
 	 * Use firmware-backed CPU OPPs: 2002 MHz for A53 and 2704 MHz for
-	 * Mongoose M2.  GPU limits remain stock.
+	 * Mongoose M2.  Keep the GPU at the requested 455 MHz ceiling.
 	 */
 	cpufreq {
 		domain@0 {
@@ -1159,6 +1159,9 @@
 	};
 
 	mif_pdata {
+		/* Two physical slots share one LTE stack (dual-SIM dual-standby). */
+		mif,sim_mode = <2>;
+
 		/* GPIOs for HW REV */
 		/* XGPIO32-CP_REV0, XGPIO33-CP_REV1, XGPIO34-CP_REV2, XGPIO38-CP_REV3 */
 		/* XGPIO39-AP_REV0, XGPIO40-AP_REV1, XGPIO41-AP_REV2, XGPIO42-AP_REV3 */
@@ -3417,4 +3420,12 @@
 			volt_range_step = <25000>;
 		};
 	};
+};
+
+&mali {
+	/* Keep both normal DVFS and Samsung's temporary step-up path at 455 MHz. */
+	gpu_max_clock = <455000>;
+	gpu_max_clock_limit = <455000>;
+	gpu_temp_throttling = <455000 455000 385000 338000 260000 260000>;
+	gpu_asv_cali_lock_val = <455000>;
 };

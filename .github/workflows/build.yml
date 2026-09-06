@@ -1,16 +1,16 @@
-name: Build V9 V6 Stable Rebuild
+name: Build V9 V6 Rebuild Hardware Stage
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - v9haloT45-v6-rebuild
+      - v9haloT45-hw-stage
 
 permissions:
   contents: read
 
 concurrency:
-  group: v9-v6-rebuild-dream2lte-${{ github.ref }}
+  group: v9-hw-stage-dream2lte-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
         variant: [enforcing, permissive]
 
@@ -49,8 +49,8 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v9" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v9-hw" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=2" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
 
       - name: Configure ${{ matrix.variant }} kernel
@@ -61,12 +61,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Enforcing"
+              --set-str LOCALVERSION "-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Permissive"
+              --set-str LOCALVERSION "-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -104,6 +104,96 @@ jobs:
           grep -q 'cooling-device = <&cpu0 11 11>;' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
           grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'mif,sim_mode = <2>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'static int ds_detect = 2;' drivers/misc/modem_v1/modem_ctrl_ss310ap.c
+          grep -q 'of_property_read_u32(np, "mif,sim_mode"' drivers/misc/modem_v1/modem_ctrl_ss310ap.c
+          grep -q 'of_property_read_u32(of_node, "mif,sim_mode"' drivers/misc/modem_v1/modem_main.c
+          grep -q 'gpu_max_clock = <455000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'gpu_max_clock_limit = <455000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'platform->gpu_max_clock_limit = min_t(int,' drivers/gpu/arm/b_r19p0/platform/exynos/mali_kbase_platform.c
+          ! grep -q '^CONFIG_LRU_GEN=y          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
+            grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
+          else
+            grep -q '^CONFIG_ALWAYS_PERMISSIVE=y$' "$OUT/.config"
+            grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
+          fi
+
+      - name: Build kernel and DTB
+        run: |
+          set -o pipefail
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v9-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          path: build-${{ matrix.variant }}.log
+          if-no-files-found: error
+
+      - name: Validate output
+        run: |
+          set -eu
+          OUT="out-${{ matrix.variant }}"
+          DTC="$OUT/scripts/dtc/dtc"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte_eur_open_10.dtb"
+          VALIDATED_DTS="$OUT/dream2lte-validated.dts"
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dtb.img"
+          test -x "$DTC"
+          test -s "$DTB"
+          "$DTC" -I dtb -O dts -o "$VALIDATED_DTS" "$DTB"
+          grep -q 'max-freq = <0x1e8c50>;' "$VALIDATED_DTS"
+          grep -q 'max-freq = <0x294280>;' "$VALIDATED_DTS"
+          grep -q 'mif,sim_mode = <0x2>;' "$VALIDATED_DTS"
+          grep -q 'gpu_max_clock = <0x6f158>;' "$VALIDATED_DTS"
+          grep -q 'gpu_max_clock_limit = <0x6f158>;' "$VALIDATED_DTS"
+          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
+          strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
+          if [ "${{ matrix.variant }}" = "enforcing" ]; then
+            grep -a -q 'Linux version 4.4.302-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Enforcing' "$OUT/arch/arm64/boot/Image"
+          else
+            grep -a -q 'Linux version 4.4.302-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Permissive' "$OUT/arch/arm64/boot/Image"
+          fi
+
+      - name: Package flashable V9 hardware stage
+        run: |
+          set -eu
+          OUT="out-${{ matrix.variant }}"
+          DEST="output-${{ matrix.variant }}"
+          AK3="anykernel-${{ matrix.variant }}"
+          mkdir -p "$DEST"
+          git init "$AK3"
+          git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C "$AK3" fetch --depth=1 origin "$AK3_COMMIT"
+          git -C "$AK3" checkout --detach FETCH_HEAD
+          rm -rf "$AK3/.git" "$AK3/README.md" "$AK3/.github"
+          cp packaging/anykernel.sh "$AK3/anykernel.sh"
+          cp "$OUT/arch/arm64/boot/Image" "$AK3/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
+          (
+            cd "$AK3"
+            zip -qr9 "../$DEST/ALice-V9-DSDS-GPU455-SLMK-EAS-65C-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+          )
+          cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
+          cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
+          cp "$OUT/System.map" "$DEST/System.map"
+          cp "$OUT/.config" "$DEST/kernel.config"
+          (
+            cd "$DEST"
+            sha256sum ALice-V9-DSDS-GPU455-*.zip Image dtb.img System.map kernel.config > SHA256SUMS
+          )
+
+      - name: Upload ${{ matrix.variant }} V9 hardware stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v9-hwstage-${{ matrix.variant }}-${{ github.sha }}
+          path: output-${{ matrix.variant }}/
+          if-no-files-found: error
+ "$OUT/.config"
+          ! grep -q 'lru_gen_' mm/vmscan.c
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
             grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' "$OUT/.config"
             grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' "$OUT/.config"
@@ -143,12 +233,12 @@ jobs:
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-ALice-V9-V6Base-SLMK-EAS-SuspendFix-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-ALice-V9-DSDS-GPU455-SLMK-EAS-65C-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
-      - name: Package flashable V9 baseline
+      - name: Package flashable V9 hardware stage
         run: |
           set -eu
           OUT="out-${{ matrix.variant }}"
@@ -165,7 +255,7 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$AK3/dtb"
           (
             cd "$AK3"
-            zip -qr9 "../$DEST/ALice-V9-V6Base-SLMK-EAS-SuspendFix-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
+            zip -qr9 "../$DEST/ALice-V9-DSDS-GPU455-SLMK-EAS-65C-${{ matrix.variant }}-${GITHUB_SHA::8}.zip" .
           )
           cp "$OUT/arch/arm64/boot/Image" "$DEST/Image"
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/dtb.img"
@@ -173,12 +263,12 @@ jobs:
           cp "$OUT/.config" "$DEST/kernel.config"
           (
             cd "$DEST"
-            sha256sum ALice-V9-V6Base-*.zip Image dtb.img System.map kernel.config > SHA256SUMS
+            sha256sum ALice-V9-DSDS-GPU455-*.zip Image dtb.img System.map kernel.config > SHA256SUMS
           )
 
-      - name: Upload ${{ matrix.variant }} V9 baseline
+      - name: Upload ${{ matrix.variant }} V9 hardware stage
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v9-v6base-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v9-hwstage-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
