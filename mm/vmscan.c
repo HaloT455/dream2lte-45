@@ -47,6 +47,15 @@
 #include <linux/prefetch.h>
 #include <linux/printk.h>
 #include <linux/memory.h>
+
+/*
+ * kernel/cgroup/cgroup.c exports cgroup_mutex unconditionally, while the
+ * public 4.4 header only declares it under CONFIG_PROVE_RCU. MGLRU needs the
+ * lock during runtime list migration regardless of lockdep configuration.
+ */
+#ifdef CONFIG_CGROUPS
+extern struct mutex cgroup_mutex;
+#endif
 #include <linux/overflow.h>
 
 #include <asm/tlbflush.h>
