@@ -1932,6 +1932,37 @@ static void ttwu_queue(struct task_struct *p, int cpu)
 	raw_spin_unlock(&rq->lock);
 }
 
+#ifdef CONFIG_PSI
+/*
+ * stats.h is included before the 4.4 rq locking helpers are defined.
+ * Keep the migration-specific PSI transition here in core.c, after sched.h
+ * has been fully parsed. try_to_wake_up() holds p->pi_lock while calling us.
+ */
+static void psi_ttwu_dequeue_legacy(struct task_struct *p)
+{
+	struct rq *rq;
+	int clear = 0;
+
+	if (static_branch_likely(&psi_disabled))
+		return;
+
+	if (!p->in_iowait && !(p->flags & PF_MEMSTALL))
+		return;
+
+	if (p->in_iowait)
+		clear |= TSK_IOWAIT;
+	if (p->flags & PF_MEMSTALL)
+		clear |= TSK_MEMSTALL;
+
+	rq = __task_rq_lock(p);
+	psi_task_change(p, clear, 0);
+	p->sched_psi_wake_requeue = 1;
+	__task_rq_unlock(rq);
+}
+#else
+static inline void psi_ttwu_dequeue_legacy(struct task_struct *p) { }
+#endif
+
 /**
  * try_to_wake_up - wake up a thread
  * @p: the thread to be awakened
@@ -2053,7 +2084,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 
 	if (task_cpu(p) != cpu) {
 		wake_flags |= WF_MIGRATED;
-		psi_ttwu_dequeue(p);
+		psi_ttwu_dequeue_legacy(p);
 		set_task_cpu(p, cpu);
 	}
 
