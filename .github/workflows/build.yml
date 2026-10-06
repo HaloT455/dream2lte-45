@@ -1,4 +1,4 @@
-name: Build V12R1 UI1 MGLRU + VPU + GPU20
+name: Build V12R2 UI1 MGLRU Manual + HALO NPU
 # V12 UI1 MGLRU CI trigger
 
 on:
@@ -65,12 +65,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R1-UI1-MGLRU-VPU-GPU20-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-Alice-V12R2-UI1-MGLRUManual-NPU-KSU32590-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R1-UI1-MGLRU-VPU-GPU20-KSU32590-Permissive"
+              --set-str LOCALVERSION "-Alice-V12R2-UI1-MGLRUManual-NPU-KSU32590-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -84,11 +84,14 @@ jobs:
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
-          grep -q '^CONFIG_LRU_GEN_ENABLED=y$' "$OUT/.config"
+          grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$OUT/.config"
           grep -q '^# CONFIG_LRU_GEN_STATS is not set$' "$OUT/.config"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$OUT/.config"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$OUT/.config"
-          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set$' "$OUT/.config"
+          grep -q '^CONFIG_MALI_HALO_NPU_PARTITION=y$' "$OUT/.config"
+          grep -q 'static ssize_t lru_gen_enabled_store' mm/vmscan.c
+          grep -q '__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store)' mm/vmscan.c
+          grep -q 'sysfs_create_group(mm_kobj, &lru_gen_attr_group)' mm/vmscan.c
           grep -q '^CONFIG_EXYNOS_VPU=y$' "$OUT/.config"
           grep -q '^CONFIG_EXYNOS_VPU_EXYNOS8895=y$' "$OUT/.config"
           grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$OUT/.config"
@@ -143,7 +146,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r1-ui1-mglru-vpu-gpu20-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r2-ui1-mglru-manual-npu-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -171,6 +174,12 @@ jobs:
           check_map_symbol lru_gen_init_lruvec
           check_map_symbol vpu_device_init
           check_map_symbol vpu_system_resume
+          # kbase_halo_npu_init_partition() is static and may be inlined by GCC.
+          # The config check plus this embedded log string proves the partition
+          # code was compiled into the final Image without relying on a static symbol.
+          check_image_string 'HALO NPU: Mali partition active'
+          check_image_string 'lru_gen: runtime switch %s begin'
+          check_image_string 'lru_gen: runtime switch %s complete'
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           grep -q ' sched_cpu_ui_cpu_boost$' "$OUT/System.map"
           grep -q ' sched_cpu_ui_task_boost$' "$OUT/System.map"
@@ -182,9 +191,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R1-UI1-MGLRU-VPU-GPU20-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R2-UI1-MGLRUManual-NPU-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R1-UI1-MGLRU-VPU-GPU20-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R2-UI1-MGLRUManual-NPU-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -201,6 +210,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r1-ui1-mglru-vpu-gpu20-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r2-ui1-mglru-manual-npu-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
