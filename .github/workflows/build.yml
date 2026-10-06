@@ -8,6 +8,10 @@ on:
       - v12
       - agent/v12-ui1-mglru-integration
 
+concurrency:
+  group: v12-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
