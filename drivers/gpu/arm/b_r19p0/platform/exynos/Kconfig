@@ -69,6 +69,15 @@ config MALI_SEC_CL_BOOST
     help
       Enables open cl dvfs booster.
 
+config MALI_HALO_NPU_PARTITION
+    bool "Reserve five Mali shader cores for HALO NPU compute"
+    depends on MALI_MIDGARD
+    default n
+    help
+      Partition physical Mali shader cores by job slot. JS0/JS1 use the
+      graphics mask while JS2, used by ONLY_COMPUTE device_nr=1 workloads,
+      uses a dedicated five-core mask. No shader core is globally disabled.
+
 config MALI_PM_QOS
     bool "Enable DVFS with QoS"
     default y

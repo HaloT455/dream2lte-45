@@ -386,6 +386,91 @@ void kbase_pm_wait_for_poweroff_complete(struct kbase_device *kbdev)
 			is_poweroff_in_progress(kbdev));
 }
 
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+#define HALO_NPU_GPU_CORE_COUNT 5
+
+static unsigned int halo_npu_mask_weight(u64 mask)
+{
+	unsigned int count = 0;
+
+	while (mask) {
+		count += mask & 1ULL;
+		mask >>= 1;
+	}
+
+	return count;
+}
+
+static u64 halo_npu_take_high_cores(u64 available, unsigned int count)
+{
+	u64 mask = 0;
+	int bit;
+
+	for (bit = 63; bit >= 0 && count; bit--) {
+		u64 core = 1ULL << bit;
+
+		if (available & core) {
+			mask |= core;
+			count--;
+		}
+	}
+
+	return mask;
+}
+
+static void kbase_halo_npu_init_partition(struct kbase_device *kbdev)
+{
+	u64 shader_present = kbdev->gpu_props.props.raw_props.shader_present;
+	u64 npu_candidates = shader_present;
+	u64 npu_mask;
+	u64 graphics_mask;
+	unsigned int wanted = HALO_NPU_GPU_CORE_COUNT;
+	unsigned int have;
+
+	/*
+	 * JS2 targets coherent group 1 on dual-group GPUs. Prefer those cores
+	 * so ONLY_COMPUTE device_nr=1 atoms stay inside the NPU partition.
+	 */
+	if (kbdev->gpu_props.num_core_groups > 1)
+		npu_candidates &=
+			kbdev->gpu_props.props.coherency_info.group[1].core_mask;
+
+	npu_mask = halo_npu_take_high_cores(npu_candidates, wanted);
+	have = halo_npu_mask_weight(npu_mask);
+
+	if (have < wanted)
+		npu_mask |= halo_npu_take_high_cores(
+			shader_present & ~npu_mask, wanted - have);
+
+	graphics_mask = shader_present & ~npu_mask;
+
+	/* Never strand the GPU if a future/odd topology is detected. */
+	if (!npu_mask || !graphics_mask) {
+		kbdev->pm.debug_core_mask[0] = shader_present;
+		kbdev->pm.debug_core_mask[1] = shader_present;
+		kbdev->pm.debug_core_mask[2] = shader_present;
+		kbdev->pm.debug_core_mask_all = shader_present;
+		dev_warn(kbdev->dev,
+			"HALO NPU: invalid GPU topology, partition disabled (shader=0x%llx)\n",
+			(unsigned long long)shader_present);
+		return;
+	}
+
+	kbdev->pm.debug_core_mask[0] = graphics_mask;
+	kbdev->pm.debug_core_mask[1] = graphics_mask;
+	kbdev->pm.debug_core_mask[2] = npu_mask;
+	kbdev->pm.debug_core_mask_all = shader_present;
+
+	dev_info(kbdev->dev,
+		"HALO NPU: Mali partition active graphics=%u npu=%u shader=0x%llx graphics_mask=0x%llx npu_mask=0x%llx\n",
+		halo_npu_mask_weight(graphics_mask),
+		halo_npu_mask_weight(npu_mask),
+		(unsigned long long)shader_present,
+		(unsigned long long)graphics_mask,
+		(unsigned long long)npu_mask);
+}
+#endif
+
 int kbase_hwaccess_pm_powerup(struct kbase_device *kbdev,
 		unsigned int flags)
 {
@@ -410,10 +495,14 @@ int kbase_hwaccess_pm_powerup(struct kbase_device *kbdev,
 		return ret;
 	}
 
+	#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	kbase_halo_npu_init_partition(kbdev);
+#else
 	kbdev->pm.debug_core_mask_all = kbdev->pm.debug_core_mask[0] =
 			kbdev->pm.debug_core_mask[1] =
 			kbdev->pm.debug_core_mask[2] =
 			kbdev->gpu_props.props.raw_props.shader_present;
+#endif
 
 	/* Pretend the GPU is active to prevent a power policy turning the GPU
 	 * cores off */
