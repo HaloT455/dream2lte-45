@@ -223,6 +223,11 @@ int vpu_system_resume(struct vpu_system *system, u32 mode)
 	struct vpu_exynos *exynos;
 	struct vpu_memory *memory;
 	struct vpu_binary *binary;
+	bool clk_enabled = false;
+	bool iommu_attached = false;
+#if defined(CONFIG_PM_DEVFREQ)
+	bool qos_added = false;
+#endif
 
 	BUG_ON(!system);
 
@@ -233,40 +238,61 @@ int vpu_system_resume(struct vpu_system *system, u32 mode)
 	ret = CLK_OP(exynos, clk_cfg);
 	if (ret) {
 		vpu_err("CLK_OP(clk_cfg) is fail(%d)\n", ret);
-		goto p_err;
+		return ret;
 	}
 
 #if defined(CONFIG_PM_DEVFREQ)
 	pm_qos_add_request(&exynos_vpu_qos_cam, PM_QOS_CAM_THROUGHPUT, CAM_L5);
 	pm_qos_add_request(&exynos_vpu_qos_mem, PM_QOS_BUS_THROUGHPUT, MIF_L6);
+	qos_added = true;
 #endif
 
 	ret = CLK_OP(exynos, clk_on);
 	if (ret) {
 		vpu_err("CLK_OP(clk_on) is fail(%d)\n", ret);
-		goto p_err;
+		goto rollback;
 	}
+	clk_enabled = true;
 
 #if defined(CONFIG_VIDEOBUF2_ION)
-	vb2_ion_attach_iommu(system->memory.alloc_ctx);
+	ret = vb2_ion_attach_iommu(system->memory.alloc_ctx);
+	if (ret) {
+		vpu_err("vb2_ion_attach_iommu is fail(%d)\n", ret);
+		goto rollback;
+	}
+	iommu_attached = true;
 #endif
 
 	if (mode == VPU_DEVICE_MODE_TEST)
-		goto p_err;
+		return 0;
 
 	ret = vpu_binary_read(binary, system->code, system->code_size);
 	if (ret) {
 		vpu_err("vpu_binary_load is fail(%d)\n", ret);
-		goto p_err;
+		goto rollback;
 	}
 
 	ret = CTL_OP(exynos, ctl_reset, false);
 	if (ret) {
 		vpu_err("CTL_OP(ctl_reset) is fail(%d)\n", ret);
-		goto p_err;
+		goto rollback;
 	}
 
-p_err:
+	return 0;
+
+rollback:
+#if defined(CONFIG_VIDEOBUF2_ION)
+	if (iommu_attached)
+		vb2_ion_detach_iommu(memory->alloc_ctx);
+#endif
+	if (clk_enabled)
+		CLK_OP(exynos, clk_off);
+#if defined(CONFIG_PM_DEVFREQ)
+	if (qos_added) {
+		pm_qos_remove_request(&exynos_vpu_qos_cam);
+		pm_qos_remove_request(&exynos_vpu_qos_mem);
+	}
+#endif
 	return ret;
 }
 
