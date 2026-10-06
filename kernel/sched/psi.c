@@ -162,6 +162,8 @@ __setup("psi=", setup_psi);
 #define EXP_60s		1981		/* 1/exp(2s/60s) */
 
 #define EXP_300s	2034		/* 1/exp(2s/300s) */
+#define LOAD_INT(x)	((x) >> FSHIFT)
+#define LOAD_FRAC(x)	LOAD_INT(((x) & (FIXED_1 - 1)) * 100)
 
 /*
  * Linux 4.4 keeps the load-average helpers private to loadavg.c and has no
