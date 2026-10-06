@@ -1,5 +1,5 @@
 name: Build V12R2 UI1 MGLRU Manual + HALO NPU
-# V12 UI1 MGLRU CI trigger
+# V12R2 manual-MGLRU CI trigger
 
 on:
   workflow_dispatch:
