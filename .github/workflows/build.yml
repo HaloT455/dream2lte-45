@@ -1,10 +1,10 @@
-name: Build V6 SimpleLMK Note10 EAS 65C Suspend Fix
+name: Build V12 MGLRU + Virtual NPU
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - backup/v6-simplelmk-note10-eas-20260828
+      - v12
 
 jobs:
   build:
@@ -38,7 +38,7 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_USER=root" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_HOST=dream2lte-v6" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=dream2lte-v12-ci" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_TIMESTAMP=Fri Aug 28 12:00:00 UTC 2026" >> "$GITHUB_ENV"
 
@@ -50,12 +50,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-Alice-V12-MGLRU-NPU-KSU32590-Enforcing"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive"
+              --set-str LOCALVERSION "-Alice-V12-MGLRU-NPU-KSU32590-Permissive"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -109,7 +109,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-65c-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -121,9 +121,9 @@ jobs:
           grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12-MGLRU-NPU-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V6-SLMK-N10EAS-65C-SuspendFix-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12-MGLRU-NPU-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -140,6 +140,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v6-simplelmk-note10-eas-65c-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12-mglru-npu-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
