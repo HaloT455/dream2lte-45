@@ -1,5 +1,5 @@
 name: Build V12R3 UI1 LMKD PSI + MGLRU Manual + HALO NPU
-# V12 UI1 MGLRU CI trigger
+# V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
   workflow_dispatch:
