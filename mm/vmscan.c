@@ -2183,6 +2183,54 @@ static struct attribute_group vmscan_attr_group = {
 	.attrs = vmscan_attrs,
 	.name = "vmscan",
 };
+
+#ifdef CONFIG_LRU_GEN
+void lru_gen_set_state(bool enable, bool main, bool swap);
+
+static ssize_t lru_gen_enabled_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", lru_gen_enabled() ? 1 : 0);
+}
+
+static ssize_t lru_gen_enabled_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	int mode;
+	int err;
+	bool enable;
+
+	err = kstrtoint(buf, 10, &mode);
+	if (err || (mode != 0 && mode != 1))
+		return -EINVAL;
+
+	enable = mode == 1;
+	if (enable == lru_gen_enabled())
+		return count;
+
+	pr_info("lru_gen: runtime switch %s begin\n",
+		enable ? "ON" : "OFF");
+	lru_gen_set_state(enable, true, false);
+	pr_info("lru_gen: runtime switch %s complete\n",
+		enable ? "ON" : "OFF");
+
+	return count;
+}
+
+static struct kobj_attribute lru_gen_enabled_attr =
+	__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store);
+
+static struct attribute *lru_gen_attrs[] = {
+	&lru_gen_enabled_attr.attr,
+	NULL,
+};
+
+static struct attribute_group lru_gen_attr_group = {
+	.attrs = lru_gen_attrs,
+	.name = "lru_gen",
+};
+#endif
 #endif
 
 static inline bool mem_boost_pgdat_wmark(struct zone *zone)
@@ -4508,6 +4556,10 @@ static int __init kswapd_init(void)
 #ifdef CONFIG_SYSFS
 	if (sysfs_create_group(mm_kobj, &vmscan_attr_group))
 		pr_err("vmscan: register sysfs failed\n");
+#ifdef CONFIG_LRU_GEN
+	if (sysfs_create_group(mm_kobj, &lru_gen_attr_group))
+		pr_err("lru_gen: register sysfs failed\n");
+#endif
 #endif
 	return 0;
 }
