@@ -88,28 +88,6 @@ static inline void psi_dequeue(struct task_struct *p, bool sleep)
 	psi_task_change(p, clear, set);
 }
 
-static inline void psi_ttwu_dequeue(struct task_struct *p)
-{
-	if (static_branch_likely(&psi_disabled))
-		return;
-
-	if (unlikely(p->in_iowait || (p->flags & PF_MEMSTALL))) {
-		struct rq *rq;
-		int clear = 0;
-
-		if (p->in_iowait)
-			clear |= TSK_IOWAIT;
-		if (p->flags & PF_MEMSTALL)
-			clear |= TSK_MEMSTALL;
-
-		/* try_to_wake_up() already holds p->pi_lock on this 4.4 tree. */
-		rq = __task_rq_lock(p);
-		psi_task_change(p, clear, 0);
-		p->sched_psi_wake_requeue = 1;
-		__task_rq_unlock(rq);
-	}
-}
-
 static inline void psi_task_tick(struct rq *rq)
 {
 	if (static_branch_likely(&psi_disabled))
@@ -121,7 +99,6 @@ static inline void psi_task_tick(struct rq *rq)
 #else
 static inline void psi_enqueue(struct task_struct *p, bool wakeup) {}
 static inline void psi_dequeue(struct task_struct *p, bool sleep) {}
-static inline void psi_ttwu_dequeue(struct task_struct *p) {}
 static inline void psi_task_tick(struct rq *rq) {}
 #endif
 
