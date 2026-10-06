@@ -494,6 +494,26 @@ config TASK_IO_ACCOUNTING
 
 	  Say N if unsure.
 
+config PSI
+	bool "Pressure stall information tracking"
+	help
+	  Collect metrics that indicate how overcommitted the CPU, memory,
+	  and IO capacity are in the system.
+
+	  If you say Y here, the kernel creates /proc/pressure/{cpu,memory,io}.
+	  Android lmkd uses the memory pressure file with pollable stall
+	  triggers to react before the device enters heavy thrashing.
+
+	  This backport exposes system-level PSI only; cgroup PSI is omitted
+	  intentionally for the legacy Android 4.4 kernel.
+
+config PSI_DEFAULT_DISABLED
+	bool "Require psi=1 to enable pressure stall information tracking"
+	default n
+	depends on PSI
+	help
+	  Keep disabled for Android LMKD. Select only for debugging builds.
+
 endmenu # "CPU/Task time and stats accounting"
 
 menu "RCU Subsystem"
