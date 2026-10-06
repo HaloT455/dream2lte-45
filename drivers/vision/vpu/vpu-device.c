@@ -176,13 +176,17 @@ p_err:
 
 static int __vpu_device_power_on(struct vpu_device *device)
 {
-	int ret = 0;
+	int ret;
 
 	ret = pm_runtime_get_sync(device->dev);
-	if (ret)
-		vpu_err("runtime resume is fail(%d)", ret);
+	if (ret < 0) {
+		vpu_err("runtime resume is fail(%d)\n", ret);
+		/* get_sync increments usage_count even when resume fails. */
+		pm_runtime_put_noidle(device->dev);
+		return ret;
+	}
 
-	return ret;
+	return 0;
 }
 
 static int __vpu_device_power_off(struct vpu_device *device)
