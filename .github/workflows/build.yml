@@ -65,12 +65,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R3-UI1-LMKD-PSI-MGLRUManual-NPU-KSU32590-Enforcing"
+              --set-str LOCALVERSION "-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R3-UI1-LMKD-PSI-MGLRUManual-NPU-KSU32590-Permissive"
+              --set-str LOCALVERSION "-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -202,9 +202,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R3-UI1-LMKD-PSI-MGLRUManual-NPU-KSU32590-Enforcing' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R3-UI1-LMKD-PSI-MGLRUManual-NPU-KSU32590-Permissive' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
