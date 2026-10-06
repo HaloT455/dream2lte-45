@@ -90,6 +90,11 @@ jobs:
           grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$OUT/.config"
           grep -q '^CONFIG_EXYNOS_VPU_ALC_DEFAULT=y$' "$OUT/.config"
           grep -q '^# CONFIG_EXYNOS_VPU_ALC_HWMAPPER is not set$' "$OUT/.config"
+          grep -q 'BUG_ON(incl->index >= VPU_MAX_FRAME);' drivers/vision/vpu/vpu-graph.c
+          grep -q 'BUG_ON(otcl->index >= VPU_MAX_FRAME);' drivers/vision/vpu/vpu-graph.c
+          grep -q 'BUG_ON(clist->index >= VPU_MAX_FRAME);' drivers/vision/vpu/vpu-graph.c
+          ! grep -q 'BUG_ON(!.*index >= VPU_MAX_FRAME);' drivers/vision/vpu/vpu-graph.c
+          ! grep -q 'const const struct vertex_ioctl_ops' drivers/vision/vpu/vpu-vertex.c
           grep -q '^CONFIG_SWAP=y$' "$OUT/.config"
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y$' "$OUT/.config"
