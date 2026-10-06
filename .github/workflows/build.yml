@@ -143,13 +143,29 @@ jobs:
           OUT="out-${{ matrix.variant }}"
           test -s "$OUT/arch/arm64/boot/Image"
           test -s "$OUT/arch/arm64/boot/dtb.img"
-          grep -a -q 'simple_lmk: Ready with global vmpressure' "$OUT/arch/arm64/boot/Image"
-          grep -q ' lru_gen_set_state$' "$OUT/System.map"
-          grep -q ' lru_gen_init_lruvec$' "$OUT/System.map"
-          grep -q ' kbase_halo_npu_init_partition$' "$OUT/System.map"
-          grep -q ' vpu_device_init$' "$OUT/System.map"
-          grep -q ' vpu_system_resume$' "$OUT/System.map"
-          grep -a -q 'HALO NPU: Mali partition active' "$OUT/arch/arm64/boot/Image"
+          check_map_symbol() {
+            sym="$1"
+            if ! grep -q " $sym$" "$OUT/System.map"; then
+              echo "::error::Missing System.map symbol: $sym"
+              return 1
+            fi
+          }
+          check_image_string() {
+            str="$1"
+            if ! grep -a -q "$str" "$OUT/arch/arm64/boot/Image"; then
+              echo "::error::Missing Image string: $str"
+              return 1
+            fi
+          }
+          check_image_string 'simple_lmk: Ready with global vmpressure'
+          check_map_symbol lru_gen_set_state
+          check_map_symbol lru_gen_init_lruvec
+          check_map_symbol vpu_device_init
+          check_map_symbol vpu_system_resume
+          # kbase_halo_npu_init_partition() is static and may be inlined by GCC.
+          # The config check plus this embedded log string proves the partition
+          # code was compiled into the final Image without relying on a static symbol.
+          check_image_string 'HALO NPU: Mali partition active'
           strings -a "$OUT/arch/arm64/boot/Image" | grep -x -q '32590'
           grep -q ' sched_cpu_ui_cpu_boost$' "$OUT/System.map"
           grep -q ' sched_cpu_ui_task_boost$' "$OUT/System.map"
