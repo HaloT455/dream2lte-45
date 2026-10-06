@@ -3019,6 +3019,11 @@ void lru_gen_set_state(bool enable, bool main, bool swap)
 
 	mem_hotplug_begin();
 	mutex_lock(&lru_gen_state_mutex);
+	/*
+	 * Match the donor transition ordering: freeze memcg hierarchy changes
+	 * while pages are moved between classic LRU and generation lists.
+	 */
+	mutex_lock(&cgroup_mutex);
 
 	main = main && enable != lru_gen_enabled();
 	swap = swap && !(enable ? lru_gen_nr_swapfiles++ :
@@ -3041,6 +3046,7 @@ void lru_gen_set_state(bool enable, bool main, bool swap)
 	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
 
 unlock:
+	mutex_unlock(&cgroup_mutex);
 	mutex_unlock(&lru_gen_state_mutex);
 	mem_hotplug_done();
 }
