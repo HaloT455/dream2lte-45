@@ -82,9 +82,9 @@ int vpu_binary_read(struct vpu_binary *binary,
 	size_t target_size)
 {
 	int ret = 0;
-	const struct firmware *fw_blob;
-	u8 *buf;
-	struct file *fp;
+	const struct firmware *fw_blob = NULL;
+	u8 *buf = NULL;
+	struct file *fp = NULL;
 	mm_segment_t old_fs;
 	long fsize, nread;
 
@@ -92,10 +92,12 @@ int vpu_binary_read(struct vpu_binary *binary,
 
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
+
 	fp = filp_open(binary->fpath1, O_RDONLY, 0);
 	if (IS_ERR_OR_NULL(fp)) {
 		fp = filp_open(binary->fpath2, O_RDONLY, 0);
 		if (IS_ERR_OR_NULL(fp)) {
+			fp = NULL;
 			set_fs(old_fs);
 			goto request_fw;
 		}
@@ -105,77 +107,76 @@ int vpu_binary_read(struct vpu_binary *binary,
 	if (fsize <= 0) {
 		vpu_err("__get_file_size is fail(%ld)\n", fsize);
 		ret = -EBADF;
-		goto p_err;
+		goto file_err;
+	}
+
+	if (fsize > target_size) {
+		vpu_err("image size is over(%ld > %zu)\n", fsize, target_size);
+		ret = -EIO;
+		goto file_err;
 	}
 
 	buf = vmalloc(fsize);
 	if (!buf) {
 		vpu_err("vmalloc is fail\n");
 		ret = -ENOMEM;
-		goto p_err;
+		goto file_err;
 	}
 
 	nread = kernel_read(fp, 0, buf, fsize);
 	if (nread != fsize) {
 		vpu_err("kernel_read is fail(%ld != %ld)\n", nread, fsize);
 		ret = -EIO;
-		goto p_err;
-	}
-
-	if (fsize > target_size) {
-		vpu_err("image size is over(%ld > %ld)\n", fsize, target_size);
-		ret = -EIO;
-		goto p_err;
+		goto file_err;
 	}
 
 	binary->image_size = fsize;
-	/* no cache operation, because target is sram of vpu */
 #ifdef CONFIG_EXYNOS_VPU_HARDWARE
-	memcpy(target, (void *)buf, fsize);
+	memcpy(target, buf, fsize);
 #endif
-	vpu_info("FW(%s, %ld) were applied successfully.\n", binary->fpath1, fsize);
+	vpu_info("FW(%s, %ld) were applied successfully.\n",
+		 binary->fpath1, fsize);
 
-p_err:
-	vfree(buf);
-	filp_close(fp, current->files);
+file_err:
+	if (buf)
+		vfree(buf);
+	if (fp)
+		filp_close(fp, current->files);
 	set_fs(old_fs);
-
 	return ret;
 
 request_fw:
 	ret = request_firmware(&fw_blob, VPU_FW_NAME, binary->dev);
 	if (ret) {
-		vpu_err("request_firmware(%s) is fail(%d)", binary->fpath2, ret);
+		vpu_err("request_firmware(%s) is fail(%d)\n",
+			binary->fpath2, ret);
 		ret = -EINVAL;
 		goto request_err;
 	}
 
-	if (!fw_blob) {
-		vpu_err("fw_blob is NULL\n");
-		ret = -EINVAL;
-		goto request_err;
-	}
-
-	if (!fw_blob->data) {
-		vpu_err("fw_blob->data is NULL\n");
+	if (!fw_blob || !fw_blob->data) {
+		vpu_err("firmware blob is invalid\n");
 		ret = -EINVAL;
 		goto request_err;
 	}
 
 	if (fw_blob->size > target_size) {
-		vpu_err("image size is over(%ld > %ld)\n", binary->image_size, target_size);
+		vpu_err("image size is over(%zu > %zu)\n",
+			fw_blob->size, target_size);
 		ret = -EIO;
-		goto p_err;
+		goto request_err;
 	}
 
 	binary->image_size = fw_blob->size;
 #ifdef CONFIG_EXYNOS_VPU_HARDWARE
 	memcpy(target, fw_blob->data, fw_blob->size);
 #endif
-	vpu_info("Binay(%s, %ld) were applied successfully.\n", binary->fpath2, fw_blob->size);
+	vpu_info("Binary(%s, %zu) was applied successfully.\n",
+		 binary->fpath2, fw_blob->size);
 
 request_err:
-	release_firmware(fw_blob);
+	if (fw_blob)
+		release_firmware(fw_blob);
 	return ret;
 }
 
