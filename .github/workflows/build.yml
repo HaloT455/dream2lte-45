@@ -7,6 +7,7 @@ on:
     branches:
       - v12
       - agent/v12-ui1-mglru-integration
+      - agent/v12r4-lmkd-psi-zoneinfo
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -97,6 +98,10 @@ jobs:
           grep -q 'proc_create("pressure/memory"' kernel/sched/psi.c
           grep -q 'psi_memstall_enter' mm/page_alloc.c
           grep -q 'psi_memstall_enter' mm/vmscan.c
+          grep -q 'zoneinfo_is_first_populated_zone' mm/vmstat.c
+          grep -q 'nr_inactive_file %lu' mm/vmstat.c
+          grep -q 'nr_active_file %lu' mm/vmstat.c
+          grep -q 'workingset_refault %lu' mm/vmstat.c
           grep -q '^CONFIG_EXYNOS_VPU=y$' "$OUT/.config"
           grep -q '^CONFIG_EXYNOS_VPU_EXYNOS8895=y$' "$OUT/.config"
           grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$OUT/.config"
