@@ -754,6 +754,15 @@ config MAX_DIRTY_THRESH_PAGES
 	  It is only effective when dirty_ratio is used.
 	  (Setting dirty_bytes disables this option.)
 
+config PROCESS_RECLAIM
+	bool "Enable process reclaim"
+	depends on MMU
+	help
+	  Expose /proc/PID/reclaim so Android userspace can proactively
+	  reclaim file-backed or anonymous memory from a selected process.
+	  This is used by modern Android memory-management stacks together
+	  with userspace lmkd.
+
 config BALANCE_ANON_FILE_RECLAIM
 	bool "During reclaim treat anon and file backed pages equally"
 	depends on SWAP
