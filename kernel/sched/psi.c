@@ -876,17 +876,25 @@ void psi_task_change(struct task_struct *task, int clear, int set)
 		 * group->polling. Explicit smp_wmb is missing because cmpxchg()
 		 * implies smp_mb.
 		 */
-		if ((state_mask & group->trigger_states) &&
-			atomic_cmpxchg(&group->polling, 0, 1) == 0) {
+		/*
+		 * Samsung 4.4 creates system_wq from early_initcall(init_workqueues),
+		 * which runs after sched_init(). PSI accounting can therefore start
+		 * before system_wq exists. Keep accounting active, but never queue
+		 * clock work until the global workqueue is ready.
+		 */
+		if (system_wq &&
+		    (state_mask & group->trigger_states) &&
+		    atomic_cmpxchg(&group->polling, 0, 1) == 0) {
 			/*
 			 * Start polling immediately even if the work is already
-			 * scheduled
+			 * scheduled.
 			 */
 			mod_delayed_work(system_wq, &group->clock_work, 1);
 			continue;
 		}
 
-		if (wake_clock && !delayed_work_pending(&group->clock_work))
+		if (system_wq && wake_clock &&
+		    !delayed_work_pending(&group->clock_work))
 			schedule_delayed_work(&group->clock_work, PSI_FREQ);
 	}
 }
