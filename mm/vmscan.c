@@ -3423,18 +3423,110 @@ static bool lru_gen_oldest_empty(struct lruvec *lruvec, int type)
 	return true;
 }
 
+/*
+ * Refault feedback controller, adapted from the full multigenerational LRU
+ * eviction path.  The groundwork in this tree already records evicted and
+ * refaulted pages; use those counters to decide which type/tier is genuinely
+ * colder instead of falling back to a swappiness-only selector.
+ */
+struct lru_gen_ctrl_pos {
+	unsigned long refaulted;
+	unsigned long total;
+	int gain;
+};
+
+static void lru_gen_read_ctrl_pos(struct lru_gen_ctrl_pos *pos,
+				  struct lruvec *lruvec,
+				  int type, int tier, int gain)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	int hist = hist_from_seq_or_gen(lrugen->min_seq[type]);
+
+	pos->refaulted = READ_ONCE(lrugen->avg_refaulted[type][tier]) +
+			 atomic_long_read(&lrugen->refaulted[hist][type][tier]);
+	pos->total = READ_ONCE(lrugen->avg_total[type][tier]) +
+		     atomic_long_read(&lrugen->evicted[hist][type][tier]);
+	if (tier)
+		pos->total += READ_ONCE(lrugen->activated[hist][type][tier - 1]);
+	pos->gain = gain;
+}
+
+static bool lru_gen_positive_ctrl_err(struct lru_gen_ctrl_pos *sp,
+				      struct lru_gen_ctrl_pos *pv)
+{
+	return pv->refaulted < SWAP_CLUSTER_MAX ||
+	       pv->refaulted * max(sp->total, 1UL) * sp->gain <=
+	       sp->refaulted * max(pv->total, 1UL) * pv->gain;
+}
+
 static void lru_gen_reset_hist(struct lrugen *lrugen, int type,
 			      unsigned long seq)
 {
 	int tier;
 	int hist = hist_from_seq_or_gen(seq);
+	bool carryover = lru_gen_from_seq(seq) ==
+			 lru_gen_from_seq(lrugen->min_seq[type]);
 
 	for (tier = 0; tier < MAX_NR_TIERS; tier++) {
+		if (carryover) {
+			unsigned long sum;
+
+			sum = READ_ONCE(lrugen->avg_refaulted[type][tier]) +
+			      atomic_long_read(&lrugen->refaulted[hist][type][tier]);
+			WRITE_ONCE(lrugen->avg_refaulted[type][tier], sum / 2);
+
+			sum = READ_ONCE(lrugen->avg_total[type][tier]) +
+			      atomic_long_read(&lrugen->evicted[hist][type][tier]);
+			if (tier)
+				sum += READ_ONCE(lrugen->activated[hist][type][tier - 1]);
+			WRITE_ONCE(lrugen->avg_total[type][tier], sum / 2);
+
+			if (NR_STAT_GENS > 1)
+				continue;
+		}
+
 		atomic_long_set(&lrugen->evicted[hist][type][tier], 0);
 		atomic_long_set(&lrugen->refaulted[hist][type][tier], 0);
 		if (tier < MAX_NR_TIERS - 1)
 			WRITE_ONCE(lrugen->activated[hist][type][tier], 0);
 	}
+}
+
+static int lru_gen_get_tier_to_isolate(struct lruvec *lruvec, int type)
+{
+	int tier;
+	struct lru_gen_ctrl_pos sp, pv;
+
+	lru_gen_read_ctrl_pos(&sp, lruvec, type, 0, 1);
+	for (tier = 1; tier < MAX_NR_TIERS; tier++) {
+		lru_gen_read_ctrl_pos(&pv, lruvec, type, tier, 2);
+		if (!lru_gen_positive_ctrl_err(&sp, &pv))
+			break;
+	}
+
+	return tier - 1;
+}
+
+static int lru_gen_get_type_to_scan(struct lruvec *lruvec, int swappiness,
+				    int *tier_to_isolate)
+{
+	int type, tier;
+	struct lru_gen_ctrl_pos sp, pv;
+	int gain[ANON_AND_FILE] = { swappiness, 200 - swappiness };
+
+	lru_gen_read_ctrl_pos(&sp, lruvec, 0, 0, gain[0]);
+	lru_gen_read_ctrl_pos(&pv, lruvec, 1, 0, gain[1]);
+	type = lru_gen_positive_ctrl_err(&sp, &pv);
+
+	lru_gen_read_ctrl_pos(&sp, lruvec, !type, 0, gain[!type]);
+	for (tier = 1; tier < MAX_NR_TIERS; tier++) {
+		lru_gen_read_ctrl_pos(&pv, lruvec, type, tier, gain[type]);
+		if (!lru_gen_positive_ctrl_err(&sp, &pv))
+			break;
+	}
+
+	*tier_to_isolate = tier - 1;
+	return type;
 }
 
 static bool lru_gen_advance_min_locked(struct lruvec *lruvec, int type)
