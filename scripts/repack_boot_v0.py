@@ -34,13 +34,14 @@ def main() -> None:
     parser.add_argument("--kernel", required=True, type=Path)
     parser.add_argument("--ramdisk", type=Path,
                         help="optional replacement ramdisk")
-    parser.add_argument("--dt", required=True, type=Path)
+    parser.add_argument("--dt", type=Path,
+                        help="optional replacement DT; preserve base DT if omitted")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
     image = args.base.read_bytes()
     kernel = args.kernel.read_bytes()
-    dt = args.dt.read_bytes()
+    replacement_dt = args.dt.read_bytes() if args.dt else None
 
     if len(image) < HEADER_SIZE or image[:8] != BOOT_MAGIC:
         raise ValueError("base is not an Android boot image v0")
@@ -56,7 +57,8 @@ def main() -> None:
     if args.ramdisk:
         ramdisk = args.ramdisk.read_bytes()
     second, offset = section(image, offset, second_size, page_size)
-    _, offset = section(image, offset, dt_size, page_size)
+    base_dt, offset = section(image, offset, dt_size, page_size)
+    dt = replacement_dt if replacement_dt is not None else base_dt
     footer = image[offset:]
 
     fields[0] = len(kernel)
