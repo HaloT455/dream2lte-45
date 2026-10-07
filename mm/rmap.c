@@ -900,23 +900,11 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 		}
 
 		/*
-		 * MGLRU exploits PTE spatial locality: one referenced mapping is
-		 * a cheap opportunity to age neighboring young PTEs in the same
-		 * PMD.  lru_gen_scan_around() clears the current young bit too, so
-		 * account this mapping here before the normal clear/flush below.
+		 * V12R5C stability gate: keep rmap on the native 4.4 young-bit
+		 * path.  V12R5B watchdog-reset under application launch while
+		 * scan-around was enabled, so spatial PTE promotion is isolated
+		 * from the core generation aging/eviction engine for this test.
 		 */
-		if (lru_gen_enabled() && pte_young(*pte)) {
-			struct page_vma_mapped_walk pvmw = {
-				.page = page,
-				.vma = vma,
-				.address = address,
-				.pte = pte,
-				.ptl = ptl,
-			};
-
-			lru_gen_scan_around(&pvmw);
-			referenced++;
-		}
 
 		if (ptep_clear_flush_young_notify(vma, address, pte)) {
 			/*
