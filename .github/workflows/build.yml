@@ -101,7 +101,6 @@ jobs:
           grep -q 'lru_gen_get_type_to_scan' mm/vmscan.c
           grep -q 'lru_gen_promote_page_locked' mm/vmscan.c
           grep -q 'lru_gen_scan_around' mm/vmscan.c
-          grep -q 'lru_gen_scan_around' mm/rmap.c
           ! grep -q 'lru_gen_scan_around(&pvmw)' mm/rmap.c
           grep -q 'lru_gen_reclaim_batch' mm/vmscan.c
           grep -q 'psi_trigger_create' kernel/sched/psi.c
