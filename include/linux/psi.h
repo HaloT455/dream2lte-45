@@ -9,6 +9,7 @@
 struct seq_file;
 
 #ifdef CONFIG_PSI
+extern bool psi_initialized;
 
 extern struct static_key_false psi_disabled;
 
