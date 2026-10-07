@@ -86,6 +86,7 @@ jobs:
           grep -q '^CONFIG_PROCESS_RECLAIM=y$' "$OUT/.config"
           grep -q '^CONFIG_VM_EVENT_COUNTERS=y$' "$OUT/.config"
           grep -q '^CONFIG_PSI=y$' "$OUT/.config"
+          grep -q '^CONFIG_SAMSUNG_LMKD_DEBUG=y$' "$OUT/.config"
           grep -q '^# CONFIG_PSI_DEFAULT_DISABLED is not set$' "$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
           grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$OUT/.config"
@@ -174,6 +175,7 @@ jobs:
             fi
           }
           check_image_string 'pressure/memory'
+          check_image_string 'lmkd_debug'
           check_map_symbol lru_gen_set_state
           check_map_symbol lru_gen_init_lruvec
           check_map_symbol vpu_device_init
