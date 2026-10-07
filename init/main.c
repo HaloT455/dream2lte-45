@@ -82,6 +82,7 @@
 #include <linux/proc_ns.h>
 #include <linux/io.h>
 #include <linux/kaiser.h>
+#include <linux/jump_label.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -682,6 +683,12 @@ asmlinkage __visible void __init start_kernel(void)
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
 	pr_notice("Kernel command line: %s\n", boot_command_line);
 #endif
+	/*
+	 * MGLRU runtime switching uses static keys even when CONFIG_JUMP_LABEL
+	 * is disabled. Mirror the 9820 donor and initialize the static-key
+	 * infrastructure before early parameters can touch any static key.
+	 */
+	jump_label_init();
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
