@@ -450,6 +450,20 @@ config BSD_PROCESS_ACCT_V3
 	  for processing it. A preliminary version of these tools is available
 	  at <http://www.gnu.org/software/acct/>.
 
+config PSI
+	bool "Pressure stall information tracking"
+	depends on SMP
+	default y
+	help
+	  Track CPU, memory and IO pressure stall information and expose
+	  /proc/pressure/{cpu,memory,io}. Android userspace lmkd uses the
+	  memory pressure trigger/poll interface.
+
+config PSI_DEFAULT_DISABLED
+	bool "Require psi=1 to enable pressure stall information"
+	depends on PSI
+	default n
+
 config TASKSTATS
 	bool "Export task/process statistics through netlink"
 	depends on NET
