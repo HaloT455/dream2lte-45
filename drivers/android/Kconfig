@@ -41,6 +41,13 @@ config ANDROID_BINDER_IPC_SELFTEST
 	  exhaustively with combinations of various buffer sizes and
 	  alignments.
 
+config SAMSUNG_LMKD_DEBUG
+	bool "Samsung lmkd debug counters"
+	default y
+	help
+	  Expose /proc/lmkd_debug/lmkd_count and lmkd_cricount for
+	  userspace lmkd diagnostics. This does not implement a kernel LMK.
+
 config ANDROID_SIMPLE_LMK
 	bool "Simple Android Low Memory Killer"
 	---help---
