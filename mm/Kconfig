@@ -790,6 +790,15 @@ config PAGE_BOOST_RECORDING
 	  As Android executes an app one by one, only allow 1 recording
 	  at a time.
 
+config PROCESS_RECLAIM
+	bool "Enable process reclaim"
+	depends on PROC_FS
+	default y
+	help
+	  Allow targeted process memory reclaim through /proc/PID/reclaim.
+	  Writing "file", "anon" or "all" reclaims the corresponding pages.
+	  Writing "<address> <size>" reclaims a virtual address range.
+
 config LRU_GEN
 	bool "Multigenerational LRU"
 	depends on MMU
