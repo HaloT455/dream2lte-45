@@ -112,6 +112,178 @@ void task_statlmkd(struct mm_struct *mm, unsigned long *size,
 	}
 }
 #endif
+
+#ifdef CONFIG_PROCESS_RECLAIM
+static int reclaim_pte_range(pmd_t *pmd, unsigned long addr,
+			     unsigned long end, struct mm_walk *walk)
+{
+	struct vm_area_struct *vma = walk->private;
+	pte_t *pte, *orig_pte;
+	spinlock_t *ptl;
+	LIST_HEAD(page_list);
+	int isolated = 0;
+
+	if (pmd_trans_unstable(pmd))
+		return 0;
+
+	orig_pte = pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
+	for (; addr < end; pte++, addr += PAGE_SIZE) {
+		pte_t ptent = *pte;
+		struct page *page;
+
+		if (!pte_present(ptent))
+			continue;
+
+		page = vm_normal_page(vma, addr, ptent);
+		if (!page || PageUnevictable(page) || !PageLRU(page))
+			continue;
+
+		if (isolate_lru_page(page))
+			continue;
+
+		if (PageAnon(page) && !PageSwapBacked(page)) {
+			putback_lru_page(page);
+			continue;
+		}
+
+		list_add_tail(&page->lru, &page_list);
+		inc_zone_page_state(page, NR_ISOLATED_ANON +
+				    page_is_file_cache(page));
+		isolated += hpage_nr_pages(page);
+
+		if (isolated >= SWAP_CLUSTER_MAX)
+			break;
+	}
+	pte_unmap_unlock(orig_pte, ptl);
+
+	if (!list_empty(&page_list))
+		reclaim_pages_from_list(&page_list);
+
+	cond_resched();
+	return 0;
+}
+
+enum reclaim_type {
+	RECLAIM_FILE,
+	RECLAIM_ANON,
+	RECLAIM_ALL,
+	RECLAIM_RANGE,
+};
+
+static ssize_t reclaim_write(struct file *file, const char __user *buf,
+			     size_t count, loff_t *ppos)
+{
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	struct mm_walk reclaim_walk = {
+		.pmd_entry = reclaim_pte_range,
+	};
+	enum reclaim_type type;
+	char buffer[128];
+	char *type_buf;
+	unsigned long start = 0, end = 0;
+	int err = 0;
+
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+	buffer[count] = '\0';
+
+	type_buf = strstrip(buffer);
+	if (!strcmp(type_buf, "file"))
+		type = RECLAIM_FILE;
+	else if (!strcmp(type_buf, "anon"))
+		type = RECLAIM_ANON;
+	else if (!strcmp(type_buf, "all"))
+		type = RECLAIM_ALL;
+	else if (isdigit(*type_buf))
+		type = RECLAIM_RANGE;
+	else
+		return -EINVAL;
+
+	if (type == RECLAIM_RANGE) {
+		char *token;
+		unsigned long long len, len_in, tmp;
+
+		token = strsep(&type_buf, " ");
+		if (!token)
+			return -EINVAL;
+		tmp = memparse(token, &token);
+		if ((tmp & ~PAGE_MASK) || tmp > ULONG_MAX)
+			return -EINVAL;
+		start = (unsigned long)tmp;
+
+		token = strsep(&type_buf, " ");
+		if (!token)
+			return -EINVAL;
+		len_in = memparse(token, &token);
+		len = (len_in + ~PAGE_MASK) & PAGE_MASK;
+		if (len > ULONG_MAX || (len_in && !len))
+			return -EINVAL;
+		end = start + (unsigned long)len;
+		if (end < start)
+			return -EINVAL;
+	}
+
+	task = get_proc_task(file_inode(file));
+	if (!task)
+		return -ESRCH;
+
+	mm = get_task_mm(task);
+	if (!mm) {
+		put_task_struct(task);
+		return count;
+	}
+
+	reclaim_walk.mm = mm;
+	down_read(&mm->mmap_sem);
+
+	if (type == RECLAIM_RANGE) {
+		vma = find_vma(mm, start);
+		while (vma && vma->vm_start < end) {
+			if (!is_vm_hugetlb_page(vma)) {
+				reclaim_walk.private = vma;
+				err = walk_page_range(max(vma->vm_start, start),
+						      min(vma->vm_end, end),
+						      &reclaim_walk);
+				if (err)
+					break;
+			}
+			vma = vma->vm_next;
+		}
+	} else {
+		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+			if (is_vm_hugetlb_page(vma))
+				continue;
+			if (type == RECLAIM_ANON && vma->vm_file)
+				continue;
+			if (type == RECLAIM_FILE && !vma->vm_file)
+				continue;
+
+			reclaim_walk.private = vma;
+			err = walk_page_range(vma->vm_start, vma->vm_end,
+					      &reclaim_walk);
+			if (err)
+				break;
+		}
+	}
+
+	flush_tlb_mm(mm);
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+	put_task_struct(task);
+
+	return err ? err : count;
+}
+
+const struct file_operations proc_reclaim_operations = {
+	.write = reclaim_write,
+	.llseek = noop_llseek,
+};
+#endif /* CONFIG_PROCESS_RECLAIM */
+
 #ifdef CONFIG_NUMA
 /*
  * Save get_task_policy() for show_numa_map().
