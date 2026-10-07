@@ -1,4 +1,4 @@
-name: Build V12R2 UI1 MGLRU Manual + HALO NPU
+name: Build MGLRU LAB V1 (V12R2 base)
 # V12 UI1 MGLRU CI trigger
 
 on:
@@ -7,6 +7,7 @@ on:
     branches:
       - v12
       - agent/v12-ui1-mglru-integration
+      - mglru-lab-v1
 
 concurrency:
   group: v12-${{ github.ref }}
