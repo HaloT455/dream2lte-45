@@ -3559,6 +3559,24 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 		nr_pages = hpage_nr_pages(page);
 		scanned += nr_pages;
 
+		/*
+		 * Aging can change a page's generation before reclaim reaches
+		 * its old list position. Sort such pages lazily and never feed
+		 * them to the oldest-generation eviction path.
+		 */
+		if (unlikely(page_lru_gen(page) != gen)) {
+			int page_gen = page_lru_gen(page);
+
+			if (WARN_ON_ONCE(page_gen < 0 || page_gen >= MAX_NR_GENS)) {
+				list_move_tail(&page->lru, head);
+				continue;
+			}
+
+			list_move_tail(&page->lru,
+				       &lrugen->lists[page_gen][type][zid]);
+			continue;
+		}
+
 		switch (__isolate_lru_page(page, mode)) {
 		case 0:
 			success = lru_gen_deletion(page, lruvec);
@@ -3709,8 +3727,10 @@ static void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
 	if ((!lruvec->evictable.enabled[0] ||
 	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
 	    (!lruvec->evictable.enabled[1] ||
-	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
-		lru_gen_inc_max_seq_legacy(lruvec);
+	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS)) {
+		if (!lru_gen_age_lruvec_legacy(lruvec, sc, swappiness))
+			lru_gen_inc_max_seq_legacy(lruvec);
+	}
 
 	lru_gen_reclaim_batch(lruvec, sc, type);
 
@@ -4515,6 +4535,18 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 static void age_active_anon(struct zone *zone, struct scan_control *sc)
 {
 	struct mem_cgroup *memcg;
+
+	if (lru_gen_enabled()) {
+		memcg = mem_cgroup_iter(NULL, NULL, NULL);
+		do {
+			struct lruvec *lruvec =
+				mem_cgroup_zone_lruvec(zone, memcg);
+
+			lru_gen_age_lruvec_legacy(lruvec, sc, sc->swappiness);
+			cond_resched();
+		} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+		return;
+	}
 
 	if (!total_swap_pages)
 		return;
