@@ -257,7 +257,6 @@ void __init psi_init(void)
 {
 	if (!psi_enable) {
 		static_branch_enable(&psi_disabled);
-		psi_initialized = true;
 		return;
 	}
 
@@ -265,14 +264,23 @@ void __init psi_init(void)
 	group_init(&psi_system);
 
 	/*
-	 * Scheduler enqueue/dequeue hooks exist before the end of sched_init().
-	 * Keep them inert until all PSI per-CPU state, seqcounts and work items
-	 * are initialized. This matters on the legacy Samsung 4.4 scheduler,
-	 * which can touch task queues during early boot.
+	 * Do not enable task accounting here. Upstream PSI assumes
+	 * workqueue_init_early() ran before sched_init(), but this Samsung 4.4
+	 * tree creates system_wq later from early_initcall(init_workqueues).
+	 * Accounting is enabled from a core initcall below, after early initcalls.
 	 */
+}
+
+static int __init psi_enable_accounting(void)
+{
+	if (!psi_enable)
+		return 0;
+
 	smp_wmb();
 	psi_initialized = true;
+	return 0;
 }
+core_initcall(psi_enable_accounting);
 
 static bool test_state(unsigned int *tasks, enum psi_states state)
 {
@@ -839,7 +847,12 @@ static struct psi_group *iterate_groups(struct task_struct *task, void **iter)
 
 void psi_task_change(struct task_struct *task, int clear, int set)
 {
-	int cpu = task_cpu(task);
+	int cpu;
+
+	if (unlikely(!psi_initialized))
+		return;
+
+	cpu = task_cpu(task);
 	struct psi_group *group;
 	bool wake_clock = true;
 	void *iter = NULL;
@@ -926,7 +939,8 @@ void psi_memstall_enter(unsigned long *flags)
 	unsigned long irqflags;
 	struct rq *rq;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	*flags = current->flags & PF_MEMSTALL;
@@ -949,7 +963,8 @@ void psi_memstall_leave(unsigned long *flags)
 	unsigned long irqflags;
 	struct rq *rq;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	if (*flags)
@@ -1091,7 +1106,8 @@ void psi_trigger_destroy(struct psi_trigger *t)
 {
 	struct psi_group *group = t->group;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	mutex_lock(&group->update_lock);
