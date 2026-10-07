@@ -165,6 +165,52 @@ __setup("psi=", setup_psi);
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1 - 1)) * 100)
 #endif
 
+static unsigned long psi_fixed_power_int(unsigned long x,
+					 unsigned int frac_bits,
+					 unsigned int n)
+{
+	unsigned long result = 1UL << frac_bits;
+
+	if (n) {
+		for (;;) {
+			if (n & 1) {
+				result *= x;
+				result += 1UL << (frac_bits - 1);
+				result >>= frac_bits;
+			}
+			n >>= 1;
+			if (!n)
+				break;
+			x *= x;
+			x += 1UL << (frac_bits - 1);
+			x >>= frac_bits;
+		}
+	}
+
+	return result;
+}
+
+static unsigned long psi_calc_load(unsigned long load,
+				   unsigned long exp,
+				   unsigned long active)
+{
+	unsigned long newload;
+
+	newload = load * exp + active * (FIXED_1 - exp);
+	if (active >= load)
+		newload += FIXED_1 - 1;
+
+	return newload / FIXED_1;
+}
+
+static unsigned long psi_calc_load_n(unsigned long load,
+				     unsigned long exp,
+				     unsigned long active,
+				     unsigned int n)
+{
+	return psi_calc_load(load, psi_fixed_power_int(exp, FSHIFT, n), active);
+}
+
 /* PSI trigger definitions */
 #define WINDOW_MIN_US 500000	/* Min window size is 500ms */
 #define WINDOW_MAX_US 10000000	/* Max window size is 10s */
@@ -307,17 +353,17 @@ static void calc_avgs(unsigned long avg[3], int missed_periods,
 
 	/* Fill in zeroes for periods of no activity */
 	if (missed_periods) {
-		avg[0] = calc_load_n(avg[0], EXP_10s, 0, missed_periods);
-		avg[1] = calc_load_n(avg[1], EXP_60s, 0, missed_periods);
-		avg[2] = calc_load_n(avg[2], EXP_300s, 0, missed_periods);
+		avg[0] = psi_calc_load_n(avg[0], EXP_10s, 0, missed_periods);
+		avg[1] = psi_calc_load_n(avg[1], EXP_60s, 0, missed_periods);
+		avg[2] = psi_calc_load_n(avg[2], EXP_300s, 0, missed_periods);
 	}
 
 	/* Sample the most recent active period */
 	pct = div_u64(time * 100, period);
 	pct *= FIXED_1;
-	avg[0] = calc_load(avg[0], EXP_10s, pct);
-	avg[1] = calc_load(avg[1], EXP_60s, pct);
-	avg[2] = calc_load(avg[2], EXP_300s, pct);
+	avg[0] = psi_calc_load(avg[0], EXP_10s, pct);
+	avg[1] = psi_calc_load(avg[1], EXP_60s, pct);
+	avg[2] = psi_calc_load(avg[2], EXP_300s, pct);
 }
 
 static void collect_percpu_times(struct psi_group *group,
