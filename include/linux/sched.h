@@ -1639,6 +1639,9 @@ struct task_struct {
 	/* unserialized, strictly 'current' */
 	unsigned in_execve:1; /* bit to tell LSMs we're in execve */
 	unsigned in_iowait:1;
+#ifdef CONFIG_PSI
+	unsigned int psi_flags;
+#endif
 #ifdef CONFIG_MMU
 	unsigned in_user_fault:1;
 #endif
@@ -2291,6 +2294,7 @@ extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, 
 #define PF_RANDOMIZE	0x00400000	/* randomize virtual address space */
 #define PF_SWAPWRITE	0x00800000	/* Allowed to write to swap */
 #define PF_PERF_CRITICAL 0x01000000	/* Thread is performance-critical */
+#define PF_MEMSTALL	0x02000000	/* Stalled due to memory pressure */
 #define PF_NO_SETAFFINITY 0x04000000	/* Userland is not allowed to meddle with cpus_allowed */
 #define PF_MCE_EARLY    0x08000000      /* Early kill for mce process policy */
 #define PF_MUTEX_TESTER	0x20000000	/* Thread belongs to the rt mutex tester */
