@@ -3156,6 +3156,93 @@ static bool lru_gen_age_lruvec_legacy(struct lruvec *lruvec,
 	return lru_gen_inc_max_seq_legacy(lruvec);
 }
 
+/*
+ * Rmap-side locality assist.
+ *
+ * When reclaim discovers one young PTE, inspect a bounded neighborhood in the
+ * same PMD and promote accessed pages to the youngest generation.  This is the
+ * spatial-locality half of the original MGLRU backport and complements the
+ * background mm walker above.
+ */
+void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
+{
+	int i;
+	pte_t *pte;
+	unsigned long start, end, addr;
+	struct zone *zone;
+	struct lruvec *lruvec;
+	struct mem_cgroup *memcg = NULL;
+	int new_gen;
+
+	if (!lru_gen_enabled() || !pvmw || !pvmw->pte || !pvmw->ptl)
+		return;
+
+	lockdep_assert_held(pvmw->ptl);
+	VM_BUG_ON_PAGE(PageTail(pvmw->page), pvmw->page);
+
+	zone = page_zone(pvmw->page);
+#ifdef CONFIG_MEMCG
+	if (!mem_cgroup_disabled()) {
+		memcg = READ_ONCE(pvmw->page->mem_cgroup);
+		if (!memcg)
+			memcg = root_mem_cgroup;
+	}
+#endif
+	lruvec = mem_cgroup_page_lruvec(pvmw->page, zone);
+	if (!lruvec->evictable.enabled[page_is_file_cache(pvmw->page)])
+		return;
+
+	start = max(pvmw->address & PMD_MASK, pvmw->vma->vm_start);
+	end = pmd_addr_end(pvmw->address, pvmw->vma->vm_end);
+
+	if (end - start > SWAP_CLUSTER_MAX * 2 * PAGE_SIZE) {
+		if (pvmw->address - start < SWAP_CLUSTER_MAX * PAGE_SIZE)
+			end = start + SWAP_CLUSTER_MAX * 2 * PAGE_SIZE;
+		else if (end - pvmw->address < SWAP_CLUSTER_MAX * PAGE_SIZE)
+			start = end - SWAP_CLUSTER_MAX * 2 * PAGE_SIZE;
+		else {
+			start = pvmw->address - SWAP_CLUSTER_MAX * PAGE_SIZE;
+			end = pvmw->address + SWAP_CLUSTER_MAX * PAGE_SIZE;
+		}
+	}
+
+	pte = pvmw->pte - ((pvmw->address - start) >> PAGE_SHIFT);
+	new_gen = lru_gen_from_seq(READ_ONCE(lruvec->evictable.max_seq));
+
+	arch_enter_lazy_mmu_mode();
+	spin_lock_irq(&zone->lru_lock);
+
+	for (i = 0, addr = start; addr < end; i++, addr += PAGE_SIZE) {
+		pte_t entry = READ_ONCE(pte[i]);
+		unsigned long pfn;
+		struct page *page;
+
+		if (!pte_present(entry) || !pte_young(entry))
+			continue;
+
+		pfn = pte_pfn(entry);
+		if (!pfn_valid(pfn))
+			continue;
+
+		page = compound_head(pfn_to_page(pfn));
+		if (page_zone(page) != zone)
+			continue;
+		if (!lru_gen_page_memcg_matches(page, memcg))
+			continue;
+
+		if (!ptep_test_and_clear_young(pvmw->vma, addr, pte + i))
+			continue;
+
+		if (pte_dirty(entry) && !PageDirty(page))
+			set_page_dirty(page);
+
+		lru_gen_promote_accessed_locked(page, lruvec, new_gen);
+	}
+
+	spin_unlock_irq(&zone->lru_lock);
+	arch_leave_lazy_mmu_mode();
+}
+
 
 static bool fill_lru_gen_lists(struct lruvec *lruvec)
 {
