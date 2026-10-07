@@ -1587,6 +1587,7 @@ unsigned long try_to_compact_pages(gfp_t gfp_mask, unsigned int order,
 {
 	int may_enter_fs = gfp_mask & __GFP_FS;
 	int may_perform_io = gfp_mask & __GFP_IO;
+	unsigned long psi_flags = 0;
 	struct zoneref *z;
 	struct zone *zone;
 	int rc = COMPACT_DEFERRED;
@@ -1599,6 +1600,7 @@ unsigned long try_to_compact_pages(gfp_t gfp_mask, unsigned int order,
 		return COMPACT_SKIPPED;
 
 	trace_mm_compaction_try_to_compact_pages(order, gfp_mask, mode);
+	psi_memstall_enter(&psi_flags);
 
 	/* Compact each zone in the list */
 	for_each_zone_zonelist_nodemask(zone, z, ac->zonelist, ac->high_zoneidx,
@@ -1681,6 +1683,7 @@ break_loop:
 	if (rc > COMPACT_SKIPPED && all_zones_contended)
 		*contended = COMPACT_CONTENDED_LOCK;
 
+	psi_memstall_leave(&psi_flags);
 	return rc;
 }
 
