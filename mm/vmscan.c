@@ -1327,12 +1327,12 @@ unsigned long reclaim_pages_from_list(struct list_head *page_list)
 			putback_lru_page(page);
 		}
 
-		if (isolated[LRU_GEN_ANON])
+		if (isolated[0])
 			mod_zone_page_state(zone, NR_ISOLATED_ANON,
-					    -(long)isolated[LRU_GEN_ANON]);
-		if (isolated[LRU_GEN_FILE])
+					    -(long)isolated[0]);
+		if (isolated[1])
 			mod_zone_page_state(zone, NR_ISOLATED_FILE,
-					    -(long)isolated[LRU_GEN_FILE]);
+					    -(long)isolated[1]);
 	}
 
 	return total_reclaimed;
