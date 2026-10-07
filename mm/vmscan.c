@@ -3842,54 +3842,74 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	return nr_reclaimed;
 }
 
-static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness)
+static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness,
+			     int *tier_to_isolate)
 {
 	struct lrugen *lrugen = &lruvec->evictable;
 	bool anon = lrugen->enabled[0] && swappiness;
 	bool file = lrugen->enabled[1];
+	int type;
 
-	if (!anon)
-		return file ? 1 : -1;
-	if (!file)
-		return 0;
+	if (!anon) {
+		if (!file)
+			return -1;
+		type = 1;
+		*tier_to_isolate = lru_gen_get_tier_to_isolate(lruvec, type);
+		return type;
+	}
 
+	if (!file) {
+		type = 0;
+		*tier_to_isolate = lru_gen_get_tier_to_isolate(lruvec, type);
+		return type;
+	}
+
+	/* Older generation wins before consulting the refault controller. */
 	if (lrugen->min_seq[0] < lrugen->min_seq[1])
-		return 0;
-	if (lrugen->min_seq[1] < lrugen->min_seq[0])
-		return 1;
+		type = 0;
+	else if (lrugen->min_seq[1] < lrugen->min_seq[0])
+		type = 1;
+	else if (swappiness == 1)
+		type = 1;
+	else if (swappiness == 200)
+		type = 0;
+	else
+		return lru_gen_get_type_to_scan(lruvec, swappiness,
+						 tier_to_isolate);
 
-	return swappiness >= 100 ? 0 : 1;
+	*tier_to_isolate = lru_gen_get_tier_to_isolate(lruvec, type);
+	return type;
 }
 
-static void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
-					 int swappiness,
-					 struct scan_control *sc,
-					 unsigned long *lru_pages)
+/*
+ * Full generation-aware reclaim for the 4.4 per-zone lruvec model.
+ *
+ * Candidate selection, tier protection and aging are MGLRU-owned.  The
+ * existing 4.4 shrink_page_list() remains the low-level pageout engine, just
+ * like newer MGLRU implementations still reuse the normal page reclaim path.
+ */
+static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
+				       int swappiness,
+				       struct scan_control *sc,
+				       unsigned long *lru_pages)
 {
 	int type, other;
+	int tier = 0;
 	unsigned long before = sc->nr_reclaimed;
 	struct zone *zone = lruvec_zone(lruvec);
 
 	*lru_pages = lru_gen_size_zone(lruvec);
 
-	/*
-	 * Drop empty generations first. This is also what keeps disabled anon
-	 * generations in sequence with file generations on systems without swap.
-	 */
 	spin_lock_irq(&zone->lru_lock);
 	for (type = 0; type < ANON_AND_FILE; type++)
 		while (lru_gen_advance_min_locked(lruvec, type))
 			;
 	spin_unlock_irq(&zone->lru_lock);
 
-	type = lru_gen_pick_type(lruvec, swappiness);
-	if (type < 0)
-		return;
-
 	/*
-	 * If both reclaimable types are down to the two protected generations,
-	 * age once. Referenced pages will be promoted by shrink_page_list()
-	 * when the newly-old generation is scanned.
+	 * Keep at least two generations protected.  When both reclaimable types
+	 * are at that floor, run a page-table aging pass and publish a new
+	 * youngest generation before eviction.
 	 */
 	if ((!lruvec->evictable.enabled[0] ||
 	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
@@ -3899,19 +3919,25 @@ static void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
 			lru_gen_inc_max_seq_legacy(lruvec);
 	}
 
-	lru_gen_reclaim_batch(lruvec, sc, type);
+	type = lru_gen_pick_type(lruvec, swappiness, &tier);
+	if (type < 0)
+		return;
 
-	/* Try the other type once if the first choice made no progress. */
+	lru_gen_reclaim_batch(lruvec, sc, type, tier);
+
+	/* If the selected type made no progress, try the other reclaimable type. */
 	other = !type;
 	if (sc->nr_reclaimed == before &&
 	    lruvec->evictable.enabled[other] &&
-	    (other || swappiness))
-		lru_gen_reclaim_batch(lruvec, sc, other);
+	    (other || swappiness)) {
+		tier = lru_gen_get_tier_to_isolate(lruvec, other);
+		lru_gen_reclaim_batch(lruvec, sc, other, tier);
+	}
 
 	*lru_pages = lru_gen_size_zone(lruvec);
 }
 #else
-static inline void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
+static inline void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 						 int swappiness,
 						 struct scan_control *sc,
 						 unsigned long *lru_pages)
@@ -3927,7 +3953,7 @@ static void shrink_lruvec(struct lruvec *lruvec, int swappiness,
 			  struct scan_control *sc, unsigned long *lru_pages)
 {
 	if (lru_gen_enabled()) {
-		lru_gen_shrink_lruvec_legacy(lruvec, swappiness, sc, lru_pages);
+		lru_gen_shrink_lruvec_full(lruvec, swappiness, sc, lru_pages);
 		return;
 	}
 
