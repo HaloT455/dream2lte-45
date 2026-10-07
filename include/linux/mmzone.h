@@ -257,6 +257,7 @@ struct zone_reclaim_stat {
 };
 
 struct lruvec;
+struct page_vma_mapped_walk;
 
 #define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
 #define LRU_USAGE_MASK		((BIT(LRU_USAGE_WIDTH) - 1) << LRU_USAGE_PGOFF)
