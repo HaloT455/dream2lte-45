@@ -38,6 +38,13 @@ config ANDROID_LOW_MEMORY_KILLER
 	  scripts (/init.rc), and it defines priority values with minimum free memory size
 	  for each priority.
 
+config SAMSUNG_LMKD_DEBUG
+	bool "Samsung userspace LMKD debug counters"
+	default y
+	help
+	  Expose /proc/lmkd_debug/lmkd_count and lmkd_cricount for
+	  Samsung userspace LMKD diagnostics.
+
 config ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES
 	bool "Android Low Memory Killer: detect oom_adj values"
 	depends on ANDROID_LOW_MEMORY_KILLER
