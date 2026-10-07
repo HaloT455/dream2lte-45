@@ -1,3 +1,5 @@
+#include <linux/psi.h>
+
 
 #ifdef CONFIG_SCHEDSTATS
 
@@ -45,6 +47,58 @@ rq_sched_info_depart(struct rq *rq, unsigned long long delta)
 # define schedstat_inc(rq, field)	do { } while (0)
 # define schedstat_add(rq, field, amt)	do { } while (0)
 # define schedstat_set(var, val)	do { } while (0)
+#endif
+
+#ifdef CONFIG_PSI
+static inline void psi_enqueue(struct task_struct *p, bool wakeup)
+{
+	int clear = 0, set = TSK_RUNNING;
+
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
+		return;
+
+	if (!wakeup) {
+		if (p->flags & PF_MEMSTALL)
+			set |= TSK_MEMSTALL;
+	} else if (p->in_iowait) {
+		clear |= TSK_IOWAIT;
+	}
+
+	psi_task_change(p, clear, set);
+}
+
+static inline void psi_dequeue(struct task_struct *p, bool sleep)
+{
+	int clear = TSK_RUNNING, set = 0;
+
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
+		return;
+
+	if (!sleep) {
+		if (p->flags & PF_MEMSTALL)
+			clear |= TSK_MEMSTALL;
+	} else if (p->in_iowait) {
+		set |= TSK_IOWAIT;
+	}
+
+	psi_task_change(p, clear, set);
+}
+
+static inline void psi_task_tick(struct rq *rq)
+{
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
+		return;
+
+	if (unlikely(rq->curr->flags & PF_MEMSTALL))
+		psi_memstall_tick(rq->curr, cpu_of(rq));
+}
+#else
+static inline void psi_enqueue(struct task_struct *p, bool wakeup) {}
+static inline void psi_dequeue(struct task_struct *p, bool sleep) {}
+static inline void psi_task_tick(struct rq *rq) {}
 #endif
 
 #ifdef CONFIG_SCHED_INFO
