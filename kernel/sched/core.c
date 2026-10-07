@@ -1943,7 +1943,8 @@ static void psi_ttwu_dequeue_legacy(struct task_struct *p)
 	struct rq *rq;
 	int clear = 0;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	if (!p->in_iowait && !(p->flags & PF_MEMSTALL))
