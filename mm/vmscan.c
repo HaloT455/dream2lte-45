@@ -1282,6 +1282,64 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	return ret;
 }
 
+#ifdef CONFIG_PROCESS_RECLAIM
+unsigned long reclaim_pages_from_list(struct list_head *page_list)
+{
+	unsigned long total_reclaimed = 0;
+
+	while (!list_empty(page_list)) {
+		LIST_HEAD(zone_pages);
+		struct page *page, *next;
+		struct zone *zone = page_zone(lru_to_page(page_list));
+		unsigned long isolated[ANON_AND_FILE] = { 0, 0 };
+		unsigned long dummy1 = 0, dummy2 = 0, dummy3 = 0;
+		unsigned long dummy4 = 0, dummy5 = 0;
+		unsigned long reclaimed;
+		struct scan_control sc = {
+			.gfp_mask = GFP_KERNEL,
+			.priority = DEF_PRIORITY,
+			.may_writepage = 1,
+			.may_unmap = 1,
+			.may_swap = 1,
+		};
+
+		list_for_each_entry_safe(page, next, page_list, lru) {
+			int type;
+
+			if (page_zone(page) != zone)
+				continue;
+
+			type = page_is_file_cache(page);
+			isolated[type] += hpage_nr_pages(page);
+			ClearPageActive(page);
+			list_move_tail(&page->lru, &zone_pages);
+		}
+
+		reclaimed = shrink_page_list(&zone_pages, zone, &sc,
+				TTU_UNMAP | TTU_IGNORE_ACCESS,
+				&dummy1, &dummy2, &dummy3, &dummy4, &dummy5,
+				true);
+		total_reclaimed += reclaimed;
+
+		while (!list_empty(&zone_pages)) {
+			page = lru_to_page(&zone_pages);
+			list_del(&page->lru);
+			putback_lru_page(page);
+		}
+
+		if (isolated[LRU_GEN_ANON])
+			mod_zone_page_state(zone, NR_ISOLATED_ANON,
+					    -(long)isolated[LRU_GEN_ANON]);
+		if (isolated[LRU_GEN_FILE])
+			mod_zone_page_state(zone, NR_ISOLATED_FILE,
+					    -(long)isolated[LRU_GEN_FILE]);
+	}
+
+	return total_reclaimed;
+}
+#endif
+
+
 /* A caller should guarantee that start and end pfns are in the same zone */
 void reclaim_contig_migrate_range(unsigned long start,
 						unsigned long end, bool drain)
