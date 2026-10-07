@@ -3602,9 +3602,48 @@ static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec)
 	return true;
 }
 
+static void lru_gen_promote_page_locked(struct page *page,
+					 struct lruvec *lruvec,
+					 bool reclaim)
+{
+	int old_gen, new_gen;
+	unsigned long old_flags, new_flags;
+	int type = page_is_file_cache(page);
+	int zid = page_zonenum(page);
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+	old_gen = lru_gen_from_seq(lrugen->min_seq[type]);
+
+	do {
+		old_flags = READ_ONCE(page->flags);
+		new_gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+		VM_BUG_ON_PAGE(new_gen < 0 || new_gen >= MAX_NR_GENS, page);
+
+		/* Aging may already have promoted this page. Sort it lazily. */
+		if (new_gen != old_gen)
+			goto sort;
+
+		new_gen = (old_gen + 1) % MAX_NR_GENS;
+		new_flags = (old_flags &
+			     ~(LRU_GEN_MASK | LRU_USAGE_MASK | LRU_TIER_FLAGS)) |
+			    ((new_gen + 1UL) << LRU_GEN_PGOFF);
+		if (reclaim)
+			new_flags |= BIT(PG_reclaim);
+	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+
+	lru_gen_update_size(page, lruvec, old_gen, new_gen);
+sort:
+	if (reclaim)
+		list_move(&page->lru, &lrugen->lists[new_gen][type][zid]);
+	else
+		list_move_tail(&page->lru, &lrugen->lists[new_gen][type][zid]);
+}
+
 static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 					    struct scan_control *sc,
 					    int type,
+					    int tier_to_isolate,
 					    struct list_head *dst,
 					    unsigned long nr_to_scan,
 					    unsigned long *nr_scanned)
@@ -3635,9 +3674,10 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 	spin_lock_irq(&zone->lru_lock);
 
 	while (!list_empty(head) && taken < nr_to_scan &&
-	       scanned < nr_to_scan * 2) {
+	       scanned < nr_to_scan * 4) {
 		bool success;
 		int nr_pages;
+		int tier;
 		struct page *page = lru_to_page(head);
 
 		prefetchw_prev_lru_page(page, head, flags);
@@ -3651,11 +3691,7 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 		nr_pages = hpage_nr_pages(page);
 		scanned += nr_pages;
 
-		/*
-		 * Aging can change a page's generation before reclaim reaches
-		 * its old list position. Sort such pages lazily and never feed
-		 * them to the oldest-generation eviction path.
-		 */
+		/* Aging can race reclaim; sort pages whose generation changed. */
 		if (unlikely(page_lru_gen(page) != gen)) {
 			int page_gen = page_lru_gen(page);
 
@@ -3669,20 +3705,43 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 			continue;
 		}
 
+		/*
+		 * Upper tiers with a higher refault rate are protected by moving
+		 * them one generation forward instead of feeding them to pageout.
+		 */
+		tier = lru_tier_from_usage(page_tier_usage(page));
+		if (tier > tier_to_isolate) {
+			int hist = hist_from_seq_or_gen(lrugen->min_seq[type]);
+
+			lru_gen_promote_page_locked(page, lruvec, false);
+			WRITE_ONCE(lrugen->activated[hist][type][tier - 1],
+				   lrugen->activated[hist][type][tier - 1] + nr_pages);
+			continue;
+		}
+
+		/*
+		 * Dirty/writeback pages should not pin the oldest generation.
+		 * Move them forward and mark reclaim so the normal writeback path
+		 * can deal with them without repeatedly selecting the same page.
+		 */
+		if (PageWriteback(page) || (type && PageDirty(page))) {
+			lru_gen_promote_page_locked(page, lruvec, true);
+			continue;
+		}
+
 		switch (__isolate_lru_page(page, mode)) {
 		case 0:
 			success = lru_gen_deletion(page, lruvec);
 			VM_BUG_ON_PAGE(!success, page);
 
 			/*
-			 * The oldest generation must be inactive. If a stale
-			 * active bit ever leaks through, keep the page rather
-			 * than feeding an active page to shrink_page_list().
+			 * This is a reclaim isolation, not a move back to classic LRU.
+			 * lru_gen_deletion() may reconstruct PG_active for young
+			 * generations; clear reclaim-visible state before pageout.
 			 */
-			if (unlikely(PageActive(page))) {
-				ClearPageActive(page);
-				SetPageReferenced(page);
-			}
+			ClearPageActive(page);
+			ClearPageReclaim(page);
+			ClearPageReferenced(page);
 
 			list_add_tail(&page->lru, dst);
 			taken += nr_pages;
@@ -3691,7 +3750,6 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 			list_move_tail(&page->lru, head);
 			break;
 		default:
-			/* A page rejected by the isolation mode stays in place. */
 			list_move_tail(&page->lru, head);
 			break;
 		}
@@ -3708,7 +3766,8 @@ out:
 
 static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 					   struct scan_control *sc,
-					   int type)
+					   int type,
+					   int tier_to_isolate)
 {
 	LIST_HEAD(page_list);
 	unsigned long nr_taken, nr_scanned;
@@ -3718,12 +3777,13 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	unsigned long nr_congested = 0;
 	unsigned long nr_writeback = 0;
 	unsigned long nr_immediate = 0;
+	struct page *page;
 	struct zone *zone = lruvec_zone(lruvec);
 
 	lru_add_drain();
 
-	nr_taken = lru_gen_isolate_oldest(lruvec, sc, type, &page_list,
-					 SWAP_CLUSTER_MAX, &nr_scanned);
+	nr_taken = lru_gen_isolate_oldest(lruvec, sc, type, tier_to_isolate,
+					 &page_list, SWAP_CLUSTER_MAX, &nr_scanned);
 	if (!nr_taken)
 		return 0;
 
@@ -3740,6 +3800,22 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 					&nr_congested, &nr_writeback,
 					&nr_immediate, false);
 
+	/*
+	 * Survivors must not fall straight back into the exact cold slot they
+	 * came from.  Encode the reason for rejection so lru_gen_addition()
+	 * places them in a protected/younger generation on putback.
+	 */
+	list_for_each_entry(page, &page_list, lru) {
+		if (PageMlocked(page))
+			continue;
+
+		if (page_mapped(page) && PageReferenced(page))
+			SetPageActive(page);
+		else if (!PageActive(page))
+			SetPageWorkingset(page);
+		ClearPageReferenced(page);
+	}
+
 	spin_lock_irq(&zone->lru_lock);
 
 	if (global_reclaim(sc)) {
@@ -3754,7 +3830,6 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	putback_inactive_pages(lruvec, &page_list);
 	__mod_zone_page_state(zone, NR_ISOLATED_ANON + type, -nr_taken);
 
-	/* Consume an empty old generation only after all survivors are put back. */
 	while (lru_gen_advance_min_locked(lruvec, type))
 		;
 
