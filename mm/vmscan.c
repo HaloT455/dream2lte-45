@@ -3132,12 +3132,374 @@ arch_initcall(init_lru_gen);
 
 #endif /* CONFIG_LRU_GEN */
 
+#ifdef CONFIG_LRU_GEN
+/*
+ * Legacy 4.4 MGLRU reclaim bridge.
+ *
+ * The original V12R2 backport had generation storage/state conversion but
+ * continued to run the classic active/inactive shrinker after MGLRU was
+ * enabled. That leaves two different reclaim state machines operating on the
+ * same pages. Keep the native 4.4 shrink_page_list() as the pageout engine,
+ * but source candidates exclusively from the oldest MGLRU generation.
+ *
+ * This is intentionally conservative: reference checking remains in
+ * shrink_page_list(), so referenced pages are activated and, when put back,
+ * lru_gen_addition() places them into the youngest generation.
+ */
+
+static unsigned long lru_gen_size_zone(struct lruvec *lruvec)
+{
+	int gen, type;
+	int zid = zone_idx(lruvec_zone(lruvec));
+	unsigned long total = 0;
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	for (gen = 0; gen < MAX_NR_GENS; gen++)
+		for (type = 0; type < ANON_AND_FILE; type++)
+			if (lrugen->enabled[type])
+				total += READ_ONCE(lrugen->sizes[gen][type][zid]);
+
+	return total;
+}
+
+static bool lru_gen_oldest_empty(struct lruvec *lruvec, int type)
+{
+	int zone;
+	int gen;
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	gen = lru_gen_from_seq(lrugen->min_seq[type]);
+	for (zone = 0; zone < MAX_NR_ZONES; zone++) {
+		if (READ_ONCE(lrugen->sizes[gen][type][zone]))
+			return false;
+		if (!list_empty(&lrugen->lists[gen][type][zone]))
+			return false;
+	}
+
+	return true;
+}
+
+static void lru_gen_reset_hist(struct lrugen *lrugen, int type,
+			      unsigned long seq)
+{
+	int tier;
+	int hist = hist_from_seq_or_gen(seq);
+
+	for (tier = 0; tier < MAX_NR_TIERS; tier++) {
+		atomic_long_set(&lrugen->evicted[hist][type][tier], 0);
+		atomic_long_set(&lrugen->refaulted[hist][type][tier], 0);
+		if (tier < MAX_NR_TIERS - 1)
+			WRITE_ONCE(lrugen->activated[hist][type][tier], 0);
+	}
+}
+
+static bool lru_gen_advance_min_locked(struct lruvec *lruvec, int type)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	unsigned long seq = lrugen->min_seq[type];
+
+	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+
+	if (get_nr_gens(lruvec, type) <= MIN_NR_GENS)
+		return false;
+	if (!lru_gen_oldest_empty(lruvec, type))
+		return false;
+
+	lru_gen_reset_hist(lrugen, type, seq);
+	WRITE_ONCE(lrugen->min_seq[type], seq + 1);
+	return true;
+}
+
+/*
+ * Create a new youngest generation. The generation max_seq - 1 stops being
+ * active after this transition, so mirror that transition in the legacy
+ * active/inactive vmstat counters used by the Samsung 4.4 VM.
+ */
+static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec)
+{
+	int type, zone;
+	int old_active_gen, new_gen;
+	struct zone *lru_zone = lruvec_zone(lruvec);
+	struct lrugen *lrugen = &lruvec->evictable;
+	unsigned long max_seq;
+
+	spin_lock_irq(&lru_zone->lru_lock);
+
+	max_seq = lrugen->max_seq;
+
+	/* Make room before reusing a wrapped generation slot. */
+	for (type = 0; type < ANON_AND_FILE; type++) {
+		while (get_nr_gens(lruvec, type) >= MAX_NR_GENS) {
+			if (!lru_gen_oldest_empty(lruvec, type)) {
+				spin_unlock_irq(&lru_zone->lru_lock);
+				return false;
+			}
+			lru_gen_reset_hist(lrugen, type, lrugen->min_seq[type]);
+			WRITE_ONCE(lrugen->min_seq[type],
+				   lrugen->min_seq[type] + 1);
+		}
+	}
+
+	old_active_gen = lru_gen_from_seq(max_seq - 1);
+	new_gen = lru_gen_from_seq(max_seq + 1);
+
+	for_each_type_zone(type, zone) {
+		enum lru_list inactive = type * LRU_FILE;
+		long nr = READ_ONCE(lrugen->sizes[old_active_gen][type][zone]);
+
+		VM_BUG_ON(!list_empty(&lrugen->lists[new_gen][type][zone]));
+		VM_BUG_ON(lrugen->sizes[new_gen][type][zone]);
+
+		if (!nr || !lrugen->enabled[type])
+			continue;
+
+		update_lru_size(lruvec, inactive, zone, nr);
+		update_lru_size(lruvec, inactive + LRU_ACTIVE, zone, -nr);
+	}
+
+	WRITE_ONCE(lrugen->timestamps[new_gen], jiffies);
+	/* Publish accounting/list checks before readers observe the new seq. */
+	smp_wmb();
+	WRITE_ONCE(lrugen->max_seq, max_seq + 1);
+
+	spin_unlock_irq(&lru_zone->lru_lock);
+	return true;
+}
+
+static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
+					    struct scan_control *sc,
+					    int type,
+					    struct list_head *dst,
+					    unsigned long nr_to_scan,
+					    unsigned long *nr_scanned)
+{
+	int gen;
+	int zid = zone_idx(lruvec_zone(lruvec));
+	unsigned long taken = 0;
+	unsigned long scanned = 0;
+	isolate_mode_t mode = 0;
+	struct zone *zone = lruvec_zone(lruvec);
+	struct lrugen *lrugen = &lruvec->evictable;
+	struct list_head *head;
+
+	if (!lrugen->enabled[type])
+		goto out;
+
+	if (get_nr_gens(lruvec, type) <= MIN_NR_GENS)
+		goto out;
+
+	gen = lru_gen_from_seq(lrugen->min_seq[type]);
+	head = &lrugen->lists[gen][type][zid];
+
+	if (!sc->may_unmap)
+		mode |= ISOLATE_UNMAPPED;
+	if (!sc->may_writepage)
+		mode |= ISOLATE_CLEAN;
+
+	spin_lock_irq(&zone->lru_lock);
+
+	while (!list_empty(head) && taken < nr_to_scan &&
+	       scanned < nr_to_scan * 2) {
+		bool success;
+		int nr_pages;
+		struct page *page = lru_to_page(head);
+
+		prefetchw_prev_lru_page(page, head, flags);
+
+		VM_BUG_ON_PAGE(PageTail(page), page);
+		VM_BUG_ON_PAGE(PageUnevictable(page), page);
+		VM_BUG_ON_PAGE(PageActive(page), page);
+		VM_BUG_ON_PAGE(page_is_file_cache(page) != type, page);
+		VM_BUG_ON_PAGE(page_zonenum(page) != zid, page);
+
+		nr_pages = hpage_nr_pages(page);
+		scanned += nr_pages;
+
+		switch (__isolate_lru_page(page, mode)) {
+		case 0:
+			success = lru_gen_deletion(page, lruvec);
+			VM_BUG_ON_PAGE(!success, page);
+
+			/*
+			 * The oldest generation must be inactive. If a stale
+			 * active bit ever leaks through, keep the page rather
+			 * than feeding an active page to shrink_page_list().
+			 */
+			if (unlikely(PageActive(page))) {
+				ClearPageActive(page);
+				SetPageReferenced(page);
+			}
+
+			list_add_tail(&page->lru, dst);
+			taken += nr_pages;
+			break;
+		case -EBUSY:
+			list_move_tail(&page->lru, head);
+			break;
+		default:
+			/* A page rejected by the isolation mode stays in place. */
+			list_move_tail(&page->lru, head);
+			break;
+		}
+	}
+
+	if (taken)
+		__mod_zone_page_state(zone, NR_ISOLATED_ANON + type, taken);
+
+	spin_unlock_irq(&zone->lru_lock);
+out:
+	*nr_scanned = scanned;
+	return taken;
+}
+
+static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
+					   struct scan_control *sc,
+					   int type)
+{
+	LIST_HEAD(page_list);
+	unsigned long nr_taken, nr_scanned;
+	unsigned long nr_reclaimed;
+	unsigned long nr_dirty = 0;
+	unsigned long nr_unqueued_dirty = 0;
+	unsigned long nr_congested = 0;
+	unsigned long nr_writeback = 0;
+	unsigned long nr_immediate = 0;
+	struct zone *zone = lruvec_zone(lruvec);
+
+	lru_add_drain();
+
+	nr_taken = lru_gen_isolate_oldest(lruvec, sc, type, &page_list,
+					 SWAP_CLUSTER_MAX, &nr_scanned);
+	if (!nr_taken)
+		return 0;
+
+	if (global_reclaim(sc)) {
+		__mod_zone_page_state(zone, NR_PAGES_SCANNED, nr_scanned);
+		if (current_is_kswapd())
+			__count_zone_vm_events(PGSCAN_KSWAPD, zone, nr_scanned);
+		else
+			__count_zone_vm_events(PGSCAN_DIRECT, zone, nr_scanned);
+	}
+
+	nr_reclaimed = shrink_page_list(&page_list, zone, sc, TTU_UNMAP,
+					&nr_dirty, &nr_unqueued_dirty,
+					&nr_congested, &nr_writeback,
+					&nr_immediate, false);
+
+	spin_lock_irq(&zone->lru_lock);
+
+	if (global_reclaim(sc)) {
+		if (current_is_kswapd())
+			__count_zone_vm_events(PGSTEAL_KSWAPD, zone,
+					       nr_reclaimed);
+		else
+			__count_zone_vm_events(PGSTEAL_DIRECT, zone,
+					       nr_reclaimed);
+	}
+
+	putback_inactive_pages(lruvec, &page_list);
+	__mod_zone_page_state(zone, NR_ISOLATED_ANON + type, -nr_taken);
+
+	/* Consume an empty old generation only after all survivors are put back. */
+	while (lru_gen_advance_min_locked(lruvec, type))
+		;
+
+	spin_unlock_irq(&zone->lru_lock);
+
+	mem_cgroup_uncharge_list(&page_list);
+	free_hot_cold_page_list(&page_list, true);
+
+	sc->nr_reclaimed += nr_reclaimed;
+	return nr_reclaimed;
+}
+
+static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	bool anon = lrugen->enabled[0] && swappiness;
+	bool file = lrugen->enabled[1];
+
+	if (!anon)
+		return file ? 1 : -1;
+	if (!file)
+		return 0;
+
+	if (lrugen->min_seq[0] < lrugen->min_seq[1])
+		return 0;
+	if (lrugen->min_seq[1] < lrugen->min_seq[0])
+		return 1;
+
+	return swappiness >= 100 ? 0 : 1;
+}
+
+static void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
+					 int swappiness,
+					 struct scan_control *sc,
+					 unsigned long *lru_pages)
+{
+	int type, other;
+	unsigned long before = sc->nr_reclaimed;
+	struct zone *zone = lruvec_zone(lruvec);
+
+	*lru_pages = lru_gen_size_zone(lruvec);
+
+	/*
+	 * Drop empty generations first. This is also what keeps disabled anon
+	 * generations in sequence with file generations on systems without swap.
+	 */
+	spin_lock_irq(&zone->lru_lock);
+	for (type = 0; type < ANON_AND_FILE; type++)
+		while (lru_gen_advance_min_locked(lruvec, type))
+			;
+	spin_unlock_irq(&zone->lru_lock);
+
+	type = lru_gen_pick_type(lruvec, swappiness);
+	if (type < 0)
+		return;
+
+	/*
+	 * If both reclaimable types are down to the two protected generations,
+	 * age once. Referenced pages will be promoted by shrink_page_list()
+	 * when the newly-old generation is scanned.
+	 */
+	if ((!lruvec->evictable.enabled[0] ||
+	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
+	    (!lruvec->evictable.enabled[1] ||
+	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
+		lru_gen_inc_max_seq_legacy(lruvec);
+
+	lru_gen_reclaim_batch(lruvec, sc, type);
+
+	/* Try the other type once if the first choice made no progress. */
+	other = !type;
+	if (sc->nr_reclaimed == before &&
+	    lruvec->evictable.enabled[other] &&
+	    (other || swappiness))
+		lru_gen_reclaim_batch(lruvec, sc, other);
+
+	*lru_pages = lru_gen_size_zone(lruvec);
+}
+#else
+static inline void lru_gen_shrink_lruvec_legacy(struct lruvec *lruvec,
+						 int swappiness,
+						 struct scan_control *sc,
+						 unsigned long *lru_pages)
+{
+}
+#endif
+
+
 /*
  * This is a basic per-zone page freer.  Used by both kswapd and direct reclaim.
  */
 static void shrink_lruvec(struct lruvec *lruvec, int swappiness,
 			  struct scan_control *sc, unsigned long *lru_pages)
 {
+	if (lru_gen_enabled()) {
+		lru_gen_shrink_lruvec_legacy(lruvec, swappiness, sc, lru_pages);
+		return;
+	}
+
 	unsigned long nr[NR_LRU_LISTS];
 	unsigned long targets[NR_LRU_LISTS];
 	unsigned long nr_to_scan;
