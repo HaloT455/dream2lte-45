@@ -173,7 +173,7 @@ jobs:
               return 1
             fi
           }
-          check_image_string '/proc/pressure'
+          check_image_string 'pressure/memory'
           check_map_symbol lru_gen_set_state
           check_map_symbol lru_gen_init_lruvec
           check_map_symbol vpu_device_init
