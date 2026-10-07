@@ -1329,6 +1329,96 @@ void reclaim_contig_migrate_range(unsigned long start,
 	trace_printk("%lu\n", total_reclaimed << PAGE_SHIFT);
 }
 
+
+#ifdef CONFIG_PROCESS_RECLAIM
+/*
+ * Reclaim pages isolated from one userspace process.
+ *
+ * Exynos8895/4.4 keeps LRU locks and accounting per-zone, unlike the
+ * pgdat-based 4.14 implementation used by the S10 donor. Split the input
+ * list into zone-homogeneous batches before calling shrink_page_list().
+ */
+unsigned long reclaim_pages_from_list(struct list_head *page_list,
+				      struct vm_area_struct *vma)
+{
+	struct scan_control sc = {
+		.gfp_mask = GFP_KERNEL,
+		.priority = DEF_PRIORITY,
+		.may_writepage = 1,
+		.may_unmap = 1,
+		.may_swap = 1,
+	};
+	unsigned long total_reclaimed = 0;
+
+	while (!list_empty(page_list)) {
+		LIST_HEAD(zone_list);
+		struct page *page, *next;
+		struct zone *zone;
+		unsigned long isolated[ANON_AND_FILE] = { 0, 0 };
+		unsigned long nr_dirty = 0;
+		unsigned long nr_unqueued_dirty = 0;
+		unsigned long nr_congested = 0;
+		unsigned long nr_writeback = 0;
+		unsigned long nr_immediate = 0;
+		unsigned long nr_reclaimed;
+		unsigned long moved = 0;
+
+		page = lru_to_page(page_list);
+		zone = page_zone(page);
+
+		list_for_each_entry_safe(page, next, page_list, lru) {
+			int type;
+
+			if (page_zone(page) != zone)
+				continue;
+
+			type = page_is_file_cache(page);
+			isolated[type] += hpage_nr_pages(page);
+			list_move_tail(&page->lru, &zone_list);
+
+			if (++moved >= SWAP_CLUSTER_MAX)
+				break;
+		}
+
+		if (list_empty(&zone_list))
+			continue;
+
+		nr_reclaimed = shrink_page_list(&zone_list, zone, &sc,
+					       TTU_IGNORE_ACCESS,
+					       &nr_dirty,
+					       &nr_unqueued_dirty,
+					       &nr_congested,
+					       &nr_writeback,
+					       &nr_immediate,
+					       true);
+		total_reclaimed += nr_reclaimed;
+
+		/*
+		 * The isolation counters were incremented when pages were
+		 * detached in proc reclaim. Account the whole batch here:
+		 * reclaimed pages are already gone; survivors are put back.
+		 */
+		if (isolated[0])
+			__mod_zone_page_state(zone, NR_ISOLATED_ANON,
+					      -(long)isolated[0]);
+		if (isolated[1])
+			__mod_zone_page_state(zone, NR_ISOLATED_FILE,
+					      -(long)isolated[1]);
+
+		while (!list_empty(&zone_list)) {
+			page = lru_to_page(&zone_list);
+			list_del(&page->lru);
+			putback_lru_page(page);
+		}
+
+		cond_resched();
+	}
+
+	return total_reclaimed;
+}
+EXPORT_SYMBOL_GPL(reclaim_pages_from_list);
+#endif
+
 /*
  * Attempt to remove the specified page from its LRU.  Only take this page
  * if it is of the appropriate PageActive status.  Pages which are being
