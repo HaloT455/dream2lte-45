@@ -89,7 +89,8 @@ jobs:
           grep -q '^# CONFIG_LRU_GEN_STATS is not set$' "$OUT/.config"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$OUT/.config"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$OUT/.config"
-          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set
+          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set$' "$OUT/.config"
+          grep -q '^# CONFIG_MALI_SEC_CL_BOOST is not set$' "$OUT/.config"
           grep -q 'static ssize_t lru_gen_enabled_store' mm/vmscan.c
           grep -q '__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store)' mm/vmscan.c
           grep -q 'sysfs_create_group(mm_kobj, &lru_gen_attr_group)' mm/vmscan.c
