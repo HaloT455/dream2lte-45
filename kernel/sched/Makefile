@@ -18,6 +18,7 @@ obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o energy.o
 obj-$(CONFIG_SCHED_WALT) += walt.o
 obj-$(CONFIG_SCHED_AUTOGROUP) += auto_group.o
 obj-$(CONFIG_SCHEDSTATS) += stats.o
+obj-$(CONFIG_PSI) += psi.o
 obj-$(CONFIG_SCHED_DEBUG) += debug.o
 obj-$(CONFIG_SCHED_TUNE) += tune.o
 obj-$(CONFIG_SCHED_CPU_UI_HINTS) += cpu_ui.o
