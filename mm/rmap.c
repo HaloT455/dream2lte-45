@@ -898,6 +898,25 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			return SWAP_FAIL; /* To break the loop */
 		}
 
+		/*
+		 * MGLRU exploits PTE spatial locality: one referenced mapping is
+		 * a cheap opportunity to age neighboring young PTEs in the same
+		 * PMD.  lru_gen_scan_around() clears the current young bit too, so
+		 * account this mapping here before the normal clear/flush below.
+		 */
+		if (lru_gen_enabled() && pte_young(*pte)) {
+			struct page_vma_mapped_walk pvmw = {
+				.page = page,
+				.vma = vma,
+				.address = address,
+				.pte = pte,
+				.ptl = ptl,
+			};
+
+			lru_gen_scan_around(&pvmw);
+			referenced++;
+		}
+
 		if (ptep_clear_flush_young_notify(vma, address, pte)) {
 			/*
 			 * Don't treat a reference through a sequentially read
