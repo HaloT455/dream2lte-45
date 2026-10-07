@@ -1213,11 +1213,49 @@ static const struct file_operations pagetypeinfo_file_ops = {
 	.release	= seq_release,
 };
 
+/*
+ * Android userspace LMKD parses modern /proc/zoneinfo with per-node file-LRU
+ * counters immediately following the first zone header of each node. This
+ * 4.4 tree historically exposes those counters only in the per-zone vmstat
+ * block, which makes newer LMKD parsers reject the file before PSI policy can
+ * calculate watermarks and reclaim state.
+ *
+ * Keep the legacy per-zone output intact and add the modern per-node preamble
+ * once per node. node_page_state() is the correct aggregate when a node has
+ * more than one populated zone and is identical to zone_page_state() on the
+ * single Normal-zone Exynos8895 layout.
+ */
+static bool zoneinfo_is_first_populated_zone(pg_data_t *pgdat,
+					     struct zone *zone)
+{
+	int zid;
+
+	for (zid = 0; zid < MAX_NR_ZONES; zid++) {
+		struct zone *candidate = &pgdat->node_zones[zid];
+
+		if (populated_zone(candidate))
+			return candidate == zone;
+	}
+
+	return false;
+}
+
 static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 							struct zone *zone)
 {
 	int i;
+
 	seq_printf(m, "Node %d, zone %8s", pgdat->node_id, zone->name);
+	if (zoneinfo_is_first_populated_zone(pgdat, zone)) {
+		seq_printf(m,
+			   "\n  per-node stats"
+			   "\n      nr_inactive_file %lu"
+			   "\n      nr_active_file %lu"
+			   "\n      workingset_refault %lu",
+			   node_page_state(pgdat->node_id, NR_INACTIVE_FILE),
+			   node_page_state(pgdat->node_id, NR_ACTIVE_FILE),
+			   node_page_state(pgdat->node_id, WORKINGSET_REFAULT));
+	}
 	seq_printf(m,
 		   "\n  pages free     %lu"
 		   "\n        min      %lu"
