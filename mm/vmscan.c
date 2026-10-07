@@ -4816,17 +4816,15 @@ static void age_active_anon(struct zone *zone, struct scan_control *sc)
 {
 	struct mem_cgroup *memcg;
 
-	if (lru_gen_enabled()) {
-		memcg = mem_cgroup_iter(NULL, NULL, NULL);
-		do {
-			struct lruvec *lruvec =
-				mem_cgroup_zone_lruvec(zone, memcg);
-
-			lru_gen_age_lruvec_legacy(lruvec, sc, sc->swappiness);
-			cond_resched();
-		} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+	/*
+	 * Generation aging is driven by lru_gen_shrink_lruvec_full() when
+	 * protected generations reach the floor.  Do not run a second full
+	 * mm-list walk from the legacy active-anon aging hook: V12R5B could
+	 * repeatedly walk every process page table during pressure and starve
+	 * userspace long enough for Samsung's watchdog to reset the device.
+	 */
+	if (lru_gen_enabled())
 		return;
-	}
 
 	if (!total_swap_pages)
 		return;
