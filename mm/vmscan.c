@@ -3173,6 +3173,7 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 	struct lruvec *lruvec;
 	struct mem_cgroup *memcg = NULL;
 	int new_gen;
+	unsigned long dirty[BITS_TO_LONGS(SWAP_CLUSTER_MAX * 2)] = {};
 
 	if (!lru_gen_enabled() || !pvmw || !pvmw->pte || !pvmw->ptl)
 		return;
@@ -3233,16 +3234,24 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 		if (!ptep_test_and_clear_young(pvmw->vma, addr, pte + i))
 			continue;
 
-		if (pte_dirty(entry) && !PageDirty(page))
-			set_page_dirty(page);
+		/*
+		 * Never call set_page_dirty() while holding the PTE lock and
+		 * zone->lru_lock.  Record the dirty PTE and propagate it only
+		 * after all spinlocks are dropped, matching the donor ordering.
+		 */
+		if (pte_dirty(entry) && !PageDirty(page) &&
+		    i < SWAP_CLUSTER_MAX * 2)
+			__set_bit(i, dirty);
 
 		lru_gen_promote_accessed_locked(page, lruvec, new_gen);
 	}
 
 	spin_unlock_irq(&zone->lru_lock);
 	arch_leave_lazy_mmu_mode();
-}
 
+	for_each_set_bit(i, dirty, SWAP_CLUSTER_MAX * 2)
+		set_page_dirty(pte_page(READ_ONCE(pte[i])));
+}
 
 static bool fill_lru_gen_lists(struct lruvec *lruvec)
 {
