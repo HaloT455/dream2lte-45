@@ -2760,6 +2760,7 @@ static bool __maybe_unused mm_has_migrated(struct mm_struct *mm,
 
 struct mm_walk_args {
 	struct mem_cgroup *memcg;
+	struct lruvec *lruvec;
 	unsigned long max_seq;
 	unsigned long start_pfn;
 	unsigned long end_pfn;
@@ -2909,7 +2910,250 @@ done:
 	if (mm)
 		node_clear(nid, mm->lrugen.nodes);
 
+
 	return last;
+}
+
+/*
+ * Full 4.4 page-table aging.
+ *
+ * ARM64 ptep_test_and_clear_young() is an atomic PTE_AF update in this tree,
+ * so the page-table walker can sample and clear access bits while mmap_sem is
+ * held for read. Page generation/list accounting is then updated under the
+ * owning zone's lru_lock, matching this 4.4 tree's per-zone lruvec model.
+ */
+static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec);
+
+static struct mem_cgroup *lru_gen_lruvec_memcg(struct lruvec *lruvec)
+{
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup_per_zone *mz;
+
+	if (mem_cgroup_disabled())
+		return NULL;
+
+	mz = container_of(lruvec, struct mem_cgroup_per_zone, lruvec);
+	return mz->memcg;
+#else
+	return NULL;
+#endif
+}
+
+static bool lru_gen_page_memcg_matches(struct page *page,
+				       struct mem_cgroup *memcg)
+{
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *page_memcg;
+
+	if (mem_cgroup_disabled())
+		return true;
+
+	page_memcg = READ_ONCE(page->mem_cgroup);
+	if (!page_memcg)
+		page_memcg = root_mem_cgroup;
+
+	return page_memcg == memcg;
+#else
+	return true;
+#endif
+}
+
+static bool lru_gen_promote_accessed_locked(struct page *page,
+					    struct lruvec *lruvec,
+					    int new_gen)
+{
+	int old_gen;
+	int type;
+	int zid;
+	unsigned long old_flags, new_flags;
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+
+	if (!PageLRU(page) || PageUnevictable(page))
+		return false;
+
+	old_gen = page_lru_gen(page);
+	if (old_gen < 0 || old_gen == new_gen)
+		return false;
+
+	type = page_is_file_cache(page);
+	zid = page_zonenum(page);
+	if (!lrugen->enabled[type])
+		return false;
+
+	do {
+		old_flags = READ_ONCE(page->flags);
+		old_gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+		if (old_gen < 0 || old_gen == new_gen)
+			return false;
+
+		new_flags = (old_flags &
+			     ~(LRU_GEN_MASK | LRU_USAGE_MASK | LRU_TIER_FLAGS)) |
+			    ((new_gen + 1UL) << LRU_GEN_PGOFF);
+	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+
+	lru_gen_update_size(page, lruvec, old_gen, new_gen);
+	list_move_tail(&page->lru, &lrugen->lists[new_gen][type][zid]);
+
+	return true;
+}
+
+static int lru_gen_test_walk(unsigned long start, unsigned long end,
+			     struct mm_walk *walk)
+{
+	struct vm_area_struct *vma = walk->vma;
+	struct mm_walk_args *args = walk->private;
+
+	if (!vma)
+		return 1;
+
+	if (is_vm_hugetlb_page(vma) ||
+	    (vma->vm_flags & (VM_LOCKED | VM_PFNMAP)))
+		return 1;
+
+	if (!(vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC)))
+		return 1;
+
+	/* Anonymous mappings are irrelevant when swap/anon reclaim is disabled. */
+	if (!vma->vm_file && !args->swappiness)
+		return 1;
+
+	return 0;
+}
+
+static int lru_gen_pte_entry(pte_t *ptep, unsigned long addr,
+			     unsigned long next, struct mm_walk *walk)
+{
+	pte_t pte;
+	unsigned long pfn;
+	unsigned long flags;
+	struct page *page;
+	struct zone *zone;
+	struct mm_walk_args *args = walk->private;
+	struct lruvec *lruvec = args->lruvec;
+	int new_gen = lru_gen_from_seq(args->max_seq);
+
+	pte = READ_ONCE(*ptep);
+	if (!pte_present(pte)) {
+		args->mm_stats[MM_LEAF_HOLE]++;
+		return 0;
+	}
+
+	if (!pte_young(pte)) {
+		args->mm_stats[MM_LEAF_OLD]++;
+		return 0;
+	}
+
+	pfn = pte_pfn(pte);
+	if (!pfn_valid(pfn)) {
+		args->mm_stats[MM_LEAF_HOLE]++;
+		return 0;
+	}
+
+	if (pfn < args->start_pfn || pfn >= args->end_pfn) {
+		args->mm_stats[MM_LEAF_OTHER_NODE]++;
+		return 0;
+	}
+
+	page = compound_head(pfn_to_page(pfn));
+	zone = page_zone(page);
+	if (zone != lruvec_zone(lruvec)) {
+		args->mm_stats[MM_LEAF_OTHER_NODE]++;
+		return 0;
+	}
+
+	if (!get_page_unless_zero(page)) {
+		args->mm_stats[MM_LEAF_HOLE]++;
+		return 0;
+	}
+
+	if (!ptep_test_and_clear_young(walk->vma, addr, ptep)) {
+		put_page(page);
+		return 0;
+	}
+
+	if (pte_dirty(pte) && !PageDirty(page)) {
+		set_page_dirty(page);
+		args->mm_stats[MM_LEAF_DIRTY]++;
+	}
+
+	spin_lock_irqsave(&zone->lru_lock, flags);
+	if (lru_gen_page_memcg_matches(page, args->memcg) &&
+	    lru_gen_promote_accessed_locked(page, lruvec, new_gen))
+		args->mm_stats[MM_LEAF_YOUNG]++;
+	else
+		args->mm_stats[MM_LEAF_OTHER_MEMCG]++;
+	spin_unlock_irqrestore(&zone->lru_lock, flags);
+
+	put_page(page);
+	return 0;
+}
+
+static void lru_gen_walk_mm_legacy(struct mm_walk_args *args,
+				   struct mm_struct *mm)
+{
+	struct mm_walk walk = {
+		.pte_entry = lru_gen_pte_entry,
+		.test_walk = lru_gen_test_walk,
+		.mm = mm,
+		.private = args,
+	};
+
+	if (mm_has_migrated(mm, args->memcg))
+		return;
+
+	if (!down_read_trylock(&mm->mmap_sem)) {
+		args->mm_stats[MM_LOCK_CONTENTION]++;
+		return;
+	}
+
+	if (mm->highest_vm_end)
+		walk_page_range(0, mm->highest_vm_end, &walk);
+
+	up_read(&mm->mmap_sem);
+	cond_resched();
+}
+
+static bool lru_gen_age_lruvec_legacy(struct lruvec *lruvec,
+				      struct scan_control *sc,
+				      int swappiness)
+{
+	bool last = false;
+	unsigned long max_seq;
+	struct mm_struct *mm = NULL;
+	struct mm_walk_args *args;
+	struct zone *zone = lruvec_zone(lruvec);
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	if (!lru_gen_enabled() || !lrugen->enabled[1])
+		return false;
+
+	max_seq = READ_ONCE(lrugen->max_seq);
+	args = kzalloc(size_of_mm_walk_args(), GFP_KERNEL);
+	if (!args)
+		return false;
+
+	args->memcg = lru_gen_lruvec_memcg(lruvec);
+	args->lruvec = lruvec;
+	args->max_seq = max_seq;
+	args->start_pfn = zone->zone_start_pfn;
+	args->end_pfn = zone_end_pfn(zone);
+	args->node_id = zone->zone_pgdat->node_id;
+	args->swappiness = swappiness;
+
+	do {
+		last = get_next_mm(args, &mm);
+		if (mm)
+			lru_gen_walk_mm_legacy(args, mm);
+	} while (mm);
+
+	kfree(args);
+
+	if (!last || max_seq != READ_ONCE(lrugen->max_seq))
+		return max_seq != READ_ONCE(lrugen->max_seq);
+
+	return lru_gen_inc_max_seq_legacy(lruvec);
 }
 
 
