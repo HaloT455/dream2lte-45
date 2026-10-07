@@ -4011,8 +4011,22 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
 	    (!lruvec->evictable.enabled[1] ||
 	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS)) {
-		if (!lru_gen_age_lruvec_legacy(lruvec, sc, swappiness))
+		/*
+		 * Never perform a full mm/page-table walk from direct reclaim.
+		 * Application launch faults arrive here synchronously and V12R5C
+		 * proved that walking every mm until highest_vm_end can stall
+		 * system_server/userspace long enough to trigger Samsung softdog.
+		 *
+		 * kswapd may age in the background.  Direct/memcg reclaim only
+		 * opens a new generation from existing metadata and immediately
+		 * works on bounded SWAP_CLUSTER_MAX reclaim batches.
+		 */
+		if (current_is_kswapd()) {
+			if (!lru_gen_age_lruvec_legacy(lruvec, sc, swappiness))
+				lru_gen_inc_max_seq_legacy(lruvec);
+		} else {
 			lru_gen_inc_max_seq_legacy(lruvec);
+		}
 	}
 
 	type = lru_gen_pick_type(lruvec, swappiness, &tier);
