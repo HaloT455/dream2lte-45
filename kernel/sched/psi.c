@@ -144,6 +144,7 @@
 static int psi_bug __read_mostly;
 
 DEFINE_STATIC_KEY_FALSE(psi_disabled);
+bool psi_initialized __read_mostly;
 
 #ifdef CONFIG_PSI_DEFAULT_DISABLED
 bool psi_enable;
@@ -256,11 +257,21 @@ void __init psi_init(void)
 {
 	if (!psi_enable) {
 		static_branch_enable(&psi_disabled);
+		psi_initialized = true;
 		return;
 	}
 
 	psi_period = jiffies_to_nsecs(PSI_FREQ);
 	group_init(&psi_system);
+
+	/*
+	 * Scheduler enqueue/dequeue hooks exist before the end of sched_init().
+	 * Keep them inert until all PSI per-CPU state, seqcounts and work items
+	 * are initialized. This matters on the legacy Samsung 4.4 scheduler,
+	 * which can touch task queues during early boot.
+	 */
+	smp_wmb();
+	psi_initialized = true;
 }
 
 static bool test_state(unsigned int *tasks, enum psi_states state)
