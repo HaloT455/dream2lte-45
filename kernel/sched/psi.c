@@ -127,8 +127,6 @@
  * sampling of the aggregate task states would be.
  */
 
-#include "../workqueue_internal.h"
-#include <linux/sched/loadavg.h>
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 #include <linux/seqlock.h>
