@@ -56,7 +56,8 @@ static inline void psi_enqueue(struct task_struct *p, bool wakeup)
 {
 	int clear = 0, set = TSK_RUNNING;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	if (!wakeup || p->sched_psi_wake_requeue) {
@@ -75,7 +76,8 @@ static inline void psi_dequeue(struct task_struct *p, bool sleep)
 {
 	int clear = TSK_RUNNING, set = 0;
 
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	if (!sleep) {
@@ -90,7 +92,8 @@ static inline void psi_dequeue(struct task_struct *p, bool sleep)
 
 static inline void psi_task_tick(struct rq *rq)
 {
-	if (static_branch_likely(&psi_disabled))
+	if (unlikely(!psi_initialized) ||
+	    static_branch_likely(&psi_disabled))
 		return;
 
 	if (unlikely(rq->curr->flags & PF_MEMSTALL))
