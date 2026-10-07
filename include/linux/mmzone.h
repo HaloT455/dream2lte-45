@@ -292,6 +292,7 @@ void lru_gen_init_lruvec(struct lruvec *lruvec);
 void lru_gen_set_state(bool enable, bool main, bool swap);
 void *lru_gen_eviction(struct page *page);
 void lru_gen_refault(struct page *page, void *shadow);
+void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw);
 
 #else /* CONFIG_LRU_GEN */
 
@@ -309,6 +310,10 @@ static inline void *lru_gen_eviction(struct page *page)
 }
 
 static inline void lru_gen_refault(struct page *page, void *shadow)
+{
+}
+
+static inline void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 {
 }
 
