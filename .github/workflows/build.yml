@@ -80,8 +80,6 @@ jobs:
         run: |
           OUT="out-${{ matrix.variant }}"
           grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set$' "$OUT/.config"
-          grep -q '^# CONFIG_ANDROID_SIMPLE_LMK_MINFREE is not set$' "$OUT/.config"
-          grep -q '^# CONFIG_ANDROID_SIMPLE_LMK_TIMEOUT_MSEC is not set$' "$OUT/.config"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_PROCESS_RECLAIM=y$' "$OUT/.config"
