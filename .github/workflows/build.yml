@@ -95,7 +95,9 @@ jobs:
           grep -q 'static ssize_t lru_gen_enabled_store' mm/vmscan.c
           grep -q '__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store)' mm/vmscan.c
           grep -q 'sysfs_create_group(mm_kobj, &lru_gen_attr_group)' mm/vmscan.c
-          grep -q 'lru_gen_shrink_lruvec_legacy' mm/vmscan.c
+          grep -q 'lru_gen_shrink_lruvec_full' mm/vmscan.c
+          grep -q 'lru_gen_get_type_to_scan' mm/vmscan.c
+          grep -q 'lru_gen_promote_page_locked' mm/vmscan.c
           grep -q 'lru_gen_reclaim_batch' mm/vmscan.c
           grep -q 'psi_trigger_create' kernel/sched/psi.c
           grep -q 'proc_create("pressure/memory"' kernel/sched/psi.c
