@@ -62,6 +62,15 @@ static void __page_cache_release(struct page *page)
 		VM_BUG_ON_PAGE(!PageLRU(page), page);
 		__ClearPageLRU(page);
 		del_page_from_lru_list(page, lruvec, page_off_lru(page));
+		/*
+		 * lru_gen_deletion() reconstructs PG_active when a page leaves
+		 * one of the two youngest generations so callers that move the
+		 * page back to classic LRU preserve its activity.  This path is
+		 * different: refcount already reached zero and the page is going
+		 * straight to the allocator.  Never let reconstructed activity
+		 * escape into free_pages_prepare(), where PG_active is illegal.
+		 */
+		__ClearPageActive(page);
 		spin_unlock_irqrestore(&zone->lru_lock, flags);
 	}
 	mem_cgroup_uncharge(page);
