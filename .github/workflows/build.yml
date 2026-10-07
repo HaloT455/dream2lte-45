@@ -216,9 +216,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5C-MGLRU-STABLE-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R3-LMKDPSI-MGLRU-NPU-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5C-MGLRU-STABLE-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
