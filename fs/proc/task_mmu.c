@@ -1,4 +1,6 @@
 #include <linux/mm.h>
+#include <linux/mm_inline.h>
+#include <linux/ctype.h>
 #include <linux/vmacache.h>
 #include <linux/hugetlb.h>
 #include <linux/huge_mm.h>
