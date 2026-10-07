@@ -47,6 +47,7 @@
 #include <linux/prefetch.h>
 #include <linux/printk.h>
 #include <linux/memory.h>
+#include <linux/psi.h>
 #include <linux/overflow.h>
 
 #include <asm/tlbflush.h>
@@ -4271,6 +4272,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 {
 	struct zonelist *zonelist;
 	unsigned long nr_reclaimed;
+	unsigned long pflags;
 	int nid;
 	struct scan_control sc = {
 		.nr_to_reclaim = max(nr_pages, SWAP_CLUSTER_MAX),
@@ -4297,9 +4299,11 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 					    sc.may_writepage,
 					    sc.gfp_mask);
 
+	psi_memstall_enter(&pflags);
 	current->flags |= PF_MEMALLOC;
 	nr_reclaimed = do_try_to_free_pages(zonelist, &sc);
 	current->flags &= ~PF_MEMALLOC;
+	psi_memstall_leave(&pflags);
 
 	trace_mm_vmscan_memcg_reclaim_end(nr_reclaimed);
 
@@ -4526,6 +4530,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 	int end_zone = 0;	/* Inclusive.  0 = ZONE_DMA */
 	unsigned long nr_soft_reclaimed;
 	unsigned long nr_soft_scanned;
+	unsigned long pflags;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
 		.order = order,
@@ -4535,6 +4540,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 		.may_swap = 1,
 		.swappiness = vm_swappiness,
 	};
+	psi_memstall_enter(&pflags);
 	count_vm_event(PAGEOUTRUN);
 
 	do {
@@ -4659,6 +4665,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 			!pgdat_balanced(pgdat, order, classzone_idx));
 
 out:
+	psi_memstall_leave(&pflags);
 	/*
 	 * Return the highest zone idx we were reclaiming at so
 	 * prepare_kswapd_sleep() makes the same decisions as here.
