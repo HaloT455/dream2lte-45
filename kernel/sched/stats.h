@@ -65,8 +65,8 @@ static inline void psi_enqueue(struct task_struct *p, bool wakeup)
 			set |= TSK_MEMSTALL;
 		if (p->sched_psi_wake_requeue)
 			p->sched_psi_wake_requeue = 0;
-	} else if (p->in_iowait) {
-		clear |= TSK_IOWAIT;
+		if (p->in_iowait)
+			clear |= TSK_IOWAIT;
 	}
 
 	psi_task_change(p, clear, set);
@@ -83,8 +83,13 @@ static inline void psi_dequeue(struct task_struct *p, bool sleep)
 	if (!sleep) {
 		if (p->flags & PF_MEMSTALL)
 			clear |= TSK_MEMSTALL;
-	} else if (p->in_iowait) {
-		set |= TSK_IOWAIT;
+		if (p->in_iowait)
+			clear |= TSK_IOWAIT;
+	} else {
+		if (p->flags & PF_MEMSTALL)
+			set |= TSK_MEMSTALL;
+		if (p->in_iowait)
+			set |= TSK_IOWAIT;
 	}
 
 	psi_task_change(p, clear, set);
