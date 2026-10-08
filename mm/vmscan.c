@@ -3736,6 +3736,23 @@ sort:
 		list_move_tail(&page->lru, &lrugen->lists[new_gen][type][zid]);
 }
 
+static bool lru_gen_should_skip_page(struct page *page,
+				     struct scan_control *sc)
+{
+	if (!sc->may_unmap && page_mapped(page))
+		return true;
+
+	if (!(sc->may_writepage && (sc->gfp_mask & __GFP_IO)) &&
+	    (PageDirty(page) || (PageAnon(page) && !PageSwapCache(page))))
+		return true;
+
+	/*
+	 * Match donor MGLRU ordering: pin the page while it is still on the
+	 * generation list.  lru_gen_deletion() runs before ClearPageLRU().
+	 */
+	return !get_page_unless_zero(page);
+}
+
 static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 					    struct scan_control *sc,
 					    int type,
@@ -3748,7 +3765,6 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 	int zid = zone_idx(lruvec_zone(lruvec));
 	unsigned long taken = 0;
 	unsigned long scanned = 0;
-	isolate_mode_t mode = 0;
 	struct zone *zone = lruvec_zone(lruvec);
 	struct lrugen *lrugen = &lruvec->evictable;
 	struct list_head *head;
@@ -3761,11 +3777,6 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 	head = &lrugen->lists[gen][type][zid];
-
-	if (!sc->may_unmap)
-		mode |= ISOLATE_UNMAPPED;
-	if (!sc->may_writepage)
-		mode |= ISOLATE_CLEAN;
 
 	spin_lock_irq(&zone->lru_lock);
 
@@ -3801,10 +3812,6 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 			continue;
 		}
 
-		/*
-		 * Upper tiers with a higher refault rate are protected by moving
-		 * them one generation forward instead of feeding them to pageout.
-		 */
 		tier = lru_tier_from_usage(page_tier_usage(page));
 		if (tier > tier_to_isolate) {
 			int hist = hist_from_seq_or_gen(lrugen->min_seq[type]);
@@ -3815,40 +3822,34 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 			continue;
 		}
 
-		/*
-		 * Dirty/writeback pages should not pin the oldest generation.
-		 * Move them forward and mark reclaim so the normal writeback path
-		 * can deal with them without repeatedly selecting the same page.
-		 */
 		if (PageWriteback(page) || (type && PageDirty(page))) {
 			lru_gen_promote_page_locked(page, lruvec, true);
 			continue;
 		}
 
-		switch (__isolate_lru_page(page, mode)) {
-		case 0:
-			success = lru_gen_deletion(page, lruvec);
-			VM_BUG_ON_PAGE(!success, page);
+		if (lru_gen_should_skip_page(page, sc)) {
+			list_move_tail(&page->lru, head);
+			continue;
+		}
 
-			/*
-			 * This is a reclaim isolation, not a move back to classic LRU.
-			 * lru_gen_deletion() may reconstruct PG_active for young
-			 * generations; clear reclaim-visible state before pageout.
-			 */
+		/*
+		 * Donor ordering: remove generation/list accounting first while
+		 * PageLRU is still set, then clear PageLRU on the pinned page.
+		 */
+		success = lru_gen_deletion(page, lruvec);
+		VM_BUG_ON_PAGE(!success, page);
+		ClearPageLRU(page);
+
+		if (PageActive(page)) {
 			ClearPageActive(page);
+			SetPageReferenced(page);
+		} else {
 			ClearPageReclaim(page);
 			ClearPageReferenced(page);
-
-			list_add_tail(&page->lru, dst);
-			taken += nr_pages;
-			break;
-		case -EBUSY:
-			list_move_tail(&page->lru, head);
-			break;
-		default:
-			list_move_tail(&page->lru, head);
-			break;
 		}
+
+		list_add_tail(&page->lru, dst);
+		taken += nr_pages;
 	}
 
 	if (taken)
@@ -3863,7 +3864,8 @@ out:
 static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 					   struct scan_control *sc,
 					   int type,
-					   int tier_to_isolate)
+					   int tier_to_isolate,
+					   unsigned long nr_to_scan)
 {
 	LIST_HEAD(page_list);
 	unsigned long nr_taken, nr_scanned;
@@ -3878,8 +3880,10 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 
 	lru_add_drain();
 
+	nr_to_scan = min(nr_to_scan, (unsigned long)SWAP_CLUSTER_MAX);
 	nr_taken = lru_gen_isolate_oldest(lruvec, sc, type, tier_to_isolate,
-					 &page_list, SWAP_CLUSTER_MAX, &nr_scanned);
+					 &page_list, nr_to_scan, &nr_scanned);
+	sc->nr_scanned += nr_scanned;
 	if (!nr_taken)
 		return 0;
 
@@ -3938,6 +3942,36 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	return nr_reclaimed;
 }
 
+static unsigned long lru_gen_reclaim_budget(struct lruvec *lruvec,
+					      struct scan_control *sc,
+					      int swappiness)
+{
+	int gen, type;
+	int zid = zone_idx(lruvec_zone(lruvec));
+	unsigned long eligible = 0;
+	struct lrugen *lrugen = &lruvec->evictable;
+
+	for (type = !swappiness; type < ANON_AND_FILE; type++) {
+		if (!lrugen->enabled[type])
+			continue;
+
+		for (gen = 0; gen < MAX_NR_GENS; gen++)
+			eligible += READ_ONCE(lrugen->sizes[gen][type][zid]);
+	}
+
+	/*
+	 * Donor MGLRU scales work by reclaim priority.  V12R5B-E incorrectly
+	 * forced one full SWAP_CLUSTER_MAX eviction batch on every shrink_lruvec
+	 * call, even at DEF_PRIORITY.  That can turn a normal app allocation
+	 * into aggressive reclaim across many memcgs/zones.
+	 */
+	eligible >>= sc->priority;
+	if (!eligible)
+		return 0;
+
+	return round_up(eligible, (unsigned long)SWAP_CLUSTER_MAX);
+}
+
 static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness,
 			     int *tier_to_isolate)
 {
@@ -3991,6 +4025,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 {
 	int type, other;
 	int tier = 0;
+	unsigned long budget;
 	unsigned long before = sc->nr_reclaimed;
 	struct zone *zone = lruvec_zone(lruvec);
 
@@ -4025,11 +4060,15 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		lru_gen_inc_max_seq_legacy(lruvec);
 	}
 
+	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
+	if (budget < SWAP_CLUSTER_MAX)
+		return;
+
 	type = lru_gen_pick_type(lruvec, swappiness, &tier);
 	if (type < 0)
 		return;
 
-	lru_gen_reclaim_batch(lruvec, sc, type, tier);
+	lru_gen_reclaim_batch(lruvec, sc, type, tier, budget);
 
 	/* If the selected type made no progress, try the other reclaimable type. */
 	other = !type;
@@ -4037,7 +4076,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	    lruvec->evictable.enabled[other] &&
 	    (other || swappiness)) {
 		tier = lru_gen_get_tier_to_isolate(lruvec, other);
-		lru_gen_reclaim_batch(lruvec, sc, other, tier);
+		lru_gen_reclaim_batch(lruvec, sc, other, tier, budget);
 	}
 
 	*lru_pages = lru_gen_size_zone(lruvec);
