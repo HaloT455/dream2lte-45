@@ -1611,6 +1611,15 @@ putback_inactive_pages(struct lruvec *lruvec, struct list_head *page_list)
 			__ClearPageActive(page);
 			del_page_from_lru_list(page, lruvec, lru);
 
+			/*
+			 * With MGLRU, del_page_from_lru_list() may call
+			 * lru_gen_deletion(), which reconstructs PG_active for a
+			 * page from either of the two active generations.  This page
+			 * is already refcount-zero and is about to be freed, so clear
+			 * PG_active again after deletion/accounting.
+			 */
+			__ClearPageActive(page);
+
 			if (unlikely(PageCompound(page))) {
 				spin_unlock_irq(&zone->lru_lock);
 				mem_cgroup_uncharge(page);
@@ -1835,6 +1844,15 @@ static void move_active_pages_to_lru(struct lruvec *lruvec,
 			__ClearPageLRU(page);
 			__ClearPageActive(page);
 			del_page_from_lru_list(page, lruvec, lru);
+
+			/*
+			 * With MGLRU, del_page_from_lru_list() may call
+			 * lru_gen_deletion(), which reconstructs PG_active for a
+			 * page from either of the two active generations.  This page
+			 * is already refcount-zero and is about to be freed, so clear
+			 * PG_active again after deletion/accounting.
+			 */
+			__ClearPageActive(page);
 
 			if (unlikely(PageCompound(page))) {
 				spin_unlock_irq(&zone->lru_lock);
