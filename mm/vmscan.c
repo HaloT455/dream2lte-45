@@ -3483,10 +3483,10 @@ static void lru_gen_change_state(struct mem_cgroup *memcg, bool enable)
 
 			VM_BUG_ON(!seq_is_valid(lruvec));
 			VM_BUG_ON(!state_is_valid(lruvec));
-
+			/* Use the desired per-lruvec state while moving its lists. */
 			WRITE_ONCE(lrugen->enabled[0],
-				   lru_gen_enabled() && lru_gen_nr_swapfiles);
-			WRITE_ONCE(lrugen->enabled[1], lru_gen_enabled());
+				   enable && lru_gen_nr_swapfiles);
+			WRITE_ONCE(lrugen->enabled[1], enable);
 
 			while (!(enable ? fill_lru_gen_lists(lruvec) :
 					  drain_lru_gen_lists(lruvec))) {
@@ -3519,18 +3519,24 @@ void lru_gen_set_state(bool enable, bool main, bool swap)
 	if (!main && !swap)
 		goto unlock;
 
+	/*
+	 * Convert all lruvecs before flipping the static key.  V12R5M
+	 * switched to the classic shrinker before completing OFF migration;
+	 * the crash log shows stale generation bits on freed pages after OFF.
+	 * Reclaim may pause temporarily during the conversion.
+	 */
+	memcg = mem_cgroup_iter(NULL, NULL, NULL);
+	do {
+		lru_gen_change_state(memcg, main ? enable : lru_gen_enabled());
+		cond_resched();
+	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+
 	if (main) {
 		if (enable)
 			static_branch_enable(&lru_gen_static_key);
 		else
 			static_branch_disable(&lru_gen_static_key);
 	}
-
-	memcg = mem_cgroup_iter(NULL, NULL, NULL);
-	do {
-		lru_gen_change_state(memcg, enable);
-		cond_resched();
-	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
 
 unlock:
 	mutex_unlock(&cgroup_mutex);
