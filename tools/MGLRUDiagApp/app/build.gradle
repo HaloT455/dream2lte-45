@@ -1,0 +1,25 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.halo.mglrudiag'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.halo.mglrudiag"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.0-L"
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+}
