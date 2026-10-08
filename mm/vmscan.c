@@ -2226,6 +2226,8 @@ static atomic64_t lru_gen_diag_reclaim_reclaimed = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_no_progress = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_backoffs = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_empty_oldest = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_misplaced_fixed = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_misplaced_rejected = ATOMIC64_INIT(0);
 
 bool lru_gen_scan_around_enabled(void)
 {
@@ -2321,7 +2323,8 @@ static ssize_t lru_gen_stats_show(struct kobject *kobj,
 		"age_advances=%lld\n"
 		"scan_calls=%lld scan_promoted_pages=%lld\n"
 		"reclaim_batches=%lld reclaim_scanned=%lld reclaim_reclaimed=%lld\n"
-		"no_progress=%lld backoffs=%lld empty_oldest=%lld\n",
+		"no_progress=%lld backoffs=%lld empty_oldest=%lld\n"
+		"misplaced_fixed=%lld misplaced_rejected=%lld\n",
 		READ_ONCE(lru_gen_scan_around_runtime) ? 1 : 0,
 		READ_ONCE(lru_gen_diag_runtime) ? 1 : 0,
 		(long long)atomic64_read(&lru_gen_diag_age_advances),
@@ -2332,7 +2335,9 @@ static ssize_t lru_gen_stats_show(struct kobject *kobj,
 		(long long)atomic64_read(&lru_gen_diag_reclaim_reclaimed),
 		(long long)atomic64_read(&lru_gen_diag_no_progress),
 		(long long)atomic64_read(&lru_gen_diag_backoffs),
-		(long long)atomic64_read(&lru_gen_diag_empty_oldest));
+		(long long)atomic64_read(&lru_gen_diag_empty_oldest),
+		(long long)atomic64_read(&lru_gen_diag_misplaced_fixed),
+		(long long)atomic64_read(&lru_gen_diag_misplaced_rejected));
 }
 
 static ssize_t lru_gen_stats_store(struct kobject *kobj,
@@ -2354,6 +2359,8 @@ static ssize_t lru_gen_stats_store(struct kobject *kobj,
 	atomic64_set(&lru_gen_diag_no_progress, 0);
 	atomic64_set(&lru_gen_diag_backoffs, 0);
 	atomic64_set(&lru_gen_diag_empty_oldest, 0);
+	atomic64_set(&lru_gen_diag_misplaced_fixed, 0);
+	atomic64_set(&lru_gen_diag_misplaced_rejected, 0);
 	return count;
 }
 
@@ -3850,6 +3857,49 @@ static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec)
 	return true;
 }
 
+/*
+ * V12R5N's oldest-generation scanner has two lazy list-sort paths.
+ * Both may find a page linked on the old generation while its page flag
+ * identifies a new one.  Moving only the list node leaves the source
+ * generation's size inflated and the target generation's size too small.
+ *
+ * The caller knows the ACTUAL source list and holds zone->lru_lock.
+ * Reconcile accounting before moving the node.  If the source size is
+ * already smaller than this page, do not risk unsigned underflow: preserve
+ * the list for diagnosis and bound retries in the existing reclaim loop.
+ *
+ * This does not try to repair an empty generation (no page to account for).
+ */
+static bool lru_gen_reconcile_misplaced_locked(struct page *page,
+					       struct lruvec *lruvec,
+					       int source_gen, int target_gen)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	int type = page_is_file_cache(page);
+	int zid = page_zonenum(page);
+	unsigned long pages = hpage_nr_pages(page);
+
+	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+
+	if (unlikely(source_gen < 0 || source_gen >= MAX_NR_GENS ||
+		     target_gen < 0 || target_gen >= MAX_NR_GENS ||
+		     source_gen == target_gen ||
+		     lrugen->sizes[source_gen][type][zid] < pages)) {
+		atomic64_inc(&lru_gen_diag_misplaced_rejected);
+		if (READ_ONCE(lru_gen_diag_runtime))
+			pr_warn_ratelimited(
+				"lru_gen_diag: misplaced page rejected source=%d target=%d type=%d size=%lu pages=%lu\n",
+				source_gen, target_gen, type,
+				READ_ONCE(lrugen->sizes[source_gen][type][zid]),
+				pages);
+		return false;
+	}
+
+	lru_gen_update_size(page, lruvec, source_gen, target_gen);
+	atomic64_inc(&lru_gen_diag_misplaced_fixed);
+	return true;
+}
+
 static void lru_gen_promote_page_locked(struct page *page,
 					 struct lruvec *lruvec,
 					 bool reclaim)
@@ -3868,9 +3918,13 @@ static void lru_gen_promote_page_locked(struct page *page,
 		new_gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 		VM_BUG_ON_PAGE(new_gen < 0 || new_gen >= MAX_NR_GENS, page);
 
-		/* Aging may already have promoted this page. Sort it lazily. */
-		if (new_gen != old_gen)
+		/* A mismatched page flag and list need accounting reconciliation. */
+		if (new_gen != old_gen) {
+			if (!lru_gen_reconcile_misplaced_locked(page, lruvec,
+							       old_gen, new_gen))
+				return;
 			goto sort;
+		}
 
 		new_gen = (old_gen + 1) % MAX_NR_GENS;
 		new_flags = (old_flags &
@@ -3959,8 +4013,12 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 				continue;
 			}
 
-			list_move_tail(&page->lru,
-				       &lrugen->lists[page_gen][type][zid]);
+			if (lru_gen_reconcile_misplaced_locked(page, lruvec,
+							       gen, page_gen))
+				list_move_tail(&page->lru,
+					       &lrugen->lists[page_gen][type][zid]);
+			else
+				list_move_tail(&page->lru, head);
 			continue;
 		}
 
