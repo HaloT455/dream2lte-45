@@ -3650,7 +3650,14 @@ static bool lru_gen_advance_min_locked(struct lruvec *lruvec, int type)
 
 	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
 
-	if (get_nr_gens(lruvec, type) <= MIN_NR_GENS)
+	/*
+	 * Samsung 4.4 still has legacy VM/LMKD consumers of Active/Inactive
+	 * counters.  The two youngest MGLRU generations are both accounted as
+	 * active, so collapsing to exactly MIN_NR_GENS (2) leaves no stable
+	 * inactive/cold generation for those consumers.  Keep one additional
+	 * generation resident as the compatibility floor.
+	 */
+	if (get_nr_gens(lruvec, type) <= MIN_NR_GENS + 1)
 		return false;
 	if (!lru_gen_oldest_empty(lruvec, type))
 		return false;
@@ -4057,14 +4064,16 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	spin_unlock_irq(&zone->lru_lock);
 
 	/*
-	 * Keep at least two generations protected.  V12R5G still leaves the
-	 * full page-table walker disabled for isolation, but must advance one
-	 * generation whenever both reclaimable types reach the protected floor.
+	 * Keep the donor's two protected generations plus one cold compatibility
+	 * generation.  On Samsung 4.4 the legacy Active/Inactive accounting is
+	 * still consumed by reclaim/LMKD; with only two generations both are
+	 * "active" and NR_INACTIVE_* collapses toward zero.  Advance max_seq as
+	 * soon as both reclaimable types reach the three-generation floor.
 	 */
 	if ((!lruvec->evictable.enabled[0] ||
-	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
+	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS + 1) &&
 	    (!lruvec->evictable.enabled[1] ||
-	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
+	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS + 1))
 		lru_gen_inc_max_seq_legacy(lruvec);
 
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
@@ -4125,9 +4134,9 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		spin_unlock_irq(&zone->lru_lock);
 
 		if ((!lruvec->evictable.enabled[0] ||
-		     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
+		     get_nr_gens(lruvec, 0) <= MIN_NR_GENS + 1) &&
 		    (!lruvec->evictable.enabled[1] ||
-		     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
+		     get_nr_gens(lruvec, 1) <= MIN_NR_GENS + 1))
 			lru_gen_inc_max_seq_legacy(lruvec);
 
 		cond_resched();
