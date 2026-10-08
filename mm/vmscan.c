@@ -4114,7 +4114,7 @@ static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
 	struct zone *zone = lruvec_zone(lruvec);
 	unsigned long nr, flags;
 	int gen, zid = zone_idx(zone);
-	bool empty;
+	bool empty, report = false;
 
 	if (!READ_ONCE(lrugen->enabled[type]) ||
 	    get_nr_gens(lruvec, type) <= MIN_NR_GENS)
@@ -4124,10 +4124,25 @@ static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 	nr = READ_ONCE(lrugen->sizes[gen][type][zid]);
 	empty = list_empty(&lrugen->lists[gen][type][zid]);
+
+	/*
+	 * A nonzero size with no list entries cannot supply reclaim pages.
+	 * V12R5M recorded 2.8 million such attempts before watchdog reset.
+	 * Do not modify the accounting here: pages may still be in flight.
+	 * Suppress repeated attempts and count only one diagnostic per window.
+	 */
+	if (unlikely(empty && nr) &&
+	    !time_before(jiffies, READ_ONCE(lrugen->reclaim_backoff_until))) {
+		WRITE_ONCE(lrugen->reclaim_backoff_until,
+			   jiffies + max_t(unsigned long, 1,
+					   msecs_to_jiffies(100)));
+		report = true;
+	}
 	spin_unlock_irqrestore(&zone->lru_lock, flags);
 
-	if (unlikely(empty && nr)) {
+	if (unlikely(report)) {
 		atomic64_inc(&lru_gen_diag_empty_oldest);
+		atomic64_inc(&lru_gen_diag_backoffs);
 		if (READ_ONCE(lru_gen_diag_runtime))
 			pr_warn_ratelimited(
 				"lru_gen_diag: empty oldest list with size=%lu type=%d zone=%s\n",
