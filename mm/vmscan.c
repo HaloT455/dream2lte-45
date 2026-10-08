@@ -2224,6 +2224,8 @@ static atomic64_t lru_gen_diag_reclaim_batches = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_reclaim_scanned = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_reclaim_reclaimed = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_no_progress = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_backoffs = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_empty_oldest = ATOMIC64_INIT(0);
 
 bool lru_gen_scan_around_enabled(void)
 {
@@ -2319,7 +2321,7 @@ static ssize_t lru_gen_stats_show(struct kobject *kobj,
 		"age_advances=%lld\n"
 		"scan_calls=%lld scan_promoted_pages=%lld\n"
 		"reclaim_batches=%lld reclaim_scanned=%lld reclaim_reclaimed=%lld\n"
-		"no_progress=%lld\n",
+		"no_progress=%lld backoffs=%lld empty_oldest=%lld\n",
 		READ_ONCE(lru_gen_scan_around_runtime) ? 1 : 0,
 		READ_ONCE(lru_gen_diag_runtime) ? 1 : 0,
 		(long long)atomic64_read(&lru_gen_diag_age_advances),
@@ -2328,7 +2330,9 @@ static ssize_t lru_gen_stats_show(struct kobject *kobj,
 		(long long)atomic64_read(&lru_gen_diag_reclaim_batches),
 		(long long)atomic64_read(&lru_gen_diag_reclaim_scanned),
 		(long long)atomic64_read(&lru_gen_diag_reclaim_reclaimed),
-		(long long)atomic64_read(&lru_gen_diag_no_progress));
+		(long long)atomic64_read(&lru_gen_diag_no_progress),
+		(long long)atomic64_read(&lru_gen_diag_backoffs),
+		(long long)atomic64_read(&lru_gen_diag_empty_oldest));
 }
 
 static ssize_t lru_gen_stats_store(struct kobject *kobj,
@@ -2348,6 +2352,8 @@ static ssize_t lru_gen_stats_store(struct kobject *kobj,
 	atomic64_set(&lru_gen_diag_reclaim_scanned, 0);
 	atomic64_set(&lru_gen_diag_reclaim_reclaimed, 0);
 	atomic64_set(&lru_gen_diag_no_progress, 0);
+	atomic64_set(&lru_gen_diag_backoffs, 0);
+	atomic64_set(&lru_gen_diag_empty_oldest, 0);
 	return count;
 }
 
@@ -4085,42 +4091,70 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	return nr_reclaimed;
 }
 
+/*
+ * The Samsung 4.4 reclaim caller can repeatedly retry a memcg/zone even
+ * after the oldest generation is exhausted.  Counting all generations here
+ * advertises protected/young pages as immediately reclaimable and caused
+ * hundreds of thousands of empty shrink attempts before the softdog reset.
+ *
+ * Count only the oldest *populated* generation for each eligible type.
+ * Check list membership under lru_lock: a positive size with an empty list
+ * is a stale accounting symptom, not permission to spin on that generation.
+ */
+static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	struct zone *zone = lruvec_zone(lruvec);
+	unsigned long nr, flags;
+	int gen, zid = zone_idx(zone);
+	bool empty;
+
+	if (!READ_ONCE(lrugen->enabled[type]) ||
+	    get_nr_gens(lruvec, type) <= MIN_NR_GENS)
+		return 0;
+
+	spin_lock_irqsave(&zone->lru_lock, flags);
+	gen = lru_gen_from_seq(lrugen->min_seq[type]);
+	nr = READ_ONCE(lrugen->sizes[gen][type][zid]);
+	empty = list_empty(&lrugen->lists[gen][type][zid]);
+	spin_unlock_irqrestore(&zone->lru_lock, flags);
+
+	if (unlikely(empty && nr)) {
+		atomic64_inc(&lru_gen_diag_empty_oldest);
+		if (READ_ONCE(lru_gen_diag_runtime))
+			pr_warn_ratelimited(
+				"lru_gen_diag: empty oldest list with size=%lu type=%d zone=%s\n",
+				nr, type, zone->name);
+	}
+
+	return empty ? 0 : nr;
+}
+
 static unsigned long lru_gen_reclaim_budget(struct lruvec *lruvec,
 					      struct scan_control *sc,
 					      int swappiness)
 {
-	int gen, type;
-	int zid = zone_idx(lruvec_zone(lruvec));
-	unsigned long eligible = 0;
-	struct lrugen *lrugen = &lruvec->evictable;
+	unsigned long eligible = lru_gen_oldest_pages(lruvec, 1);
 
-	for (type = !swappiness; type < ANON_AND_FILE; type++) {
-		if (!lrugen->enabled[type])
-			continue;
+	if (swappiness)
+		eligible += lru_gen_oldest_pages(lruvec, 0);
 
-		for (gen = 0; gen < MAX_NR_GENS; gen++)
-			eligible += READ_ONCE(lrugen->sizes[gen][type][zid]);
-	}
-
-	/*
-	 * Donor MGLRU scales work by reclaim priority.  V12R5B-E incorrectly
-	 * forced one full SWAP_CLUSTER_MAX eviction batch on every shrink_lruvec
-	 * call, even at DEF_PRIORITY.  That can turn a normal app allocation
-	 * into aggressive reclaim across many memcgs/zones.
-	 */
+	/* Do not convert a small protected generation into a huge work budget. */
 	eligible >>= sc->priority;
 	if (!eligible)
 		return 0;
 
-	return round_up(eligible, (unsigned long)SWAP_CLUSTER_MAX);
+	/* Bounded work per lruvec, including allocations at priority 0. */
+	return min(round_up(eligible, (unsigned long)SWAP_CLUSTER_MAX),
+		   (unsigned long)SWAP_CLUSTER_MAX * 4);
 }
 
 static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness,
 			     int *tier_to_isolate)
 {
 	struct lrugen *lrugen = &lruvec->evictable;
-	bool anon = lrugen->enabled[0] && swappiness;
-	bool file = lrugen->enabled[1];
+	bool anon = swappiness && lru_gen_oldest_pages(lruvec, 0);
+	bool file = lru_gen_oldest_pages(lruvec, 1);
 	int type;
 
 	if (!anon) {
@@ -4196,6 +4230,17 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	unsigned long start_scanned = sc->nr_scanned;
 	struct zone *zone = lruvec_zone(lruvec);
 
+	/*
+	 * No-work retry protection is per-lruvec, not a global MGLRU disable.
+	 * Returning 0 eligible pages lets the caller retry other memcgs/zones
+	 * and avoids starving Samsung's userspace watchdog.
+	 */
+	if (time_before(jiffies,
+			READ_ONCE(lruvec->evictable.reclaim_backoff_until))) {
+		*lru_pages = 0;
+		return;
+	}
+
 	*lru_pages = lru_gen_size_zone(lruvec);
 
 	spin_lock_irq(&zone->lru_lock);
@@ -4215,6 +4260,10 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		lru_gen_inc_max_seq_legacy(lruvec);
 
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
+	if (!budget) {
+		*lru_pages = 0;
+		return;
+	}
 
 	/*
 	 * Match donor MGLRU reclaim semantics while preserving the Samsung
@@ -4282,6 +4331,9 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 * as eligible to outer reclaim, even when this invocation hit its target.
 	 */
 	*lru_pages = lru_gen_size_zone(lruvec);
+	if (sc->nr_reclaimed != start_reclaimed ||
+	    sc->nr_scanned != start_scanned)
+		WRITE_ONCE(lruvec->evictable.reclaim_backoff_until, 0);
 
 	if (sc->nr_reclaimed == start_reclaimed && budget >= SWAP_CLUSTER_MAX) {
 		int zid = zone_idx(zone);
@@ -4291,6 +4343,17 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		long old_file = READ_ONCE(lruvec->evictable.sizes[fgen][1][zid]);
 
 		atomic64_inc(&lru_gen_diag_no_progress);
+		if (sc->nr_scanned == start_scanned) {
+			/*
+			 * No page was even scanned.  Prevent the same zone/memcg
+			 * from spinning millions of times per second.  Never
+			 * sleep while in reclaim: simply stop advertising work.
+			 */
+			WRITE_ONCE(lruvec->evictable.reclaim_backoff_until,
+				   jiffies + max(1UL, msecs_to_jiffies(50)));
+			atomic64_inc(&lru_gen_diag_backoffs);
+			*lru_pages = 0;
+		}
 		if (READ_ONCE(lru_gen_diag_runtime))
 			pr_info_ratelimited(
 				"lru_gen_diag: zone=%s max=%lu minA=%lu minF=%lu gensA=%d gensF=%d oldA=%ld oldF=%ld actA=%lu inactA=%lu actF=%lu inactF=%lu free=%lu budget=%lu scanned_delta=%lu\n",
