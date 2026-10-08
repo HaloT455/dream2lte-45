@@ -1,0 +1,46 @@
+name: Build MGLRU Diag APK
+
+on:
+  push:
+    branches:
+      - agent/v12r5l-mglru-runtime-diagnostics
+    paths:
+      - 'tools/MGLRUDiagApp/**'
+      - '.github/workflows/build-mglru-diag-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        run: gradle -p tools/MGLRUDiagApp :app:assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: |
+          cp tools/MGLRUDiagApp/app/build/outputs/apk/debug/app-debug.apk \
+             MGLRU-Diag-V12R5L.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MGLRU-Diag-V12R5L-${{ github.sha }}
+          path: MGLRU-Diag-V12R5L.apk
+          if-no-files-found: error
