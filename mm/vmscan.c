@@ -4026,7 +4026,8 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	int type, other;
 	int tier = 0;
 	unsigned long budget;
-	unsigned long before = sc->nr_reclaimed;
+	unsigned long consumed = 0;
+	unsigned long start_reclaimed = sc->nr_reclaimed;
 	struct zone *zone = lruvec_zone(lruvec);
 
 	*lru_pages = lru_gen_size_zone(lruvec);
@@ -4038,48 +4039,86 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	spin_unlock_irq(&zone->lru_lock);
 
 	/*
-	 * Keep at least two generations protected.  When both reclaimable types
-	 * are at that floor, run a page-table aging pass and publish a new
-	 * youngest generation before eviction.
+	 * Keep at least two generations protected.  V12R5G still leaves the
+	 * full page-table walker disabled for isolation, but must advance one
+	 * generation whenever both reclaimable types reach the protected floor.
 	 */
 	if ((!lruvec->evictable.enabled[0] ||
 	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
 	    (!lruvec->evictable.enabled[1] ||
-	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS)) {
-		/*
-		 * V12R5D still rebooted under real app load even after moving the
-		 * full mm/page-table walk out of direct reclaim.  That leaves the
-		 * background kswapd walk itself as the remaining synchronous
-		 * whole-address-space aging path.
-		 *
-		 * V12R5E is an isolation build: advance generations from existing
-		 * metadata only and keep reclaim bounded to SWAP_CLUSTER_MAX batches.
-		 * The full PTE walker stays compiled for later bounded/incremental
-		 * reintroduction, but is not executed by reclaim in this build.
-		 */
+	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
 		lru_gen_inc_max_seq_legacy(lruvec);
-	}
 
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
-	if (budget < SWAP_CLUSTER_MAX)
-		return;
 
-	type = lru_gen_pick_type(lruvec, swappiness, &tier);
-	if (type < 0)
-		return;
+	/*
+	 * Match donor MGLRU reclaim semantics more closely: consume the
+	 * priority-scaled budget in bounded SWAP_CLUSTER_MAX batches until the
+	 * caller's reclaim target is met, the budget is exhausted, or neither
+	 * anon nor file can make progress.  V12R5F performed at most one batch
+	 * per type and could leave free pages below the low watermark while
+	 * hundreds of MB remained eligible.
+	 */
+	while (budget - consumed >= SWAP_CLUSTER_MAX &&
+	       sc->nr_reclaimed < sc->nr_to_reclaim) {
+		unsigned long before_reclaimed = sc->nr_reclaimed;
+		unsigned long before_scanned = sc->nr_scanned;
+		unsigned long batch_budget = min(budget - consumed,
+						 (unsigned long)SWAP_CLUSTER_MAX);
 
-	lru_gen_reclaim_batch(lruvec, sc, type, tier, budget);
+		type = lru_gen_pick_type(lruvec, swappiness, &tier);
+		if (type < 0)
+			break;
 
-	/* If the selected type made no progress, try the other reclaimable type. */
-	other = !type;
-	if (sc->nr_reclaimed == before &&
-	    lruvec->evictable.enabled[other] &&
-	    (other || swappiness)) {
-		tier = lru_gen_get_tier_to_isolate(lruvec, other);
-		lru_gen_reclaim_batch(lruvec, sc, other, tier, budget);
+		lru_gen_reclaim_batch(lruvec, sc, type, tier, batch_budget);
+
+		other = !type;
+		if (sc->nr_reclaimed == before_reclaimed &&
+		    lruvec->evictable.enabled[other] &&
+		    (other || swappiness)) {
+			tier = lru_gen_get_tier_to_isolate(lruvec, other);
+			lru_gen_reclaim_batch(lruvec, sc, other, tier,
+					      batch_budget);
+		}
+
+		consumed += max(sc->nr_scanned - before_scanned,
+				(unsigned long)SWAP_CLUSTER_MAX);
+
+		/*
+		 * If both types rejected a full batch, do not spin in direct
+		 * reclaim.  Let outer reclaim lower priority / kswapd retry.
+		 */
+		if (sc->nr_reclaimed == before_reclaimed &&
+		    sc->nr_scanned == before_scanned)
+			break;
+
+		/*
+		 * Reclaim may have emptied the oldest generation.  Advance min_seq
+		 * immediately so the next batch can see the next cold generation.
+		 */
+		spin_lock_irq(&zone->lru_lock);
+		for (type = 0; type < ANON_AND_FILE; type++)
+			while (lru_gen_advance_min_locked(lruvec, type))
+				;
+		spin_unlock_irq(&zone->lru_lock);
+
+		if ((!lruvec->evictable.enabled[0] ||
+		     get_nr_gens(lruvec, 0) <= MIN_NR_GENS) &&
+		    (!lruvec->evictable.enabled[1] ||
+		     get_nr_gens(lruvec, 1) <= MIN_NR_GENS))
+			lru_gen_inc_max_seq_legacy(lruvec);
+
+		cond_resched();
 	}
 
+	/*
+	 * Preserve the donor rule that this lruvec reports all generation pages
+	 * as eligible to outer reclaim, even when this invocation hit its target.
+	 */
 	*lru_pages = lru_gen_size_zone(lruvec);
+
+	if (sc->nr_reclaimed == start_reclaimed && budget >= SWAP_CLUSTER_MAX)
+		cond_resched();
 }
 #else
 static inline void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
