@@ -68,6 +68,10 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_LRU_GEN
+extern void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw);
+#endif
+
 static struct kmem_cache *anon_vma_cachep;
 static struct kmem_cache *anon_vma_chain_cachep;
 
@@ -900,11 +904,24 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 		}
 
 		/*
-		 * V12R5C stability gate: keep rmap on the native 4.4 young-bit
-		 * path.  V12R5B watchdog-reset under application launch while
-		 * scan-around was enabled, so spatial PTE promotion is isolated
-		 * from the core generation aging/eviction engine for this test.
+		 * Bounded MGLRU locality aging: when rmap finds a young mapping,
+		 * scan only a small PTE neighborhood in the same PMD.  Hot pages
+		 * are promoted to the youngest generation while unreferenced pages
+		 * are left behind for generation aging/reclaim.  This restores the
+		 * locality path without re-enabling the whole-mm walker.
 		 */
+		if (lru_gen_enabled() && pte_young(*pte)) {
+			struct page_vma_mapped_walk pvmw = {
+				.page = page,
+				.vma = vma,
+				.address = address,
+				.pte = pte,
+				.ptl = ptl,
+			};
+
+			lru_gen_scan_around(&pvmw);
+			referenced++;
+		}
 
 		if (ptep_clear_flush_young_notify(vma, address, pte)) {
 			/*
