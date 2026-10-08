@@ -70,6 +70,7 @@
 
 #ifdef CONFIG_LRU_GEN
 extern void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw);
+extern bool lru_gen_scan_around_enabled(void);
 #endif
 
 static struct kmem_cache *anon_vma_cachep;
@@ -910,7 +911,7 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 		 * are left behind for generation aging/reclaim.  This restores the
 		 * locality path without re-enabling the whole-mm walker.
 		 */
-		if (lru_gen_enabled() && pte_young(*pte)) {
+		if (lru_gen_scan_around_enabled() && pte_young(*pte)) {
 			struct page_vma_mapped_walk pvmw = {
 				.page = page,
 				.vma = vma,
