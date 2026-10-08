@@ -4036,6 +4036,28 @@ static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness,
 	return type;
 }
 
+static bool lru_gen_needs_new_generation(struct lruvec *lruvec)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	int type;
+
+	for (type = 0; type < ANON_AND_FILE; type++) {
+		if (!lrugen->enabled[type])
+			continue;
+
+		/*
+		 * max_seq is shared, but anon/file have independent min_seq values.
+		 * If either enabled type reaches the three-generation compatibility
+		 * floor, advance max_seq so that type gets a fresh cold generation.
+		 * Waiting for both types can starve the faster one.
+		 */
+		if (get_nr_gens(lruvec, type) <= MIN_NR_GENS + 1)
+			return true;
+	}
+
+	return false;
+}
+
 /*
  * Full generation-aware reclaim for the 4.4 per-zone lruvec model.
  *
@@ -4065,15 +4087,12 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 
 	/*
 	 * Keep the donor's two protected generations plus one cold compatibility
-	 * generation.  On Samsung 4.4 the legacy Active/Inactive accounting is
-	 * still consumed by reclaim/LMKD; with only two generations both are
-	 * "active" and NR_INACTIVE_* collapses toward zero.  Advance max_seq as
-	 * soon as both reclaimable types reach the three-generation floor.
+	 * generation.  Anon/file have independent min_seq values, so advance the
+	 * shared max_seq as soon as either enabled type reaches the floor.  This
+	 * avoids one type losing its cold/inactive pool while waiting for the
+	 * other type to catch up.
 	 */
-	if ((!lruvec->evictable.enabled[0] ||
-	     get_nr_gens(lruvec, 0) <= MIN_NR_GENS + 1) &&
-	    (!lruvec->evictable.enabled[1] ||
-	     get_nr_gens(lruvec, 1) <= MIN_NR_GENS + 1))
+	if (lru_gen_needs_new_generation(lruvec))
 		lru_gen_inc_max_seq_legacy(lruvec);
 
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
@@ -4133,11 +4152,8 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 				;
 		spin_unlock_irq(&zone->lru_lock);
 
-		if ((!lruvec->evictable.enabled[0] ||
-		     get_nr_gens(lruvec, 0) <= MIN_NR_GENS + 1) &&
-		    (!lruvec->evictable.enabled[1] ||
-		     get_nr_gens(lruvec, 1) <= MIN_NR_GENS + 1))
-			lru_gen_inc_max_seq_legacy(lruvec);
+		if (lru_gen_needs_new_generation(lruvec))
+		lru_gen_inc_max_seq_legacy(lruvec);
 
 		cond_resched();
 	}
