@@ -2215,6 +2215,21 @@ static struct attribute_group vmscan_attr_group = {
 #ifdef CONFIG_LRU_GEN
 void lru_gen_set_state(bool enable, bool main, bool swap);
 
+static bool lru_gen_scan_around_runtime;
+static bool lru_gen_diag_runtime;
+static atomic64_t lru_gen_diag_age_advances = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_scan_calls = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_scan_promoted = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_reclaim_batches = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_reclaim_scanned = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_reclaim_reclaimed = ATOMIC64_INIT(0);
+static atomic64_t lru_gen_diag_no_progress = ATOMIC64_INIT(0);
+
+bool lru_gen_scan_around_enabled(void)
+{
+	return lru_gen_enabled() && READ_ONCE(lru_gen_scan_around_runtime);
+}
+
 static ssize_t lru_gen_enabled_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
 {
@@ -2249,8 +2264,101 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 static struct kobj_attribute lru_gen_enabled_attr =
 	__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store);
 
+static ssize_t lru_gen_scan_around_show(struct kobject *kobj,
+				       struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", READ_ONCE(lru_gen_scan_around_runtime) ? 1 : 0);
+}
+
+static ssize_t lru_gen_scan_around_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t count)
+{
+	int mode;
+	int err = kstrtoint(buf, 10, &mode);
+
+	if (err || (mode != 0 && mode != 1))
+		return -EINVAL;
+
+	WRITE_ONCE(lru_gen_scan_around_runtime, mode == 1);
+	return count;
+}
+
+static struct kobj_attribute lru_gen_scan_around_attr =
+	__ATTR(scan_around, 0644, lru_gen_scan_around_show,
+	       lru_gen_scan_around_store);
+
+static ssize_t lru_gen_diag_show(struct kobject *kobj,
+				struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", READ_ONCE(lru_gen_diag_runtime) ? 1 : 0);
+}
+
+static ssize_t lru_gen_diag_store(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int mode;
+	int err = kstrtoint(buf, 10, &mode);
+
+	if (err || (mode != 0 && mode != 1))
+		return -EINVAL;
+
+	WRITE_ONCE(lru_gen_diag_runtime, mode == 1);
+	return count;
+}
+
+static struct kobj_attribute lru_gen_diag_attr =
+	__ATTR(diag, 0644, lru_gen_diag_show, lru_gen_diag_store);
+
+static ssize_t lru_gen_stats_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE,
+		"scan_around=%d diag=%d\n"
+		"age_advances=%lld\n"
+		"scan_calls=%lld scan_promoted_pages=%lld\n"
+		"reclaim_batches=%lld reclaim_scanned=%lld reclaim_reclaimed=%lld\n"
+		"no_progress=%lld\n",
+		READ_ONCE(lru_gen_scan_around_runtime) ? 1 : 0,
+		READ_ONCE(lru_gen_diag_runtime) ? 1 : 0,
+		(long long)atomic64_read(&lru_gen_diag_age_advances),
+		(long long)atomic64_read(&lru_gen_diag_scan_calls),
+		(long long)atomic64_read(&lru_gen_diag_scan_promoted),
+		(long long)atomic64_read(&lru_gen_diag_reclaim_batches),
+		(long long)atomic64_read(&lru_gen_diag_reclaim_scanned),
+		(long long)atomic64_read(&lru_gen_diag_reclaim_reclaimed),
+		(long long)atomic64_read(&lru_gen_diag_no_progress));
+}
+
+static ssize_t lru_gen_stats_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int mode;
+	int err = kstrtoint(buf, 10, &mode);
+
+	if (err || mode != 0)
+		return -EINVAL;
+
+	atomic64_set(&lru_gen_diag_age_advances, 0);
+	atomic64_set(&lru_gen_diag_scan_calls, 0);
+	atomic64_set(&lru_gen_diag_scan_promoted, 0);
+	atomic64_set(&lru_gen_diag_reclaim_batches, 0);
+	atomic64_set(&lru_gen_diag_reclaim_scanned, 0);
+	atomic64_set(&lru_gen_diag_reclaim_reclaimed, 0);
+	atomic64_set(&lru_gen_diag_no_progress, 0);
+	return count;
+}
+
+static struct kobj_attribute lru_gen_stats_attr =
+	__ATTR(stats, 0644, lru_gen_stats_show, lru_gen_stats_store);
+
 static struct attribute *lru_gen_attrs[] = {
 	&lru_gen_enabled_attr.attr,
+	&lru_gen_scan_around_attr.attr,
+	&lru_gen_diag_attr.attr,
+	&lru_gen_stats_attr.attr,
 	NULL,
 };
 
@@ -3193,8 +3301,11 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 	int new_gen;
 	unsigned long dirty[BITS_TO_LONGS(SWAP_CLUSTER_MAX * 2)] = {};
 
-	if (!lru_gen_enabled() || !pvmw || !pvmw->pte || !pvmw->ptl)
+	if (!lru_gen_enabled() || !READ_ONCE(lru_gen_scan_around_runtime) ||
+	    !pvmw || !pvmw->pte || !pvmw->ptl)
 		return;
+
+	atomic64_inc(&lru_gen_diag_scan_calls);
 
 	lockdep_assert_held(pvmw->ptl);
 	VM_BUG_ON_PAGE(PageTail(pvmw->page), pvmw->page);
@@ -3261,7 +3372,9 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 		    i < SWAP_CLUSTER_MAX * 2)
 			__set_bit(i, dirty);
 
-		lru_gen_promote_accessed_locked(page, lruvec, new_gen);
+		if (lru_gen_promote_accessed_locked(page, lruvec, new_gen))
+			atomic64_add(hpage_nr_pages(page),
+				     &lru_gen_diag_scan_promoted);
 	}
 
 	spin_unlock_irq(&zone->lru_lock);
@@ -3718,6 +3831,7 @@ static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec)
 	/* Publish accounting/list checks before readers observe the new seq. */
 	smp_wmb();
 	WRITE_ONCE(lrugen->max_seq, max_seq + 1);
+	atomic64_inc(&lru_gen_diag_age_advances);
 
 	spin_unlock_irq(&lru_zone->lru_lock);
 	return true;
@@ -3912,6 +4026,9 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	if (!nr_taken)
 		return 0;
 
+	atomic64_inc(&lru_gen_diag_reclaim_batches);
+	atomic64_add(nr_scanned, &lru_gen_diag_reclaim_scanned);
+
 	if (global_reclaim(sc)) {
 		__mod_zone_page_state(zone, NR_PAGES_SCANNED, nr_scanned);
 		if (current_is_kswapd())
@@ -3964,6 +4081,7 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	free_hot_cold_page_list(&page_list, true);
 
 	sc->nr_reclaimed += nr_reclaimed;
+	atomic64_add(nr_reclaimed, &lru_gen_diag_reclaim_reclaimed);
 	return nr_reclaimed;
 }
 
@@ -4164,8 +4282,33 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 */
 	*lru_pages = lru_gen_size_zone(lruvec);
 
-	if (sc->nr_reclaimed == start_reclaimed && budget >= SWAP_CLUSTER_MAX)
+	if (sc->nr_reclaimed == start_reclaimed && budget >= SWAP_CLUSTER_MAX) {
+		int zid = zone_idx(zone);
+		int agen = lru_gen_from_seq(lruvec->evictable.min_seq[0]);
+		int fgen = lru_gen_from_seq(lruvec->evictable.min_seq[1]);
+		long old_anon = READ_ONCE(lruvec->evictable.sizes[agen][0][zid]);
+		long old_file = READ_ONCE(lruvec->evictable.sizes[fgen][1][zid]);
+
+		atomic64_inc(&lru_gen_diag_no_progress);
+		if (READ_ONCE(lru_gen_diag_runtime))
+			pr_info_ratelimited(
+				"lru_gen_diag: zone=%s max=%lu minA=%lu minF=%lu gensA=%d gensF=%d oldA=%ld oldF=%ld actA=%lu inactA=%lu actF=%lu inactF=%lu free=%lu budget=%lu scanned_delta=%lu\n",
+				zone->name,
+				READ_ONCE(lruvec->evictable.max_seq),
+				READ_ONCE(lruvec->evictable.min_seq[0]),
+				READ_ONCE(lruvec->evictable.min_seq[1]),
+				get_nr_gens(lruvec, 0),
+				get_nr_gens(lruvec, 1),
+				old_anon, old_file,
+				zone_page_state(zone, NR_ACTIVE_ANON),
+				zone_page_state(zone, NR_INACTIVE_ANON),
+				zone_page_state(zone, NR_ACTIVE_FILE),
+				zone_page_state(zone, NR_INACTIVE_FILE),
+				zone_page_state(zone, NR_FREE_PAGES),
+				budget,
+				sc->nr_scanned - before_scanned);
 		cond_resched();
+	}
 }
 #else
 static inline void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
