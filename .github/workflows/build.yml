@@ -3,6 +3,9 @@ name: Build V12R5M MGLRU Stability + HALO NPU
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - agent/v12r5l-mglru-runtime-diagnostics
   push:
     branches:
       - v12
