@@ -3578,6 +3578,7 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
 	struct lrugen *lrugen = &lruvec->evictable;
 
 	lrugen->max_seq = MIN_NR_GENS + 1;
+	lrugen->reclaim_backoff_until = 0;
 	lrugen->enabled[0] = lru_gen_enabled() && lru_gen_nr_swapfiles;
 	lrugen->enabled[1] = lru_gen_enabled();
 
