@@ -177,6 +177,13 @@ static inline bool lru_gen_deletion(struct page *page,
 		gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 
 		new_flags = old_flags & ~LRU_GEN_MASK;
+		/*
+		 * Retain usage metadata when temporarily isolating a generation
+		 * page for reclaim.  Drop it only when the target lruvec type
+		 * has been disabled and the page is migrating to classic LRU.
+		 */
+		if (!READ_ONCE(lruvec->evictable.enabled[page_is_file_cache(page)]))
+			new_flags &= ~LRU_USAGE_MASK;
 		if (lru_gen_is_active(lruvec, gen))
 			new_flags |= BIT(PG_active);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);

@@ -3483,10 +3483,10 @@ static void lru_gen_change_state(struct mem_cgroup *memcg, bool enable)
 
 			VM_BUG_ON(!seq_is_valid(lruvec));
 			VM_BUG_ON(!state_is_valid(lruvec));
-
+			/* Use the desired per-lruvec state while moving its lists. */
 			WRITE_ONCE(lrugen->enabled[0],
-				   lru_gen_enabled() && lru_gen_nr_swapfiles);
-			WRITE_ONCE(lrugen->enabled[1], lru_gen_enabled());
+				   enable && lru_gen_nr_swapfiles);
+			WRITE_ONCE(lrugen->enabled[1], enable);
 
 			while (!(enable ? fill_lru_gen_lists(lruvec) :
 					  drain_lru_gen_lists(lruvec))) {
@@ -3519,18 +3519,24 @@ void lru_gen_set_state(bool enable, bool main, bool swap)
 	if (!main && !swap)
 		goto unlock;
 
+	/*
+	 * Convert all lruvecs before flipping the static key.  V12R5M
+	 * switched to the classic shrinker before completing OFF migration;
+	 * the crash log shows stale generation bits on freed pages after OFF.
+	 * Reclaim may pause temporarily during the conversion.
+	 */
+	memcg = mem_cgroup_iter(NULL, NULL, NULL);
+	do {
+		lru_gen_change_state(memcg, main ? enable : lru_gen_enabled());
+		cond_resched();
+	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
+
 	if (main) {
 		if (enable)
 			static_branch_enable(&lru_gen_static_key);
 		else
 			static_branch_disable(&lru_gen_static_key);
 	}
-
-	memcg = mem_cgroup_iter(NULL, NULL, NULL);
-	do {
-		lru_gen_change_state(memcg, enable);
-		cond_resched();
-	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
 
 unlock:
 	mutex_unlock(&cgroup_mutex);
@@ -4108,7 +4114,7 @@ static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
 	struct zone *zone = lruvec_zone(lruvec);
 	unsigned long nr, flags;
 	int gen, zid = zone_idx(zone);
-	bool empty;
+	bool empty, report = false;
 
 	if (!READ_ONCE(lrugen->enabled[type]) ||
 	    get_nr_gens(lruvec, type) <= MIN_NR_GENS)
@@ -4118,10 +4124,25 @@ static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 	nr = READ_ONCE(lrugen->sizes[gen][type][zid]);
 	empty = list_empty(&lrugen->lists[gen][type][zid]);
+
+	/*
+	 * A nonzero size with no list entries cannot supply reclaim pages.
+	 * V12R5M recorded 2.8 million such attempts before watchdog reset.
+	 * Do not modify the accounting here: pages may still be in flight.
+	 * Suppress repeated attempts and count only one diagnostic per window.
+	 */
+	if (unlikely(empty && nr) &&
+	    !time_before(jiffies, READ_ONCE(lrugen->reclaim_backoff_until))) {
+		WRITE_ONCE(lrugen->reclaim_backoff_until,
+			   jiffies + max_t(unsigned long, 1,
+					   msecs_to_jiffies(100)));
+		report = true;
+	}
 	spin_unlock_irqrestore(&zone->lru_lock, flags);
 
-	if (unlikely(empty && nr)) {
+	if (unlikely(report)) {
 		atomic64_inc(&lru_gen_diag_empty_oldest);
+		atomic64_inc(&lru_gen_diag_backoffs);
 		if (READ_ONCE(lru_gen_diag_runtime))
 			pr_warn_ratelimited(
 				"lru_gen_diag: empty oldest list with size=%lu type=%d zone=%s\n",

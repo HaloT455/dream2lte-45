@@ -1,4 +1,4 @@
-name: Build V12R5M MGLRU Stability + HALO NPU
+name: Build V12R5N MGLRU Transition Safety + HALO NPU
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -6,6 +6,7 @@ on:
   pull_request:
     branches:
       - agent/v12r5l-mglru-runtime-diagnostics
+      - agent/v12r5m-reclaim-stability
   push:
     branches:
       - v12
@@ -24,6 +25,7 @@ on:
       - agent/v12r5k-mglru-rmap-scanaround
       - agent/v12r5l-mglru-runtime-diagnostics
       - agent/v12r5m-reclaim-stability
+      - agent/v12r5n-transition-safety
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -71,6 +73,7 @@ jobs:
           python3 scripts/test_cpu_ui_hints.py
           python3 scripts/test_ui_trace.py
           python3 scripts/test_mglru_reclaim_stability.py
+          python3 scripts/test_mglru_transition.py
           sh -n scripts/collect_ui_perf.sh
           sh -n scripts/collect_ui_trace.sh
           git diff --check
@@ -83,12 +86,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5M-MGLRU-STABLE-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5N-MGLRU-TRANSITION-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5M-MGLRU-STABLE-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5N-MGLRU-TRANSITION-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -179,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5m-mglru-stability-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5n-transition-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -230,9 +233,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5M-MGLRU-STABLE-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5N-MGLRU-TRANSITION-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5M-MGLRU-STABLE-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5N-MGLRU-TRANSITION-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -249,6 +252,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5m-mglru-stability-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5n-transition-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
