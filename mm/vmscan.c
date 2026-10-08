@@ -4070,15 +4070,19 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
 
 	/*
-	 * Match donor MGLRU reclaim semantics more closely: consume the
-	 * priority-scaled budget in bounded SWAP_CLUSTER_MAX batches until the
-	 * caller's reclaim target is met, the budget is exhausted, or neither
-	 * anon nor file can make progress.  V12R5F performed at most one batch
-	 * per type and could leave free pages below the low watermark while
-	 * hundreds of MB remained eligible.
+	 * Match donor MGLRU reclaim semantics while preserving the Samsung
+	 * 4.4 shrink_lruvec contract: consume the priority-scaled budget in
+	 * bounded SWAP_CLUSTER_MAX batches until THIS lruvec call has reclaimed
+	 * sc->nr_to_reclaim pages, the budget is exhausted, or neither anon nor
+	 * file can make progress.
+	 *
+	 * sc->nr_reclaimed is cumulative across shrink_zones() on 4.4.  Using
+	 * it as an absolute stop condition made later shrink_lruvec() calls skip
+	 * reclaim once an earlier call had reached the target, even with the
+	 * zone still below its low watermark.  Use the delta from entry instead.
 	 */
 	while (budget - consumed >= SWAP_CLUSTER_MAX &&
-	       sc->nr_reclaimed < sc->nr_to_reclaim) {
+	       sc->nr_reclaimed - start_reclaimed < sc->nr_to_reclaim) {
 		unsigned long before_reclaimed = sc->nr_reclaimed;
 		unsigned long before_scanned = sc->nr_scanned;
 		unsigned long batch_budget = min(budget - consumed,
