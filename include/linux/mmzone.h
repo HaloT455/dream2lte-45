@@ -278,6 +278,8 @@ struct page_vma_mapped_walk;
 struct lrugen {
 	unsigned long max_seq;
 	unsigned long min_seq[ANON_AND_FILE];
+	/* Short no-progress cooldown; avoids watchdog starvation under pressure. */
+	unsigned long reclaim_backoff_until;
 	unsigned long timestamps[MAX_NR_GENS];
 	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
 	unsigned long sizes[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
