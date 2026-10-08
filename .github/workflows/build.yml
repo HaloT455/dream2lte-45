@@ -19,6 +19,7 @@ on:
       - agent/v12r5i-mglru-three-gen-floor
       - agent/v12r5j-mglru-any-type-aging
       - agent/v12r5k-mglru-rmap-scanaround
+      - agent/v12r5l-mglru-runtime-diagnostics
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -77,12 +78,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5K-MGLRU-RMAP-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5L-MGLRU-DIAG-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5K-MGLRU-RMAP-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5L-MGLRU-DIAG-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -224,9 +225,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5K-MGLRU-RMAP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5L-MGLRU-DIAG-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5K-MGLRU-RMAP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5L-MGLRU-DIAG-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
