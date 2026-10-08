@@ -4351,7 +4351,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 			 * sleep while in reclaim: simply stop advertising work.
 			 */
 			WRITE_ONCE(lruvec->evictable.reclaim_backoff_until,
-				   jiffies + max(1UL, msecs_to_jiffies(50)));
+				   jiffies + max_t(unsigned long, 1, msecs_to_jiffies(50)));
 			atomic64_inc(&lru_gen_diag_backoffs);
 			*lru_pages = 0;
 		}
