@@ -22,8 +22,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          SDKROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          test -d "$SDKROOT"
+          export PATH="$SDKROOT/cmdline-tools/latest/bin:$SDKROOT/platform-tools:$PATH"
+          sdkmanager --version
+          if [ ! -d "$SDKROOT/platforms/android-35" ]; then
+            yes | sdkmanager "platforms;android-35"
+          fi
+          if [ ! -d "$SDKROOT/build-tools/35.0.0" ]; then
+            yes | sdkmanager "build-tools;35.0.0"
+          fi
 
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
