@@ -176,7 +176,8 @@ static inline bool lru_gen_deletion(struct page *page,
 
 		gen = ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 
-		new_flags = old_flags & ~LRU_GEN_MASK;
+		/* Generation-local usage bits must not escape onto classic LRU. */
+		new_flags = old_flags & ~(LRU_GEN_MASK | LRU_USAGE_MASK);
 		if (lru_gen_is_active(lruvec, gen))
 			new_flags |= BIT(PG_active);
 	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
