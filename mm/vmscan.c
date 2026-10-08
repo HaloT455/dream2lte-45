@@ -4193,6 +4193,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	unsigned long budget;
 	unsigned long consumed = 0;
 	unsigned long start_reclaimed = sc->nr_reclaimed;
+	unsigned long start_scanned = sc->nr_scanned;
 	struct zone *zone = lruvec_zone(lruvec);
 
 	*lru_pages = lru_gen_size_zone(lruvec);
@@ -4306,7 +4307,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 				zone_page_state(zone, NR_INACTIVE_FILE),
 				zone_page_state(zone, NR_FREE_PAGES),
 				budget,
-				sc->nr_scanned - before_scanned);
+				sc->nr_scanned - start_scanned);
 		cond_resched();
 	}
 }
