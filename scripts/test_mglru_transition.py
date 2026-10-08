@@ -18,7 +18,9 @@ assert conversion < switch, "Must migrate all lruvec lists before classic reclai
 assert "main ? enable : lru_gen_enabled()" in fn
 assert "enable && lru_gen_nr_swapfiles" in v
 assert "WRITE_ONCE(lrugen->enabled[1], enable)" in v
-assert "new_flags = old_flags & ~(LRU_GEN_MASK | LRU_USAGE_MASK)" in h
+assert "new_flags = old_flags & ~LRU_GEN_MASK" in h
+assert "new_flags &= ~LRU_USAGE_MASK" in h
+assert "lruvec->evictable.enabled[page_is_file_cache(page)]" in h
 assert "msecs_to_jiffies(100)" in v
 assert "atomic64_inc(&lru_gen_diag_empty_oldest)" in v
 assert "spin_lock_irqsave(&zone->lru_lock, flags)" in v
