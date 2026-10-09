@@ -1,0 +1,56 @@
+name: Alice K510 P1C Exynos8895 clock compile
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p1']
+    paths: ['research/k510/**', '.github/workflows/k510-p1c-clock.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clock-compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential python3 curl
+      - name: Genuine 5.10 + P1 DTS/pinctrl/clock imports
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+      - name: Compile Image and Exynos8895 dream2lte DTB
+        run: |
+          set -o pipefail
+          K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p1c"
+          mkdir -p "$OUT" ci-p1c
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          grep -q '^CONFIG_EXYNOS_ARM64_COMMON_CLK=y' "$OUT/.config"
+          grep -q '^CONFIG_PINCTRL_EXYNOS_ARM64=y' "$OUT/.config"
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j2 Image exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p1c/build.log
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          {
+            echo "Linux 5.10.262 Image and P1C DTB compiled."
+            echo "CLOCK ADAPTER NOT HARDWARE TESTED; NO BOOT IMAGE, NOT FLASHABLE."
+          } > ci-p1c/README-NOT-FLASHABLE.txt
+      - name: Upload build log and no-flash notice
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P1C-CLOCK-COMPILE-LOG-NOT-FLASHABLE
+          path: ci-p1c/
+          retention-days: 14
+          if-no-files-found: error
