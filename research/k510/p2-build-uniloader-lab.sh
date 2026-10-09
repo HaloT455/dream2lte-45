@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# P2A: sandbox build of upstream uniLoader using the SM-G950F board target.
-# This is NOT yet an adapted SM-G955F loader and SHALL NEVER be flashed.
+# P2C: combine P2B SM-G955F compiler-tested board with real Linux 5.10.
+# Board PMIC/DECON writes disabled. Real bootloader handoff NOT validated.
 set -euo pipefail
 SRC="$1"
 DTB="$2"
@@ -21,18 +21,21 @@ fi
     echo 'Unexpected uniLoader source revision' >&2; exit 4;
 }
 cd "$WORK/uniLoader"
+# Adapt donor SM-G950F board into explicit compiler-tested SM-G955F profile.
+# P2B disabled unverified DECON and PMIC writes.
+bash "$OLDPWD/research/k510/p2-adapt-uniloader-dream2lte.sh" .
 mkdir -p blob
 cp "$SRC" blob/Image
 cp "$DTB" blob/dtb
 cp "$RAMDISK" blob/ramdisk
 # Verified upstream only has dreamlte board config: NOT dream2lte.
 # Compile to identify integration/toolchain/linker blockers.
-make ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- dreamlte_defconfig
+make ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- dream2lte_defconfig
 grep -q '^CONFIG_LIBFDT=y' .config
-grep -q '^CONFIG_SAMSUNG_DREAMLTE=y' .config
+grep -q '^CONFIG_SAMSUNG_DREAM2LTE=y' .config
 make ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- -j2
 test -s uniLoader
 aarch64-linux-gnu-objdump -f uniLoader.o | grep -q 'aarch64'
 sha256sum uniLoader blob/Image blob/dtb blob/ramdisk > "$WORK/uniloader-lab-sha256.txt"
-echo 'Upstream uniLoader compiled with dreamlte target; this is NOT SM-G955F handoff validation.'
+echo 'uniLoader compiled with experimental SM-G955F dream2lte target; hardware handoff NOT verified.'
 echo 'NOT A BOOT IMAGE. NEVER FLASH.'
