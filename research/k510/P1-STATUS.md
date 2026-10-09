@@ -1,0 +1,54 @@
+# Alice K510 P1 — Exynos8895 Platform Port
+
+**Device:** Galaxy S8+ / SM-G955F / Exynos8895 (dream2lte), hardware rev05 measured by running Android.
+**Kernel:** real upstream Linux 5.10.262 fetched from gregkh/linux in CI; original 4.4 repository tree is used only as a workflow host and driver-reference donor.
+
+## Deliverables
+
+| Port layer | Source | CI workflow | Gate |
+| --- | --- | --- | --- |
+| P1A: Exynos8895 DTS, pinctrl DTS, clock binding IDs, dream2lte skeleton | upstream v6.13 | `k510-p1a-dtb.yml` | DTB compiles |
+| P1B: Exynos8895 8-bank pinctrl data + OF match integrated into the **5.10 framework** | upstream v6.13 | `k510-p1b-pinctrl.yml` | Full ARM64 Image compiles |
+| P1C: Exynos8895 clock tables + preliminary 5.10 CCF compatibility adapter | upstream v6.13 | `k510-p1c-clock.yml` | Full ARM64 Image compiles |
+
+All compilation steps use a fresh, independently fetched Linux **v5.10.262** tree. The root repository Makefile is still version 4.4, and **must never be renamed to pretend that it is 5.10**.
+
+## Exynos8895 sources
+
+- Samsung downstream 4.4 board source (in this repo): `arch/arm64/boot/dts/exynos/exynos8895-dream2lte_eur_open_09.dts`, `exynos8895-dream2lte_common.dtsi`, `exynos8895-rmem.dtsi`.
+- Linux v6.13: `exynos8895.dtsi`, `exynos8895-pinctrl.dtsi`, `exynos8895-dreamlte.dts` (S8 **not S8+**), `clk-exynos8895.c`, pinctrl bank data.
+
+## Run entirely on GitHub Actions
+
+1. Open Actions in this repository.
+2. Open `Alice K510 P1A Exynos8895 DTB compile` (or P1B/P1C).
+3. Use *Run workflow* and choose branch `research/k510-dream2lte-p1`.
+4. Inspect build log and artifact. P1A/P1B DTBs are clearly named `NOT-FLASHABLE`.
+
+Alternatively locally:
+
+```bash
+export K510_WORKDIR=/large/external/ssd/alice-k510
+bash research/k510/bootstrap.sh --fetch
+SRC="$K510_WORKDIR/linux-5.10.262"
+bash research/k510/p1-import-dts.sh "$SRC"
+bash research/k510/p1-import-pinctrl.sh "$SRC"
+bash research/k510/p1-import-clocks.sh "$SRC"
+# Standard Linux 5.10 cross-build steps follow; no custom boot image created.
+```
+
+## Boot blocker: not ready to flash
+
+The P1 DTB **deliberately lacks verified RAM and reserved-memory maps**. Some memory carveouts in the Samsung 4.4 downstream tree include the modem, secure camera/TEE, display/ION and other secure regions. Do not assume that the upstream S8 (SM-G950F) device's memory map is suitable for the S8+ SM-G955F. Samsung bootloader handoff, DRAM and early UART/pstore, storage, PMIC, regulator/clock dependencies and vendor drivers must be proven first. The P1C clock adapter is a compile/ABI experiment, not proof of hardware clock correctness or suspend/resume behavior.
+
+**No flashable boot.img exists.** Never package the generic `Image` and P1 DTB into a boot partition. Keep the known-working Alice V12R5T kernel 4.4.302 on the phone.
+
+## P1 acceptance
+
+- [x] Create standalone P1 GitHub branch separate from known-good V12.
+- [x] Backport DTS and dream2lte DTB make rule into genuine 5.10.
+- [x] Pass P1A device-tree compiler on GitHub Actions.
+- [ ] Pass P1B pinctrl source compile and audit OF/GPIO offsets.
+- [ ] Pass P1C clock source compile and audit CCF gate/PLL sequencing.
+- [ ] Audit actual SM-G955F boot layout and reserved RAM areas.
+- [ ] Driver-level power-on testing and boot image P2.
