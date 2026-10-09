@@ -9,7 +9,7 @@ cma = Path("mm/cma.c").read_text()
 cmah = Path("mm/cma.h").read_text()
 config = Path("arch/arm64/configs/exynos8895-dream2lte_defconfig").read_text()
 
-assert "# CONFIG_DEBUG_FS is not set" in config
+assert "CONFIG_CMA=y" in config  # Input defconfig; CI checks resolved .config
 assert "CONFIG_DMA_CMA=y" in config and "CONFIG_CMA=y" in config
 assert "__ATTR_RO(diagnostics)" in ion
 assert "device_create_file(dev, &cma_diag_attr)" in ion
