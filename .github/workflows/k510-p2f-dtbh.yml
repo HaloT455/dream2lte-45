@@ -1,0 +1,62 @@
+name: Alice K510 P2F Samsung DTBH v2 offline test
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p2f']
+    paths:
+      - 'research/k510/p2f-dtbh-pack.py'
+      - '.github/workflows/k510-p2f-dtbh.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dtbh-compiler-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install device tree compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y device-tree-compiler
+      - name: Generate synthetic SM-G955F device tree fixture
+        run: |
+          mkdir -p ci-p2f
+          cat > ci-p2f/fixture.dts <<'DTS'
+          /dts-v1/;
+          / {
+              model = "Samsung Galaxy S8+ (SM-G955F) - fake CI fixture";
+              compatible = "samsung,dream2lte", "samsung,exynos8895";
+              model_info-chip = <8895>;
+              model_info-platform = "android";
+              model_info-subtype = "samsung";
+              model_info-hw_rev = <10>;
+              model_info-hw_rev_end = <255>;
+          };
+          DTS
+          dtc -I dts -O dtb -o ci-p2f/fixture.dtb ci-p2f/fixture.dts
+      - name: Build Samsung DTBH from synthetic FDT and inspect header fields
+        run: |
+          set -euxo pipefail
+          python3 research/k510/p2f-dtbh-pack.py ci-p2f/fixture.dtb ci-p2f/fixture.dtbh
+          python3 - <<'PY'
+          import pathlib,struct
+          d=pathlib.Path("ci-p2f/fixture.dtbh").read_bytes()
+          m,v,count,chip,platform,subtype,rev,end,off,sz,space=struct.unpack_from('<4s10I',d)
+          assert m==b'DTBH' and v==2 and count==1
+          assert chip==8895 and platform==0x50a6 and subtype==0x217584da
+          assert (rev,end,off,space)==(10,255,2048,32)
+          assert sz%2048==0
+          assert d[off:off+4]==b'\xd0\x0d\xfe\xed'
+          assert len(d)==2048+sz
+          print("PASS: Samsung DTBH v2 Exynos8895 entry and FDT offset verified")
+          PY
+          echo 'SYNTHETIC FDT ONLY: NO phone files and NO Android boot image.' > ci-p2f/README-NOT-FLASHABLE.txt
+      - name: Upload metadata only
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P2F-SYNTHETIC-DTBH-NOT-FLASHABLE
+          path: |
+            ci-p2f/fixture.dts
+            ci-p2f/README-NOT-FLASHABLE.txt
+          retention-days: 7
