@@ -1,0 +1,30 @@
+name: Alice K510 P2E offline BOOT structure parser tests
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p2']
+    paths:
+      - 'research/k510/p2e-inspect-boot.py'
+      - 'research/k510/p2e-test-inspector.py'
+      - '.github/workflows/k510-p2e-stock-layout.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-only-offline-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout parser and synthetic tests
+        uses: actions/checkout@v4
+      - name: Verify Python parser without uploading any private BOOT data
+        run: |
+          python3 -m py_compile research/k510/p2e-inspect-boot.py
+          python3 -m py_compile research/k510/p2e-test-inspector.py
+          python3 research/k510/p2e-test-inspector.py
+      - name: Mark test as non-flash validation
+        run: |
+          echo 'P2E parser unit tests passed using entirely synthetic data.'
+          echo 'No real BOOT partition or boot image exists in this CI workflow.'
