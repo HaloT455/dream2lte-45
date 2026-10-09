@@ -1,0 +1,157 @@
+name: Alice K510 P2G-R1 DEBUG SM-G955F boot.img (BOOTLOOP RISK)
+
+on:
+  push:
+    branches: ['experimental/k510-p2g-r1-pstore-debug']
+    paths:
+      - 'research/k510/p2g-pack-experimental-boot.py'
+      - 'research/k510/p2g-r1-pstore.sh'
+      - 'research/k510/p2-adapt-uniloader-dream2lte.sh'
+      - 'research/k510/p2f-dtbh-pack.py'
+      - 'research/k510/p2-*.sh'
+      - 'research/k510/p1-*.sh'
+      - 'research/k510/P1D-RMEM.txt'
+      - 'research/k510/bootstrap.sh'
+      - '.github/workflows/k510-p2g-experimental-boot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-unverified-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install AArch64 cross-build toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross bc bison flex libssl-dev libelf-dev build-essential \
+            device-tree-compiler python3 curl
+      - name: Prepare genuine Linux 5.10.262 with P1/P2 backports
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          make -s -C "$SRC" kernelversion | grep -x '5.10.262'
+      - name: Compile Linux 5.10.262 ARM64 kernel and S8+ DTB
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p2g"
+          mkdir -p "$OUT" ci-p2g
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          for cfg in PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG; do
+            grep -q "^CONFIG_${cfg}=y$" "$OUT/.config"
+          done
+          grep -q '^CONFIG_BLK_DEV_INITRD=y' "$OUT/.config"
+          grep -q '^CONFIG_EXYNOS_ARM64_COMMON_CLK=y' "$OUT/.config"
+          grep -q '^CONFIG_PINCTRL_EXYNOS_ARM64=y' "$OUT/.config"
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 Image exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p2g/kernel-build.log
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          fdtget -t s "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb" \
+            /chosen bootargs | grep -q 'rdinit=/init'
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          fdtget -t x "$DTB" '/reserved-memory/ramoops@92000000' reg | grep -qx '0 92000000 8000'
+          test "$(fdtget -t x "$DTB" '/reserved-memory/ramoops@92000000' console-size)" = 4000
+          # uniLoader copies Image to 0x90000000; avoid 0x92000000 ramoops
+          IMAGE_BYTES="$(stat -c %s "$OUT/arch/arm64/boot/Image")"
+          test "$IMAGE_BYTES" -lt 33554432 || {
+            echo "FATAL: Image ($IMAGE_BYTES) overlaps ramoops 0x92000000" >&2
+            exit 16
+          }
+      - name: Build AArch64 debug initramfs and Samsung DTBH
+        run: |
+          set -euxo pipefail
+          DIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/p2-make-initramfs.sh "$DIR/p2g-init"
+          python3 research/k510/p2f-dtbh-pack.py \
+            "$DIR/out-p2g/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb" \
+            "$DIR/p2g-dtbh.img"
+          test -s "$DIR/p2g-init/initramfs.cpio.gz"
+          test -s "$DIR/p2g-dtbh.img"
+      - name: Link SM-G955F uniLoader with REAL Linux 5.10 payload
+        run: |
+          set -euxo pipefail
+          DIR="$RUNNER_TEMP/alice-k510"
+          SRC="$DIR/out-p2g/arch/arm64/boot"
+          bash research/k510/p2-build-uniloader-lab.sh \
+            "$SRC/Image" "$SRC/dts/exynos/exynos8895-dream2lte.dtb" \
+            "$DIR/p2g-init/initramfs.cpio.gz" "$DIR/p2g-loader" \
+            2>&1 | tee ci-p2g/loader-build.log
+          test -s "$DIR/p2g-loader/uniLoader/uniLoader"
+          grep -q '^CONFIG_SAMSUNG_DREAM2LTE=y' \
+            "$DIR/p2g-loader/uniLoader/.config"
+          test "$(stat -c %s "$DIR/p2g-loader/uniLoader/uniLoader")" -lt 40000000
+          # Loader base 0x87000000 -> payload physical 0x90000000
+          test "$(stat -c %s "$DIR/p2g-loader/uniLoader/uniLoader")" -lt 50331648
+          grep -q 'simplefb 0xCC000000 overlaps camera carveout; disabled' \
+            "$DIR/p2g-loader/uniLoader/board/samsung/board-dream2lte.c"
+          grep -q '.num_devices = 0,' \
+            "$DIR/p2g-loader/uniLoader/board/samsung/board-dream2lte.c"
+      - name: Construct 40MiB EXPERIMENTAL boot.img and verify it
+        run: |
+          set -euxo pipefail
+          DIR="$RUNNER_TEMP/alice-k510"
+          python3 research/k510/p2g-pack-experimental-boot.py \
+            --loader "$DIR/p2g-loader/uniLoader/uniLoader" \
+            --ramdisk "$DIR/p2g-init/initramfs.cpio.gz" \
+            --dtbh "$DIR/p2g-dtbh.img" \
+            --out ci-p2g/Alice_K510_P2G_R1_SM-G955F_DEBUG_boot.img \
+            --report ci-p2g/boot-image-structure.json
+          python3 - <<'PY'
+          import hashlib,json,pathlib,struct
+          p=pathlib.Path("ci-p2g/Alice_K510_P2G_R1_SM-G955F_DEBUG_boot.img")
+          d=p.read_bytes()
+          m=json.load(open("ci-p2g/boot-image-structure.json"))
+          assert len(d)==41943040
+          assert d[:8]==b'ANDROID!'
+          ks,ka,rs,ra,ss,sa,ta,page,ds=struct.unpack_from("<9I",d,8)
+          assert (ka,ra,ta,page,ss)==(0x10008000,0x11000000,0x10000100,2048,0)
+          assert hashlib.sha256(d).hexdigest()==m["sha256"]
+          align=lambda x: (x+page-1)//page*page
+          start=page+align(ks)+align(rs)
+          assert d[start:start+4]==b'DTBH'
+          assert d[start+2048:start+2052]==b'\xd0\x0d\xfe\xed'
+          assert d[start+align(ds):start+align(ds)+16]==b'SEANDROIDENFORCE'
+          print("Android legacy packing and Samsung DTBH structural tests PASS")
+          print("Hardware boot capability is UNPROVEN.")
+          PY
+          cat > ci-p2g/READ_BEFORE_FLASH.txt <<'NOTICE'
+          DANGER: P2G-R1 EXPERIMENTAL SM-G955F EXYNOS8895 BOOT IMG.
+          Kernel: real upstream Linux 5.10.262 plus incomplete Samsung platform port.
+          Loader: experimental dream2lte uniLoader, regulator/DECON MMIO unvalidated.
+          This is a P2G early-boot research image ONLY, not Android/One UI.
+          It is NOT TESTED ON REAL HARDWARE and MAY NOT BOOT / MAY BLACKSCREEN.
+          Do NOT flash without confirmed Samsung Download Mode recovery,
+          verified BOOT backup and a working method to restore boot.img.
+          Image is UNSIGNED; firmware security checks may reject it.
+          NO recovery, EFS, modem, userdata or system partitions should be modified.
+          WARNING: PSTORE_RAM + ramoops 0x92000000 enabled, only if Linux 5.10 reaches pstore init.
+          WARNING: This cannot diagnose hangs prior to pstore initialization.
+          NOTICE
+          sha256sum ci-p2g/Alice_K510_P2G_R1_SM-G955F_DEBUG_boot.img \
+            > ci-p2g/SHA256SUMS
+      - name: Upload EXPERIMENTAL boot.img (not tested)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P2G-R1-SM-G955F-UNVERIFIED-DEBUG-BOOT
+          path: |
+            ci-p2g/Alice_K510_P2G_R1_SM-G955F_DEBUG_boot.img
+            ci-p2g/boot-image-structure.json
+            ci-p2g/READ_BEFORE_FLASH.txt
+            ci-p2g/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
