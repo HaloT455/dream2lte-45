@@ -12,7 +12,7 @@ on:
       - 'research/k510/p1-*.sh'
       - 'research/k510/P1D-RMEM.txt'
       - 'research/k510/bootstrap.sh'
-      - '.github/workflows/k510-p2g-experimental-boot.yml'
+      - '.github/workflows/k510-p2g-r1-experimental-boot.yml'
   workflow_dispatch:
 
 permissions:
