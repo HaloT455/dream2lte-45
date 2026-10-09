@@ -2,6 +2,9 @@
 #define __MM_CMA_H__
 
 struct cma {
+	/* Lockless read-only diagnostics; no changes to allocation policy. */
+	atomic64_t diag_busy_retries;
+	atomic64_t diag_failed_requests;
 #ifdef CONFIG_RBIN
 	bool is_rbin;
 #endif
