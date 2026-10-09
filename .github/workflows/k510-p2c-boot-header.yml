@@ -1,0 +1,49 @@
+name: Alice K510 P2C verify S8+ legacy boot header
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p2']
+    paths:
+      - 'research/k510/P2C-BOOT-HEADER.txt'
+      - 'research/k510/p2-audit-legacy-boot.py'
+      - '.github/workflows/k510-p2c-boot-header.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-boot-structural-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit read-only SM-G955F legacy boot header against measured RAM map
+        run: |
+          set -euxo pipefail
+          mkdir -p ci-p2c
+          python3 research/k510/p2-audit-legacy-boot.py \
+            research/k510/P2C-BOOT-HEADER.txt \
+            ci-p2c/boot-layout-audit.json | tee ci-p2c/audit-console.log
+          python3 - <<'PY'
+          import json
+          d=json.load(open('ci-p2c/boot-layout-audit.json'))
+          assert d['page_size']==2048
+          assert d['kernel_size']==38149864
+          assert d['ramdisk_size']==700389
+          assert d['dt_size_assumed']==229376
+          assert d['kernel_addr_inside_p1d_ram'] is False
+          assert d['ramdisk_addr_inside_p1d_ram'] is False
+          assert d['format_verified_from_full_image'] is False
+          assert d['assumed_min_image_size']==39081984
+          print("Legacy header layout audit PASSED, physical address mapping UNPROVEN")
+          PY
+          printf '%s\n' \
+            'BOOT header only: no full stock boot.img and no verified S-Boot load addresses.' \
+            'DO NOT repack or flash based on the inferred header alone.' > ci-p2c/DO_NOT_FLASH.txt
+      - name: Upload small report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P2C-LEGACY-BOOT-HEADER-AUDIT-NOT-FLASHABLE
+          path: ci-p2c/
+          retention-days: 14
