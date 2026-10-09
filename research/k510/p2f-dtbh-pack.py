@@ -24,8 +24,9 @@ def package(blob):
         raise ValueError('FDT totalsize differs from actual byte length')
     if len(blob)>8*1024*1024:
         raise ValueError('Unexpectedly large Device Tree')
-    if b'samsung,dream2lte\0' not in blob:
-        raise ValueError('Not a Samsung dream2lte Device Tree')
+    if (b'samsung,dream2lte\0' not in blob and
+            b'samsung, SM-G955F rev05\0' not in blob):
+        raise ValueError('Not a recognized SM-G955F Device Tree')
     if b'SM-G955F' not in blob:
         raise ValueError('SM-G955F board marker missing')
     padded=align(len(blob))
