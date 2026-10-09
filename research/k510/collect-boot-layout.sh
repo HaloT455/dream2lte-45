@@ -8,7 +8,7 @@ command -v adb >/dev/null || { echo "ADB missing" >&2; exit 2; }
 adb shell "su -c 'id'" | grep -q 'uid=0' || {
   echo "KernelSU root not available" >&2; exit 4;
 }
-OUTDIR="\${K510_LAYOUT_OUTDIR:-$HOME/V12R5T_TEST}"
+OUTDIR="${K510_LAYOUT_OUTDIR:-$HOME/V12R5T_TEST}"
 mkdir -p "$OUTDIR"
 REPORT="$OUTDIR/k510-layout-$(date +%Y%m%d-%H%M%S).txt"
 {
