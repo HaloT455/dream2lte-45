@@ -49,8 +49,8 @@ The P1 DTB **deliberately lacks verified RAM and reserved-memory maps**. Some me
 - [x] Backport DTS and dream2lte DTB make rule into genuine 5.10.
 - [x] Pass P1A device-tree compiler on GitHub Actions.
 - [x] P1B pinctrl source compile passed on GitHub Actions (hardware GPIO/EINT offsets still need validation).
-- [ ] P1C CCF build initially failed: Linux 5.10 missing PLL1051x/1052x; P1C2 adds backported PLL ops + 5.10 API fix. CI revalidation pending. Hardware gate/PLL sequencing NOT verified.
-- [ ] Audit actual SM-G955F boot layout and reserved RAM areas; use read-only `research/k510/collect-boot-layout.sh` on the real device and compare with Samsung 4.4 `exynos8895-rmem.dtsi`.
+- [x] P1C2 kernel + Exynos8895 clock/PLL successfully compiled in GitHub Actions run 37967303196. Hardware gate/PLL sequencing still NOT validated.
+- [x] P1D read-only log from SM-G955F rev05 received (2026-10-10 04:49:56 +07). Confirmed 3 RAM ranges, 12 reserved-memory ranges, BOOT=/dev/block/sda7 and RECOVERY=/dev/block/sda8. P1D DTS compilation pending; full hardware validation NOT complete.
 - [ ] Driver-level power-on testing and boot image P2.
 
 ## Current critical P1C blocker and remediation
@@ -62,3 +62,12 @@ Device live boot-layout read-only collection:
 bash research/k510/collect-boot-layout.sh
 ```
 Only run this on the **already-booted known-good V12R5T** using Zorin OS USB ADB. Upload the text report; no partitions are accessed for writing.
+
+## Observed device layout (P1D)
+
+- RAM: `0x80000000 + 0x3c800000`, `0xc0000000 + 0x40000000`, `0x880000000 + 0x80000000` (~3.945 GiB physical addressable RAM regions). The live zero-sized `memory@900000000` is ignored.
+- Twelve reserved-memory ranges: see `P1D-RMEM.txt`. These total ~566 MiB of reservation address ranges; some were reusable in 4.4, so this is not a measurement of permanently unavailable RAM.
+- Separately sourced from Samsung downstream 4.4 DTS, not the live log: `/memreserve/ 0xe0000000 0x1900000` (~25 MiB).
+- The P1D compile-only DTS marks all twelve nodes `no-map` conservatively. This is deliberately NOT the final ION/camera/modem/vendor implementation.
+- On the real phone, `/proc/device-tree/model` is SM-G955F rev05; `ro.boot.revision` is 10, which is a different numbering field and not evidence of PCB revision 10.
+- P1D CI: `.github/workflows/k510-p1d-memory.yml`. Compiler acceptance does not authorize flash.
