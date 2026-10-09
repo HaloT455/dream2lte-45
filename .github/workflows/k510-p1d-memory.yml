@@ -1,0 +1,60 @@
+name: Alice K510 P1D SM-G955F rev05 RAM DTB audit
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p1']
+    paths:
+      - 'research/k510/P1D-RMEM.txt'
+      - 'research/k510/p1-apply-memory.sh'
+      - '.github/workflows/k510-p1d-memory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-ram-dtb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 DTB cross-build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Build 5.10.262 DTS with measured memory topology
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          OUT="$K510_WORKDIR/out-p1d"
+          mkdir -p "$OUT" ci-p1d
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p1d/build.log
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t x "$DTB" /memory@80000000 reg | tee ci-p1d/ram-cells.txt
+          fdtget -t x "$DTB" /reserved-memory/modem_if@f4c00000 reg | tee ci-p1d/modem-cells.txt
+          test "$(fdtget -l "$DTB" /reserved-memory | wc -l)" -eq 12
+          grep -q -i '80000000 3c800000' ci-p1d/ram-cells.txt
+          grep -q -i '8 80000000 80000000' ci-p1d/ram-cells.txt
+          grep -q -i 'f4c00000 9000000' ci-p1d/modem-cells.txt
+          dtc -I dtb -O dts -o ci-p1d/exynos8895-dream2lte-P1D-DECOMPILED.dts "$DTB"
+          cp "$DTB" ci-p1d/exynos8895-dream2lte-P1D-NOT-FLASHABLE.dtb
+          printf '%s\n' \
+            'This DTB includes live rev05 memory ranges and conservative no-map carveouts.' \
+            'The legacy /memreserve/ range is sourced separately from Samsung 4.4 DTS.' \
+            'This is NOT a device-ready boot image. DO NOT FLASH.' > ci-p1d/README-NOT-FLASHABLE.txt
+      - name: Upload P1D audit (not a boot image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P1D-SM-G955F-MEMORY-DTB-NOT-FLASHABLE
+          path: ci-p1d/
+          if-no-files-found: warn
+          retention-days: 14
