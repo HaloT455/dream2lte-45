@@ -2216,6 +2216,10 @@ static struct attribute_group vmscan_attr_group = {
 void lru_gen_set_state(bool enable, bool main, bool swap);
 
 static bool lru_gen_scan_around_runtime;
+/* Experimental: explicit opt-in; never page-table walk in direct reclaim. */
+static bool lru_gen_ptwalk_runtime;
+static unsigned long lru_gen_ptwalk_retry_after;
+static atomic64_t lru_gen_diag_ptwalk_rounds = ATOMIC64_INIT(0);
 static bool lru_gen_diag_runtime;
 static atomic64_t lru_gen_diag_age_advances = ATOMIC64_INIT(0);
 static atomic64_t lru_gen_diag_scan_calls = ATOMIC64_INIT(0);
@@ -2292,6 +2296,33 @@ static struct kobj_attribute lru_gen_scan_around_attr =
 	__ATTR(scan_around, 0644, lru_gen_scan_around_show,
 	       lru_gen_scan_around_store);
 
+/*
+ * Keep page-table aging independently switchable while we validate this
+ * Samsung 4.4 backport.  The full MGLRU runtime switch is unchanged.
+ */
+static ssize_t lru_gen_ptwalk_show(struct kobject *kobj,
+				   struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", READ_ONCE(lru_gen_ptwalk_runtime) ? 1 : 0);
+}
+
+static ssize_t lru_gen_ptwalk_store(struct kobject *kobj,
+				    struct kobj_attribute *attr,
+				    const char *buf, size_t count)
+{
+	int mode;
+	int err = kstrtoint(buf, 10, &mode);
+
+	if (err || (mode != 0 && mode != 1))
+		return -EINVAL;
+
+	WRITE_ONCE(lru_gen_ptwalk_runtime, mode == 1);
+	return count;
+}
+
+static struct kobj_attribute lru_gen_ptwalk_attr =
+	__ATTR(ptwalk, 0644, lru_gen_ptwalk_show, lru_gen_ptwalk_store);
+
 static ssize_t lru_gen_diag_show(struct kobject *kobj,
 				struct kobj_attribute *attr, char *buf)
 {
@@ -2319,14 +2350,16 @@ static ssize_t lru_gen_stats_show(struct kobject *kobj,
 				 struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE,
-		"scan_around=%d diag=%d\n"
-		"age_advances=%lld\n"
+		"scan_around=%d ptwalk=%d diag=%d\n"
+		"ptwalk_rounds=%lld age_advances=%lld\n"
 		"scan_calls=%lld scan_promoted_pages=%lld\n"
 		"reclaim_batches=%lld reclaim_scanned=%lld reclaim_reclaimed=%lld\n"
 		"no_progress=%lld backoffs=%lld empty_oldest=%lld\n"
 		"misplaced_fixed=%lld misplaced_rejected=%lld\n",
 		READ_ONCE(lru_gen_scan_around_runtime) ? 1 : 0,
+		READ_ONCE(lru_gen_ptwalk_runtime) ? 1 : 0,
 		READ_ONCE(lru_gen_diag_runtime) ? 1 : 0,
+		(long long)atomic64_read(&lru_gen_diag_ptwalk_rounds),
 		(long long)atomic64_read(&lru_gen_diag_age_advances),
 		(long long)atomic64_read(&lru_gen_diag_scan_calls),
 		(long long)atomic64_read(&lru_gen_diag_scan_promoted),
@@ -2350,6 +2383,7 @@ static ssize_t lru_gen_stats_store(struct kobject *kobj,
 	if (err || mode != 0)
 		return -EINVAL;
 
+	atomic64_set(&lru_gen_diag_ptwalk_rounds, 0);
 	atomic64_set(&lru_gen_diag_age_advances, 0);
 	atomic64_set(&lru_gen_diag_scan_calls, 0);
 	atomic64_set(&lru_gen_diag_scan_promoted, 0);
@@ -2370,6 +2404,7 @@ static struct kobj_attribute lru_gen_stats_attr =
 static struct attribute *lru_gen_attrs[] = {
 	&lru_gen_enabled_attr.attr,
 	&lru_gen_scan_around_attr.attr,
+	&lru_gen_ptwalk_attr.attr,
 	&lru_gen_diag_attr.attr,
 	&lru_gen_stats_attr.attr,
 	NULL,
@@ -3247,8 +3282,34 @@ static void lru_gen_walk_mm_legacy(struct mm_walk_args *args,
 		return;
 	}
 
-	if (mm->highest_vm_end)
-		walk_page_range(0, mm->highest_vm_end, &walk);
+	/*
+	 * V12R5T: bounded page-table sampling instead of walking the entire
+	 * address space of every app while kswapd is reclaiming. Rotate both
+	 * the VMA and its 2 MiB window across generations. Rmap still provides
+	 * the ordinary per-page access feedback for pages not sampled here.
+	 *
+	 * This is deliberately a conservative sampling bridge, not the
+	 * unbounded full-mm walker from modern kernels.
+	 */
+	if (mm->mmap && mm->map_count > 0) {
+		struct vm_area_struct *vma = mm->mmap;
+		unsigned int slot = args->max_seq %
+				    min_t(unsigned int, mm->map_count, 128);
+		unsigned long start, end, windows;
+
+		while (slot-- && vma->vm_next)
+			vma = vma->vm_next;
+
+		if (vma->vm_end > vma->vm_start) {
+			windows = DIV_ROUND_UP(vma->vm_end - vma->vm_start,
+						2UL * 1024 * 1024);
+			start = vma->vm_start +
+				((args->max_seq / 128) % windows) *
+				(2UL * 1024 * 1024);
+			end = min(vma->vm_end, start + 2UL * 1024 * 1024);
+			walk_page_range(start, end, &walk);
+		}
+	}
 
 	up_read(&mm->mmap_sem);
 	cond_resched();
@@ -4336,8 +4397,24 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 * avoids one type losing its cold/inactive pool while waiting for the
 	 * other type to catch up.
 	 */
-	if (lru_gen_needs_new_generation(lruvec))
-		lru_gen_inc_max_seq_legacy(lruvec);
+	if (lru_gen_needs_new_generation(lruvec)) {
+		/*
+		 * Do not page-table walk from direct reclaim or under the LRU
+		 * lock. Rate-limit sampling for kswapd, keep classic generation
+		 * advancement as fallback to guarantee reclaim progress.
+		 */
+		if (current_is_kswapd() &&
+		    READ_ONCE(lru_gen_ptwalk_runtime) &&
+		    time_after_eq(jiffies,
+				  READ_ONCE(lru_gen_ptwalk_retry_after))) {
+			WRITE_ONCE(lru_gen_ptwalk_retry_after,
+				   jiffies + msecs_to_jiffies(250));
+			atomic64_inc(&lru_gen_diag_ptwalk_rounds);
+			lru_gen_age_lruvec_legacy(lruvec, sc, swappiness);
+		} else {
+			lru_gen_inc_max_seq_legacy(lruvec);
+		}
+	}
 
 	budget = lru_gen_reclaim_budget(lruvec, sc, swappiness);
 	if (!budget) {

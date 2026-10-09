@@ -1,4 +1,4 @@
-name: Build V12R5S Swappiness Range + HALO NPU
+name: Build V12R5T MGLRU Stability + HALO NPU
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -31,6 +31,7 @@ on:
       - agent/v12r5q-cma-isolation-classification
       - agent/v12r5r-zsmalloc-cma-migration
       - agent/v12r5s-stability
+      - agent/v12r5t-mglru-aging-stability
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -80,6 +81,7 @@ jobs:
           python3 scripts/test_mglru_reclaim_stability.py
           python3 scripts/test_mglru_transition.py
           python3 scripts/test_mglru_accounting_audit.py
+          python3 scripts/test_v12r5t_mglru_aging_lmkd.py
           python3 scripts/test_v12r5p_ion_cma_diag.py
           python3 scripts/test_v12r5q_page_isolation_diag.py
           python3 scripts/test_v12r5r_zsmalloc_cma_migration.py
@@ -95,12 +97,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5S-STABILITY-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5T-MGLRU-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5S-STABILITY-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5T-MGLRU-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -142,6 +144,8 @@ jobs:
           grep -q 'lru_gen_scan_around' mm/vmscan.c
           ! grep -q 'lru_gen_scan_around(&pvmw)' mm/rmap.c
           grep -q 'lru_gen_reclaim_batch' mm/vmscan.c
+          grep -q '__ATTR(ptwalk, 0644, lru_gen_ptwalk_show, lru_gen_ptwalk_store)' mm/vmscan.c
+          grep -q 'lru_gen_age_lruvec_legacy(lruvec, sc, swappiness);' mm/vmscan.c
           grep -q 'psi_trigger_create' kernel/sched/psi.c
           grep -q 'proc_create("pressure/memory"' kernel/sched/psi.c
           grep -q 'psi_memstall_enter' mm/page_alloc.c
@@ -204,7 +208,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5s-stability-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-mglru-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -264,9 +268,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5S-STABILITY-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-MGLRU-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5S-STABILITY-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-MGLRU-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -283,6 +287,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5s-stability-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-mglru-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
