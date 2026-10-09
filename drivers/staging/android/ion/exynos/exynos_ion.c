@@ -555,8 +555,25 @@ static ssize_t region_id_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", pdata->id);
 }
 
+/*
+ * Read-only diagnostics live alongside existing ion_cma region_name/region_id.
+ * No CONFIG_DEBUG_FS dependency and no buffer addresses or process IDs.
+ */
+static ssize_t diagnostics_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct exynos_ion_platform_heap *pdata = dev_get_drvdata(dev);
+
+	if (!pdata || !pdata->heap ||
+	    pdata->heap->type != ION_HEAP_TYPE_DMA)
+		return -ENODEV;
+
+	return ion_cma_diag_show(pdata->heap, buf);
+}
+
 static struct device_attribute cma_regname_attr = __ATTR_RO(region_name);
 static struct device_attribute cma_regid_attr = __ATTR_RO(region_id);
+static struct device_attribute cma_diag_attr = __ATTR_RO(diagnostics);
 
 static int __init exynos_ion_create_cma_devices(
 				struct exynos_ion_platform_heap *pdata)
@@ -590,6 +607,11 @@ static int __init exynos_ion_create_cma_devices(
 	if (ret)
 		dev_err(dev, "%s: failed to create %s file (%d)\n",
 				__func__, cma_regname_attr.attr.name, ret);
+
+	ret = device_create_file(dev, &cma_diag_attr);
+	if (ret)
+		dev_err(dev, "%s: failed to create %s file (%d)\n",
+				__func__, cma_diag_attr.attr.name, ret);
 
 	return 0;
 }
