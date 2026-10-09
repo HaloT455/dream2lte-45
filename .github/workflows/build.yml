@@ -102,7 +102,9 @@ jobs:
 
       - name: Validate integration
         run: |
+          set -ex
           OUT="out-${{ matrix.variant }}"
+          grep -E '^(# )?CONFIG_(CMA|DMA_CMA|DEBUG_FS)' "$OUT/.config" || true
           grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set$' "$OUT/.config"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_PSI=y$' "$OUT/.config"
