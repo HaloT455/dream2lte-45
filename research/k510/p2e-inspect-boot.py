@@ -108,7 +108,12 @@ def inspect(path):
         "extra_matching_dtbh_copies":copies,
         "seandroidenforce_offset":samsung_marker,
         "last64_avb_footer":footer,
-        "header_load_addresses_outside_live_ram":True,
+        "header_load_addresses_outside_live_ram":all(
+            not any(base<=addr<base+length for base,length in (
+                (0x80000000,0x3c800000),
+                (0xc0000000,0x40000000),
+                (0x880000000,0x80000000)
+            )) for addr in (ka,ra,ta)),
         "warning":("Use for offline research ONLY. The loader's DRAM "
                    "handoff and memory relocation are unverified. "
                    "Do NOT flash a repacked image.")
