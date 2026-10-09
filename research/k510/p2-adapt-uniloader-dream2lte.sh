@@ -43,6 +43,15 @@ t=t.replace("s2mps17_setup();",
             "\t(void)s2mps17_setup;")
 t=t.replace("*(int*) (DECON_F_BASE + HW_SW_TRIG_CONTROL) = 0x1281;",
             "/* S8+ DECON MMIO write UNVERIFIED: intentionally disabled. */")
+# Donor simplefb at 0xCC000000 is WITHIN live camera reserved memory
+# (0xC0400000..0xCE800000). Block all framebuffer registration.
+assert t.count(".devices = dream2lte_devices,")==1
+assert t.count(".num_devices = ARRAY_SIZE(dream2lte_devices),")==1
+t=t.replace(".devices = dream2lte_devices,",
+            "/* S8+ simplefb 0xCC000000 overlaps camera carveout; disabled. */\n"
+            "    .devices = 0,")
+t=t.replace(".num_devices = ARRAY_SIZE(dream2lte_devices),",
+            "    .num_devices = 0,")
 t=t.replace("/* SPDX-License-Identifier: GPL-2.0 */",
             "/* SPDX-License-Identifier: GPL-2.0 */\n"
             "/* K510 P2B: experimental SM-G955F profile derived from donor SM-G950F. */\n"
