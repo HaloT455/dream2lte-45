@@ -1,0 +1,40 @@
+name: Alice K510 SM-G955F boot image eligibility
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p0']
+    paths:
+      - 'research/k510/**'
+      - '.github/workflows/k510-device-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flash-readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch genuine Linux 5.10.262 source
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+      - name: Verify device-specific port requirements (fail closed)
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          mkdir -p reports
+          if bash research/k510/flash-gate.sh "$K510_WORKDIR/linux-5.10.262" reports/flash-readiness.txt; then
+            echo 'Static file gate passed; further hardware validation still required.'
+          else
+            echo 'Device port incomplete; boot.img packaging intentionally blocked.'
+          fi
+          grep -q '^RESULT: BLOCKED' reports/flash-readiness.txt
+      - name: Upload blocker report, no boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-DREAM2LTE-BOOT-BLOCKERS
+          path: reports/flash-readiness.txt
+          if-no-files-found: error
+          retention-days: 14
