@@ -56,3 +56,16 @@ Separately, P2A upstream S8 donor-target boot-lab build run **37998477822** comp
 The user provided only an analyzed 4096-byte BOOT header; this is insufficient to verify the embedded 229376-byte DT payload, trailing vendor/signature data, exact full partition size and Samsung-specific packing. A read-only local backup/structural verifier was added at `research/k510/p2d-read-only-backup-boot.sh`. The script verifies the Exynos8895 + SM-G955F identity, copies the **existing known-good BOOT** to an image on the user’s laptop, checks the exact partition size, then emits a small text-only structural report. It does NOT write to the phone and intentionally avoids printing cmdline and embedded identifiers. Keep the local raw BOOT backup private and do not upload it unless specifically required.
 
 The boot-header metadata compiler audit passed in [P2C run 37999483504](https://github.com/HaloT455/dream2lte-45/actions/runs/37999483504). The full P2C cross-build run 37999002645 is separate and not yet confirmed complete here. **Do not claim that any of these tests validate device boot.**
+
+## P2E full BOOT binary structural audit — DONE
+
+User supplied the complete **40 MiB** read-only stock BOOT backup in conversation. It was examined locally; raw binary **NOT uploaded to public GitHub**. Sanitized technical results are in `P2E-STOCK-BOOT-AUDIT.md`.
+
+- Primary `DTBH` v2 FDT container at 38,852,608, Exynos8895, SM-G955F rev05.
+- **Identical repeated DTBH** at 39,106,560, outside the header-declared DT section.
+- Samsung `SEANDROIDENFORCE` marker at 39,335,936.
+- Last-64-byte AVBf-looking marker has metadata pointer inconsistent with current BOOT: `AVB0` is absent at claimed vbmeta offset. This is NOT verified AVB.
+- ARM64 raw Image and gzip ramdisk placement verified. Loader header addresses are still not proven valid physical Linux addresses.
+- P2E `p2e-inspect-boot.py` is a read-only LOCAL inspector. Synthetic fixture workflow `.github/workflows/k510-p2e-stock-layout.yml` **passed** in GitHub Actions run 38000312222. The CI saw **only synthetic bytes**, not the user's backup.
+
+**NO FLASHABLE BOOT.IMG IS VERIFIED OR PROVIDED.** Porting Exynos8895 storage/PMIC and proving Samsung S-Boot handoff remain blocking.
