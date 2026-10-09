@@ -1,0 +1,58 @@
+name: Alice K510 P1B Exynos8895 pinctrl build
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p1']
+    paths:
+      - 'research/k510/**'
+      - '.github/workflows/k510-p1b-pinctrl.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exynos8895-pinctrl:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 cross compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential python3 curl
+      - name: Fetch original Linux 5.10 and import 8895 pinctrl + DTS
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          bash research/k510/p1-import-dts.sh "$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-pinctrl.sh "$K510_WORKDIR/linux-5.10.262"
+      - name: Compile adapted Exynos8895 pinctrl and DTB
+        run: |
+          set -o pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p1b"
+          mkdir -p "$OUT" ci-p1b
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          grep -E 'CONFIG_PINCTRL_EXYNOS|CONFIG_ARCH_EXYNOS' "$OUT/.config" | tee ci-p1b/config.txt
+          grep -q '^CONFIG_PINCTRL_EXYNOS_ARM64=y' "$OUT/.config"
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j2 Image exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p1b/build.log
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          grep -q 'exynos8895_of_data' "$SRC/drivers/pinctrl/samsung/pinctrl-exynos-arm64.c"
+          {
+            echo 'LINUX 5.10.262 P1B: Exynos8895 pinctrl + nonbootable dream2lte skeleton'
+            echo 'IMAGE AND DTB ARE BUILD PROOFS ONLY. DO NOT FLASH.'
+          } > ci-p1b/README-NOT-FLASHABLE.txt
+          cp "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb" ci-p1b/exynos8895-dream2lte-P1B-NOT-FLASHABLE.dtb
+      - name: Upload P1B logs and DTB evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P1B-EXYNOS8895-PINCTRL-NOT-FLASHABLE
+          path: ci-p1b/
+          if-no-files-found: error
+          retention-days: 14
