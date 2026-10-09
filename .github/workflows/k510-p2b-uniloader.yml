@@ -1,0 +1,67 @@
+name: Alice K510 P2B dedicated SM-G955F uniLoader target
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p2']
+    paths:
+      - 'research/k510/p2-adapt-uniloader-dream2lte.sh'
+      - '.github/workflows/k510-p2b-uniloader.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dream2lte-board-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu make bison flex bc python3
+      - name: Pin upstream uniLoader and add research SM-G955F target
+        run: |
+          PIN=1144a9ff7fc9e99ca7f52433f4a02847b44b7051
+          mkdir -p ci-p2b
+          git init -q source-uniloader
+          git -C source-uniloader remote add origin https://github.com/ivoszbg/uniLoader.git
+          git -C source-uniloader fetch --depth 1 origin "$PIN"
+          git -C source-uniloader checkout -q --detach "$PIN"
+          test "$(git -C source-uniloader rev-parse HEAD)" = "$PIN"
+          bash research/k510/p2-adapt-uniloader-dream2lte.sh source-uniloader
+      - name: Compile SM-G955F research target with invalid dummy payloads
+        run: |
+          set -euxo pipefail
+          cd source-uniloader
+          mkdir -p blob
+          printf '%s\n' 'P2B test payload, NOT a Linux kernel' > blob/Image
+          printf '%s\n' 'P2B test payload, NOT a device tree' > blob/dtb
+          printf '%s\n' 'P2B test payload, NOT an initramfs' > blob/ramdisk
+          make ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- dream2lte_defconfig
+          grep -q '^CONFIG_SAMSUNG_DREAM2LTE=y' .config
+          if grep -q '^CONFIG_SAMSUNG_DREAMLTE=y' .config; then
+            echo 'Wrong S8 (non-plus) board selected' >&2
+            exit 1
+          fi
+          grep -q -F 'S8+ PMIC LDO register sequence UNVERIFIED' board/samsung/board-dream2lte.c
+          grep -q -F 'S8+ DECON MMIO write UNVERIFIED' board/samsung/board-dream2lte.c
+          make ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- -j2 2>&1 | tee ../ci-p2b/build.log
+          test -s uniLoader && test -s uniLoader.o
+          aarch64-linux-gnu-objdump -f uniLoader.o | grep -q aarch64
+          cp .config ../ci-p2b/dream2lte-RESEARCH-ONLY.config
+          sha256sum uniLoader > ../ci-p2b/loader-dummy-sha256.txt
+          printf '%s\n' \
+            'SM-G955F board target compile only, dummy payloads are INVALID.' \
+            'No hardware register writes for PMIC or DECON are enabled.' \
+            'DO NOT FLASH any test images from this workflow.' > ../ci-p2b/README-NOT-FLASHABLE.txt
+      - name: Upload build proof only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P2B-DREAM2LTE-UNILOADER-COMPILE-ONLY
+          path: ci-p2b/
+          if-no-files-found: warn
+          retention-days: 14
