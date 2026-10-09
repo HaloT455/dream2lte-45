@@ -48,7 +48,17 @@ The P1 DTB **deliberately lacks verified RAM and reserved-memory maps**. Some me
 - [x] Create standalone P1 GitHub branch separate from known-good V12.
 - [x] Backport DTS and dream2lte DTB make rule into genuine 5.10.
 - [x] Pass P1A device-tree compiler on GitHub Actions.
-- [ ] Pass P1B pinctrl source compile and audit OF/GPIO offsets.
-- [ ] Pass P1C clock source compile and audit CCF gate/PLL sequencing.
-- [ ] Audit actual SM-G955F boot layout and reserved RAM areas.
+- [x] P1B pinctrl source compile passed on GitHub Actions (hardware GPIO/EINT offsets still need validation).
+- [ ] P1C CCF build initially failed: Linux 5.10 missing PLL1051x/1052x; P1C2 adds backported PLL ops + 5.10 API fix. CI revalidation pending. Hardware gate/PLL sequencing NOT verified.
+- [ ] Audit actual SM-G955F boot layout and reserved RAM areas; use read-only `research/k510/collect-boot-layout.sh` on the real device and compare with Samsung 4.4 `exynos8895-rmem.dtsi`.
 - [ ] Driver-level power-on testing and boot image P2.
+
+## Current critical P1C blocker and remediation
+
+CI P1C run 37963445642 failed because 5.10 does not implement `pll_1051x`/`pll_1052x` and because newer donor used `of_device_get_match_data`. The new script `p1-fix-pll510.sh` imports accurate PLL0822x-family rate programming plus bounded lock checking into 5.10 and switches match-data lookup to `device_get_match_data`. This has **not** yet passed CI or physical clock validation. The original 5.10 4.4 kernel tree was never altered.
+
+Device live boot-layout read-only collection:
+```bash
+bash research/k510/collect-boot-layout.sh
+```
+Only run this on the **already-booted known-good V12R5T** using Zorin OS USB ADB. Upload the text report; no partitions are accessed for writing.
