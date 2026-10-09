@@ -44,3 +44,42 @@ jobs:
           path: ci-out/
           if-no-files-found: error
           retention-days: 7
+
+  exynos8895-donor-dtb:
+    name: Compile Exynos8895 donor DTB on Linux 5.10 (NOT G955F)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout research scripts
+        uses: actions/checkout@v4
+      - name: Install DT compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl make gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu bc bison flex libssl-dev libelf-dev \
+            build-essential device-tree-compiler
+      - name: Fetch genuine upstream Linux 5.10
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+      - name: Compile upstream S8 donor DTS against 5.10
+        run: |
+          set -o pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/compile-8895-donor-dts.sh 2>&1 | tee donor-dtb-build.log
+      - name: Archive DT compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-EXYNOS8895-DONOR-DTS-BUILD-LOG
+          path: donor-dtb-build.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Archive S8 donor DTB NOT FOR S8+
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-SM-G950F-DONOR-DTB-NOT-FOR-G955F-NOT-FLASHABLE
+          path: ${{ runner.temp }}/alice-k510/reference-dtb/
+          if-no-files-found: error
+          retention-days: 7
