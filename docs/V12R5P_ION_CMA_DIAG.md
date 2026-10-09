@@ -19,7 +19,7 @@ Each Exynos reusable ION DMA/CMA region already has a sysfs device:
 - `/sys/class/ion_cma/ion_tui/diagnostics`
 
 The file mode is **0444**. Counters start at boot (no reset/write interface).
-`CONFIG_DEBUG_FS` stays disabled. No physical addresses, PID, handles,
+V12R5P does not modify DebugFS configuration or require mounting it.\nThe resolved V12R5O/V12R5P CI kernel config has `CONFIG_DEBUG_FS=y`,\nalthough the checked-in input defconfig still contains an older disabled line.\nNo physical addresses, PID, handles,
 allocation contents, or security state are exposed.
 
 ### Per-heap fields
