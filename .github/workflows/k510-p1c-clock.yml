@@ -28,6 +28,7 @@ jobs:
           bash research/k510/p1-import-dts.sh "$SRC"
           bash research/k510/p1-import-pinctrl.sh "$SRC"
           bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
       - name: Compile Image and Exynos8895 dream2lte DTB
         run: |
           set -o pipefail
