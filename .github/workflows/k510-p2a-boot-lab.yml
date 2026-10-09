@@ -10,6 +10,7 @@ on:
       - 'research/k510/p2-prepare-dtb.sh'
       - 'research/k510/p2-make-initramfs.sh'
       - 'research/k510/p2-build-uniloader-lab.sh'
+      - 'research/k510/p2-adapt-uniloader-dream2lte.sh'
       - '.github/workflows/k510-p2a-boot-lab.yml'
   workflow_dispatch:
 
@@ -65,7 +66,7 @@ jobs:
           bash research/k510/p2-make-initramfs.sh "$RUNNER_TEMP/alice-k510/p2a-initramfs" \
             2>&1 | tee ci-p2a/initramfs-build.log
           test -s "$RUNNER_TEMP/alice-k510/p2a-initramfs/initramfs.cpio.gz"
-      - name: uniLoader build compatibility experiment, S8 donor target only
+      - name: Build P2C dedicated S8+ uniLoader handoff (not flashable)
         run: |
           set -euxo pipefail
           OUT="$RUNNER_TEMP/alice-k510/out-p2a/arch/arm64/boot"
@@ -78,8 +79,8 @@ jobs:
           cp "$RUNNER_TEMP/alice-k510/p2a-loader/uniloader-lab-sha256.txt" ci-p2a/checksums.txt
           cat > ci-p2a/DO_NOT_FLASH.txt <<'NOTICE'
           This is a Linux 5.10.262 boot-chain COMPILATION experiment.
-          uniLoader was built using the Samsung SM-G950F (dreamlte) board configuration,
-          NOT validated for the SM-G955F (dream2lte) bootloader or power management.
+          uniLoader was built using experimental SM-G955F (dream2lte) code,
+          with DECON and PMIC writes deliberately disabled until hardware validation.
           UFS, RAM carveout reuse, S-Boot handoff and recovery route remain unverified.
           DO NOT FLASH or package these research components as boot.img.
           NOTICE
