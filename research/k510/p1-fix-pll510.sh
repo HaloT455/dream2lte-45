@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P1C2: backport proper PLL1051x/PLL1052x operations from pll0822x family.
 set -euo pipefail
-TREE="\${1:?Usage: $0 /path/to/linux-5.10.262}"
+TREE="${1:?Usage: $0 /path/to/linux-5.10.262}"
 [[ "$(make -s -C "$TREE" kernelversion)" == 5.10.* ]] || {
     echo 'Expected genuine Linux 5.10' >&2; exit 2;
 }
