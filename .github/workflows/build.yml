@@ -1,4 +1,4 @@
-name: Build V12R5Q Page Isolation Diagnostics + HALO NPU
+name: Build V12R5R ZSMALLOC CMA Migration + HALO NPU
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -29,6 +29,7 @@ on:
       - agent/v12r5o-mglru-accounting-audit
       - agent/v12r5p-ion-cma-diagnostics
       - agent/v12r5q-cma-isolation-classification
+      - agent/v12r5r-zsmalloc-cma-migration
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -80,6 +81,7 @@ jobs:
           python3 scripts/test_mglru_accounting_audit.py
           python3 scripts/test_v12r5p_ion_cma_diag.py
           python3 scripts/test_v12r5q_page_isolation_diag.py
+          python3 scripts/test_v12r5r_zsmalloc_cma_migration.py
           sh -n scripts/collect_ui_perf.sh
           sh -n scripts/collect_ui_trace.sh
           git diff --check
@@ -92,12 +94,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5Q-PAGE-ISOLATION-DIAG-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5R-ZS-CMA-MIG-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5Q-PAGE-ISOLATION-DIAG-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5R-ZS-CMA-MIG-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -115,6 +117,11 @@ jobs:
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
           grep -q '^CONFIG_CMA=y$' "$OUT/.config"
           grep -q '^CONFIG_DMA_CMA=y$' "$OUT/.config"
+          grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
+          grep -q '^CONFIG_ZSMALLOC=y$' "$OUT/.config"
+          grep -q '^CONFIG_COMPACTION=y$' "$OUT/.config"
+          grep -q '^CONFIG_ZSWAP_MIGRATION_SUPPORT=y$' "$OUT/.config"
+          ! grep -q '^CONFIG_ZSWAP=y$' "$OUT/.config"
           grep -q '^CONFIG_DEBUG_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
           grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$OUT/.config"
@@ -193,7 +200,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5q-page-isolation-diag-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5r-zs-cma-mig-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -216,6 +223,9 @@ jobs:
               return 1
             fi
           }
+          check_map_symbol zs_page_isolate
+          check_map_symbol zs_page_migrate
+          check_map_symbol isolate_movable_page
           check_map_symbol page_isolation_get_diag
           check_image_string 'isolation_non_lru_pages_global=%llu'
           check_map_symbol ion_cma_diag_show
@@ -250,9 +260,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5Q-PAGE-ISOLATION-DIAG-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5R-ZS-CMA-MIG-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5Q-PAGE-ISOLATION-DIAG-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5R-ZS-CMA-MIG-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -269,6 +279,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5q-page-isolation-diag-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5r-zs-cma-mig-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
