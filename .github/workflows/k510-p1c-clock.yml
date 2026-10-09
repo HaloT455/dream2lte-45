@@ -3,7 +3,7 @@ name: Alice K510 P1C Exynos8895 clock compile
 on:
   push:
     branches: ['research/k510-dream2lte-p1']
-    paths: ['research/k510/**', '.github/workflows/k510-p1c-clock.yml']
+    paths: ['research/k510/bootstrap.sh', 'research/k510/p1-import-dts.sh', 'research/k510/p1-import-pinctrl.sh', 'research/k510/p1-import-clocks.sh', 'research/k510/p1-fix-pll510.sh', '.github/workflows/k510-p1c-clock.yml']
   workflow_dispatch:
 
 permissions:
