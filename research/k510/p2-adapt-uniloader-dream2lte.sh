@@ -49,7 +49,7 @@ assert t.count(".devices = dream2lte_devices,")==1
 assert t.count(".num_devices = ARRAY_SIZE(dream2lte_devices),")==1
 t=t.replace(".devices = dream2lte_devices,",
             "/* S8+ simplefb 0xCC000000 overlaps camera carveout; disabled. */\n"
-            "    .devices = 0,")
+            "    .devices = dream2lte_devices,")
 t=t.replace(".num_devices = ARRAY_SIZE(dream2lte_devices),",
             "    .num_devices = 0,")
 t=t.replace("/* SPDX-License-Identifier: GPL-2.0 */",
