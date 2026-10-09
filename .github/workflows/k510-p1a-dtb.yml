@@ -1,0 +1,53 @@
+name: Alice K510 P1A Exynos8895 DTB compile
+
+on:
+  push:
+    branches: ['research/k510-dream2lte-p1']
+    paths:
+      - 'research/k510/**'
+      - '.github/workflows/k510-p1a-dtb.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dream2lte-dtb-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross compiler and dtc build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential python3 curl
+      - name: Fetch pristine 5.10.262 and import Exynos8895 DTS
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          bash research/k510/p1-import-dts.sh "$K510_WORKDIR/linux-5.10.262"
+      - name: Build ARM64 Exynos8895 dream2lte DTB only
+        run: |
+          set -o pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-dream2lte-dtb"
+          mkdir -p "$OUT" ci-p1a
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p1a/dtb-build.log
+          find "$OUT" -name 'exynos8895-dream2lte.dtb' -type f -size +0c -print -quit | grep .
+          cp "$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb" ci-p1a/exynos8895-dream2lte-P1A-NOT-FLASHABLE.dtb
+          {
+            echo 'P1A DTS-only compile. No S8+ boot image and no validated memory map.'
+            echo 'NOT FLASHABLE, NOT BOOT READY. Never package this as boot.img.'
+          } > ci-p1a/README-NOT-FLASHABLE.txt
+      - name: Upload P1A compile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-P1A-EXYNOS8895-DTB-NOT-FLASHABLE
+          path: ci-p1a/
+          if-no-files-found: error
+          retention-days: 14
