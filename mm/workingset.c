@@ -318,6 +318,14 @@ void lru_gen_refault(struct page *page, void *shadow)
 
 	lruvec = mem_cgroup_zone_lruvec(zone, memcg);
 	lrugen = &lruvec->evictable;
+
+	/*
+	 * Report every refault with a valid zone and live memcg to the
+	 * Samsung/AOSP vmstat consumer (lmkd), even when the shadow token
+	 * is older than the current MGLRU generation. A stale token must
+	 * not influence the tier PID feedback controller below.
+	 */
+	inc_zone_state(zone, WORKINGSET_REFAULT);
 	min_seq = READ_ONCE(lrugen->min_seq[type]);
 	if (token != (min_seq & (LRU_GEN_TOKEN_MASK >> LRU_USAGE_SHIFT)))
 		goto unlock;
@@ -328,7 +336,6 @@ void lru_gen_refault(struct page *page, void *shadow)
 	tier = lru_tier_from_usage(usage);
 	atomic_long_add(hpage_nr_pages(page),
 			&lrugen->refaulted[hist][type][tier]);
-	inc_zone_state(zone, WORKINGSET_REFAULT);
 	if (tier)
 		inc_zone_state(zone, WORKINGSET_RESTORE);
 unlock:
