@@ -32,3 +32,21 @@ Successful cross compilation does not imply device boot. P2A deliberately upload
 ## P2B SM-G955F uniLoader target
 
 A separate script `p2-adapt-uniloader-dream2lte.sh` creates an explicit `CONFIG_SAMSUNG_DREAM2LTE` target, based on the upstream Galaxy S8 (non-plus) board code, and deliberately disables unverified S2MPS17 LDO and DECON register writes. Build test is `.github/workflows/k510-p2b-uniloader.yml` run 37998876604 using **invalid dummy payloads**. This is an independent compiler test, not evidence of bootability. Full real-payload integration is deferred until P2A and P2B compile gates pass.
+
+## P2C stock BOOT header audit (2026-10-10, 05:27 +07)
+
+The SM-G955F rev05 user provided a **read-only** 4096-byte BOOT header analysis, not the complete boot partition image. Structural fields:
+
+- `kernel_size=38149864` (`0x2461ee8`), `ramdisk_size=700389` (`0xaafe5`), `second_size=0`.
+- `page_size=2048`, `dt_size_or_header_version=229376` (`0x38000`).
+- `kernel_addr=0x10008000`, `ramdisk_addr=0x11000000`, `tags_addr=0x10000100`.
+- Likely **legacy pre-versioned Android boot image**, where header offset `0x28` contains a DT size, **not** header_version; this classification remains conditional until full-image disassembly.
+- Assuming that layout, minimum padded image size is **39,081,984 bytes** (header 2048; kernel 38,150,144; ramdisk 700,416; DT 229,376). This is not the BOOT partition size and does not account for vendor tails/signatures.
+- **All three load addresses lie outside the RAM ranges exposed in P1D live Device Tree**, suggesting Samsung S-Boot load/relocation or header semantics need independent proof. Hard blocker for any safe boot.img packaging.
+- The named boot image and any cmdline were deliberately excluded from checked-in data.
+
+CI `.github/workflows/k510-p2c-boot-header.yml` checks the report against the observed RAM ranges; run **37999483504** passed. Still, a successful metadata check is **not** proof that the produced kernel can boot on hardware.
+
+Separately, P2A upstream S8 donor-target boot-lab build run **37998477822** completed successfully (Image, DTB, static ARM64 initramfs and donor uniLoader compile). An SM-G955F-specific loader was compiled in P2B. P2C integrated SM-G955F real-payload build remains a separate CI gate.
+
+**NO BOOT IMAGE HAS BEEN RELEASED. DO NOT FLASH THE CI COMPILATION ARTIFACTS.**
