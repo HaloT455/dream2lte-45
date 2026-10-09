@@ -1,0 +1,46 @@
+name: Alice K510 upstream source smoke (NOT FLASHABLE)
+
+on:
+  push:
+    branches:
+      - 'research/k510-dream2lte-p0'
+    paths:
+      - 'research/k510/**'
+      - '.github/workflows/k510-source-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-arm64-smoke:
+    name: Compile genuine upstream Linux 5.10.262 ARM64 (NOT device boot)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Checkout research bootstrap
+        uses: actions/checkout@v4
+      - name: Install ARM64 cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu bc bison flex libssl-dev libelf-dev build-essential
+      - name: Fetch tagged Linux 5.10.262 and compile generic ARM64 Image
+        env:
+          K510_JOBS: '2'
+        run: |
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --build
+          mkdir -p ci-out
+          cp "$K510_WORKDIR/out-generic-arm64/arch/arm64/boot/Image" ci-out/Image_UPSTREAM_ARM64_ONLY_NOT_FLASHABLE
+          cp "$K510_WORKDIR/generic-Image.sha256" ci-out/generic-Image.sha256
+          printf '%s\n' \
+            'This ARM64 Image has no Exynos8895/dream2lte DT or vendor drivers.' \
+            'DO NOT FLASH TO SAMSUNG GALAXY S8+.' > ci-out/README_NOT_FLASHABLE.txt
+      - name: Upload upstream-only proof of compilation
+        uses: actions/upload-artifact@v4
+        with:
+          name: K510-UPSTREAM-ARM64-SMOKE-NOT-FLASHABLE
+          path: ci-out/
+          if-no-files-found: error
+          retention-days: 7
