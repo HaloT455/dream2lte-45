@@ -28,3 +28,7 @@ Successful cross compilation does not imply device boot. P2A deliberately upload
 - [P1E full cross-build](https://github.com/HaloT455/dream2lte-45/actions/runs/37996355242)
 - [Exynos8895 Linux bring-up 2024](https://lists.openwall.net/linux-kernel/2024/09/09/753)
 - [uniLoader source](https://github.com/ivoszbg/uniLoader)
+
+## P2B SM-G955F uniLoader target
+
+A separate script `p2-adapt-uniloader-dream2lte.sh` creates an explicit `CONFIG_SAMSUNG_DREAM2LTE` target, based on the upstream Galaxy S8 (non-plus) board code, and deliberately disables unverified S2MPS17 LDO and DECON register writes. Build test is `.github/workflows/k510-p2b-uniloader.yml` run 37998876604 using **invalid dummy payloads**. This is an independent compiler test, not evidence of bootability. Full real-payload integration is deferred until P2A and P2B compile gates pass.
