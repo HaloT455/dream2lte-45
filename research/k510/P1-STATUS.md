@@ -50,7 +50,7 @@ The P1 DTB **deliberately lacks verified RAM and reserved-memory maps**. Some me
 - [x] Pass P1A device-tree compiler on GitHub Actions.
 - [x] P1B pinctrl source compile passed on GitHub Actions (hardware GPIO/EINT offsets still need validation).
 - [x] P1C2 kernel + Exynos8895 clock/PLL successfully compiled in GitHub Actions run 37967303196. Hardware gate/PLL sequencing still NOT validated.
-- [x] P1D read-only log from SM-G955F rev05 received (2026-10-10 04:49:56 +07). Confirmed 3 RAM ranges, 12 reserved-memory ranges, BOOT=/dev/block/sda7 and RECOVERY=/dev/block/sda8. P1D DTS compilation pending; full hardware validation NOT complete.
+- [x] P1D read-only log from SM-G955F rev05 received (2026-10-10 04:49:56 +07). Confirmed 3 RAM ranges, 12 reserved-memory ranges, BOOT=/dev/block/sda7 and RECOVERY=/dev/block/sda8. P1D DTB compiled and 12 reserved-memory ranges validated in CI run 37996119912; full hardware validation NOT complete.
 - [ ] Driver-level power-on testing and boot image P2.
 
 ## Current critical P1C blocker and remediation
@@ -71,3 +71,7 @@ Only run this on the **already-booted known-good V12R5T** using Zorin OS USB ADB
 - The P1D compile-only DTS marks all twelve nodes `no-map` conservatively. This is deliberately NOT the final ION/camera/modem/vendor implementation.
 - On the real phone, `/proc/device-tree/model` is SM-G955F rev05; `ro.boot.revision` is 10, which is a different numbering field and not evidence of PCB revision 10.
 - P1D CI: `.github/workflows/k510-p1d-memory.yml`. Compiler acceptance does not authorize flash.
+
+## P1E integrated cross-build
+
+CI `.github/workflows/k510-p1e-integrated.yml` compiles genuine Linux 5.10.262 ARM64 `Image` together with the Exynos8895 DTS, pinctrl, PLL/clock and measured SM-G955F rev05 memory overlays. It is an **integrated compiler gate only**: no Samsung boot image is made, and no SoC early boot or vendor driver operation has been shown. GitHub Actions run 37996355242 started on 2026-10-10; final success is not asserted until workflow completes.
