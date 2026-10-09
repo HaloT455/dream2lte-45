@@ -1,6 +1,28 @@
 #ifndef __LINUX_PAGEISOLATION_H
 #define __LINUX_PAGEISOLATION_H
 
+#include <linux/types.h>
+
+/*
+ * Diagnostic snapshots of failed page isolation checks.  Counts are global:
+ * page-isolation checks from non-CMA users may contribute.  These are page
+ * states observed at failure, NOT proof that an owner pinned the page.
+ */
+struct page_isolation_diag_stats {
+	u64 failed_checks;
+	u64 reserved_pages;
+	u64 hwpoison_pages;
+	u64 slab_pages;
+	u64 compound_pages;
+	u64 lru_pages;
+	u64 non_lru_pages;
+	u64 pageblock_mismatch;
+};
+
+#ifdef CONFIG_MEMORY_ISOLATION
+void page_isolation_get_diag(struct page_isolation_diag_stats *stats);
+#endif
+
 #ifdef CONFIG_MEMORY_ISOLATION
 static inline bool has_isolate_pageblock(struct zone *zone)
 {

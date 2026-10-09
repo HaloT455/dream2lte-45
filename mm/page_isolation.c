@@ -9,6 +9,47 @@
 #include <linux/hugetlb.h>
 #include "internal.h"
 
+/* Pure diagnostics. No migration/reclaim decisions are changed. */
+static atomic64_t isolate_diag_failed = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_reserved = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_hwpoison = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_slab = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_compound = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_lru = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_non_lru = ATOMIC64_INIT(0);
+static atomic64_t isolate_diag_block_mismatch = ATOMIC64_INIT(0);
+
+void page_isolation_get_diag(struct page_isolation_diag_stats *stats)
+{
+	stats->failed_checks = atomic64_read(&isolate_diag_failed);
+	stats->reserved_pages = atomic64_read(&isolate_diag_reserved);
+	stats->hwpoison_pages = atomic64_read(&isolate_diag_hwpoison);
+	stats->slab_pages = atomic64_read(&isolate_diag_slab);
+	stats->compound_pages = atomic64_read(&isolate_diag_compound);
+	stats->lru_pages = atomic64_read(&isolate_diag_lru);
+	stats->non_lru_pages = atomic64_read(&isolate_diag_non_lru);
+	stats->pageblock_mismatch =
+		atomic64_read(&isolate_diag_block_mismatch);
+}
+
+static void page_isolation_record_failed_page(struct page *page)
+{
+	/* Exclusive page-state categories sampled under zone->lock. */
+	atomic64_inc(&isolate_diag_failed);
+	if (PageReserved(page))
+		atomic64_inc(&isolate_diag_reserved);
+	else if (PageHWPoison(page))
+		atomic64_inc(&isolate_diag_hwpoison);
+	else if (PageSlab(page))
+		atomic64_inc(&isolate_diag_slab);
+	else if (PageCompound(page))
+		atomic64_inc(&isolate_diag_compound);
+	else if (PageLRU(page))
+		atomic64_inc(&isolate_diag_lru);
+	else
+		atomic64_inc(&isolate_diag_non_lru);
+}
+
 static int set_migratetype_isolate(struct page *page,
 				bool skip_hwpoisoned_pages)
 {
@@ -238,6 +279,7 @@ __test_page_isolated_in_pageblock(unsigned long pfn, unsigned long end_pfn,
 			break;
 	}
 	if (pfn < end_pfn) {
+		page_isolation_record_failed_page(pfn_to_page(pfn));
 		pr_info("%s: page of pfn %lu is not isolated\n", __func__, pfn);
 		dump_page(pfn_to_page(pfn), "isolation failure");
 		return 0;
@@ -264,8 +306,10 @@ int test_pages_isolated(unsigned long start_pfn, unsigned long end_pfn,
 			break;
 	}
 	page = __first_valid_page(start_pfn, end_pfn - start_pfn);
-	if ((pfn < end_pfn) || !page)
+	if ((pfn < end_pfn) || !page) {
+		atomic64_inc(&isolate_diag_block_mismatch);
 		return -EBUSY;
+	}
 	/* Check all pages are free or marked as ISOLATED */
 	zone = page_zone(page);
 	spin_lock_irqsave(&zone->lock, flags);
