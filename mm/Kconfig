@@ -551,13 +551,16 @@ config ZSWAP
 	  configurations and workloads that exist.
 
 config ZSWAP_MIGRATION_SUPPORT
-	bool "Support the migration of zsmalloc pages used by zswap"
-	depends on ZSWAP && ZSMALLOC && COMPACTION
+	bool "Support migration of zsmalloc pages used by zswap or zram"
+	depends on (ZSWAP || ZRAM) && ZSMALLOC && COMPACTION
 	default n
 	help
-	  By supporting the migration of zsmalloc pages, the compaction can migrate
-	  more pages (originally, only anon and fs pages) so that
-	  the compaction success rate may increase.
+	  Enable migration of non-LRU zsmalloc pages for both zswap and zram.
+	  The existing compaction and zsmalloc code already implements this
+	  path, but previously it could only be selected if zswap was enabled.
+	  Zram-backed pages may occupy CMA regions and need to be migrated
+	  before physically contiguous allocations can succeed.
+	  This does not enable zswap or alter CMA reservation sizes.
 
 config ZSWAP_ENABLE_WRITEBACK
 	bool "Enable zswap writeback"
