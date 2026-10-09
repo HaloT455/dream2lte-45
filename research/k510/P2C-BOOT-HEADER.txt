@@ -1,0 +1,17 @@
+# K510 P2C BOOT header report (SM-G955F rev05, read-only)
+# Captured from /dev/block/by-name/BOOT on 2026-10-10
+# Deliberately omits boot image name, command line, UUIDs and image ID.
+Alice K510 P2 read-only boot-header analysis
+Device verified by ro.hardware=samsungexynos8895
+Partition source: /dev/block/by-name/BOOT (READ ONLY)
+Header bytes returned: 4096
+kernel_size: 38149864 (0x2461ee8)
+kernel_addr: 0x10008000
+ramdisk_size: 700389 (0xaafe5)
+ramdisk_addr: 0x11000000
+second_size: 0 (0x0)
+second_addr: 0x10f00000
+tags_addr: 0x10000100
+page_size: 2048 (0x800)
+dt_size_or_header_version: 229376 (0x38000)
+# NOTE: 0x28 is plausibly legacy dt_size, but no complete stock boot.img was supplied.
