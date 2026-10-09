@@ -24,6 +24,7 @@
 #include <linux/exynos_ion.h>
 #include <linux/dma-contiguous.h>
 #include <linux/cma.h>
+#include <linux/page-isolation.h>
 
 /* for ion_heap_ops structure */
 #include "ion_priv.h"
@@ -241,7 +242,9 @@ ssize_t ion_cma_diag_show(struct ion_heap *heap, char *buf)
 {
 	struct ion_cma_heap *ch = to_cma_heap(heap);
 	struct cma *area = dev_get_cma_area(ch->dev);
+	struct page_isolation_diag_stats isolation;
 
+	page_isolation_get_diag(&isolation);
 	return scnprintf(buf, PAGE_SIZE,
 		"alloc_requests=%lld\n"
 		"alloc_success=%lld\n"
@@ -254,7 +257,15 @@ ssize_t ion_cma_diag_show(struct ion_heap *heap, char *buf)
 		"last_errno=%d\n"
 		"cma_bytes_region=%lu\n"
 		"cma_busy_retries_region=%llu\n"
-		"cma_failed_requests_region=%llu\n",
+		"cma_failed_requests_region=%llu\n"
+		"isolation_failed_checks_global=%llu\n"
+		"isolation_reserved_pages_global=%llu\n"
+		"isolation_hwpoison_pages_global=%llu\n"
+		"isolation_slab_pages_global=%llu\n"
+		"isolation_compound_pages_global=%llu\n"
+		"isolation_lru_pages_global=%llu\n"
+		"isolation_non_lru_pages_global=%llu\n"
+		"isolation_pageblock_mismatch_global=%llu\n",
 		(long long)atomic64_read(&ch->diag_alloc_requests),
 		(long long)atomic64_read(&ch->diag_alloc_success),
 		(long long)atomic64_read(&ch->diag_alloc_failed),
@@ -266,7 +277,15 @@ ssize_t ion_cma_diag_show(struct ion_heap *heap, char *buf)
 		atomic_read(&ch->diag_last_errno),
 		area ? cma_get_size(area) : 0,
 		cma_get_busy_retries(area),
-		cma_get_failed_requests(area));
+		cma_get_failed_requests(area),
+		(unsigned long long)isolation.failed_checks,
+		(unsigned long long)isolation.reserved_pages,
+		(unsigned long long)isolation.hwpoison_pages,
+		(unsigned long long)isolation.slab_pages,
+		(unsigned long long)isolation.compound_pages,
+		(unsigned long long)isolation.lru_pages,
+		(unsigned long long)isolation.non_lru_pages,
+		(unsigned long long)isolation.pageblock_mismatch);
 }
 
 struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
