@@ -54,6 +54,17 @@ unsigned long cma_get_size(const struct cma *cma)
 	return cma->count << PAGE_SHIFT;
 }
 
+/* Region-wide counts: users other than ION can also allocate this CMA area. */
+unsigned long long cma_get_busy_retries(const struct cma *cma)
+{
+	return cma ? (unsigned long long)atomic64_read(&cma->diag_busy_retries) : 0;
+}
+
+unsigned long long cma_get_failed_requests(const struct cma *cma)
+{
+	return cma ? (unsigned long long)atomic64_read(&cma->diag_failed_requests) : 0;
+}
+
 static unsigned long cma_bitmap_aligned_mask(const struct cma *cma,
 					     unsigned int align_order)
 {
@@ -133,6 +144,8 @@ static int __init cma_activate_area(struct cma *cma)
 	} while (--i);
 
 	mutex_init(&cma->lock);
+	atomic64_set(&cma->diag_busy_retries, 0);
+	atomic64_set(&cma->diag_failed_requests, 0);
 
 #ifdef CONFIG_CMA_DEBUGFS
 	INIT_HLIST_HEAD(&cma->mem_head);
@@ -460,11 +473,15 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 		if (ret != -EBUSY)
 			break;
 
+		atomic64_inc(&cma->diag_busy_retries);
 		pr_debug("%s(): memory range at %p is busy, retrying\n",
 			 __func__, pfn_to_page(pfn));
 		/* try again with a bit different memory target */
 		start = bitmap_no + mask + 1;
 	}
+
+	if (!page)
+		atomic64_inc(&cma->diag_failed_requests);
 
 	trace_cma_alloc(pfn, page, count, align);
 
