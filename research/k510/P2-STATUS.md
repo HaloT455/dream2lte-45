@@ -50,3 +50,9 @@ CI `.github/workflows/k510-p2c-boot-header.yml` checks the report against the ob
 Separately, P2A upstream S8 donor-target boot-lab build run **37998477822** completed successfully (Image, DTB, static ARM64 initramfs and donor uniLoader compile). An SM-G955F-specific loader was compiled in P2B. P2C integrated SM-G955F real-payload build remains a separate CI gate.
 
 **NO BOOT IMAGE HAS BEEN RELEASED. DO NOT FLASH THE CI COMPILATION ARTIFACTS.**
+
+## P2D read-only stock BOOT boundary verification
+
+The user provided only an analyzed 4096-byte BOOT header; this is insufficient to verify the embedded 229376-byte DT payload, trailing vendor/signature data, exact full partition size and Samsung-specific packing. A read-only local backup/structural verifier was added at `research/k510/p2d-read-only-backup-boot.sh`. The script verifies the Exynos8895 + SM-G955F identity, copies the **existing known-good BOOT** to an image on the user’s laptop, checks the exact partition size, then emits a small text-only structural report. It does NOT write to the phone and intentionally avoids printing cmdline and embedded identifiers. Keep the local raw BOOT backup private and do not upload it unless specifically required.
+
+The boot-header metadata compiler audit passed in [P2C run 37999483504](https://github.com/HaloT455/dream2lte-45/actions/runs/37999483504). The full P2C cross-build run 37999002645 is separate and not yet confirmed complete here. **Do not claim that any of these tests validate device boot.**
