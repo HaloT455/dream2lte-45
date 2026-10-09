@@ -1,4 +1,4 @@
-name: Build V12R5O MGLRU Accounting Audit + HALO NPU
+name: Build V12R5P ION CMA Diagnostics + HALO NPU
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -27,6 +27,7 @@ on:
       - agent/v12r5m-reclaim-stability
       - agent/v12r5n-transition-safety
       - agent/v12r5o-mglru-accounting-audit
+      - agent/v12r5p-ion-cma-diagnostics
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -76,6 +77,7 @@ jobs:
           python3 scripts/test_mglru_reclaim_stability.py
           python3 scripts/test_mglru_transition.py
           python3 scripts/test_mglru_accounting_audit.py
+          python3 scripts/test_v12r5p_ion_cma_diag.py
           sh -n scripts/collect_ui_perf.sh
           sh -n scripts/collect_ui_trace.sh
           git diff --check
@@ -88,25 +90,30 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5O-MGLRU-ACCOUNTING-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5P-ION-CMA-DIAG-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5O-MGLRU-ACCOUNTING-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5P-ION-CMA-DIAG-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
 
       - name: Validate integration
         run: |
+          set -ex
           OUT="out-${{ matrix.variant }}"
+          grep -E '^(# )?CONFIG_(CMA|DMA_CMA|DEBUG_FS)' "$OUT/.config" || true
           grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set$' "$OUT/.config"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_PSI=y$' "$OUT/.config"
           grep -q '^# CONFIG_PSI_DEFAULT_DISABLED is not set$' "$OUT/.config"
           ! grep -q '^CONFIG_CRYPTO_ZSTD=y$' "$OUT/.config"
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
+          grep -q '^CONFIG_CMA=y$' "$OUT/.config"
+          grep -q '^CONFIG_DMA_CMA=y$' "$OUT/.config"
+          grep -q '^CONFIG_DEBUG_FS=y$' "$OUT/.config"
           grep -q '^CONFIG_LRU_GEN=y$' "$OUT/.config"
           grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$OUT/.config"
           grep -q '^# CONFIG_LRU_GEN_STATS is not set$' "$OUT/.config"
@@ -184,7 +191,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5n-transition-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5p-ion-cma-diag-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -207,6 +214,10 @@ jobs:
               return 1
             fi
           }
+          check_map_symbol ion_cma_diag_show
+          check_map_symbol cma_get_busy_retries
+          check_map_symbol cma_get_failed_requests
+          check_image_string 'cma_busy_retries_region=%llu'
           check_map_symbol lru_gen_set_state
           check_map_symbol lru_gen_init_lruvec
           check_map_symbol psi_init
@@ -235,9 +246,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5O-MGLRU-ACCOUNTING-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5P-ION-CMA-DIAG-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5O-MGLRU-ACCOUNTING-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5P-ION-CMA-DIAG-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -254,6 +265,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5n-transition-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5p-ion-cma-diag-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

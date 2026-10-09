@@ -426,6 +426,7 @@ struct ion_heap *ion_chunk_heap_create(struct ion_platform_heap *);
 void ion_chunk_heap_destroy(struct ion_heap *);
 struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *);
 void ion_cma_heap_destroy(struct ion_heap *);
+ssize_t ion_cma_diag_show(struct ion_heap *heap, char *buf);
 
 struct ion_heap *ion_hpa_heap_create(struct ion_platform_heap *);
 void ion_hpa_heap_destroy(struct ion_heap *);

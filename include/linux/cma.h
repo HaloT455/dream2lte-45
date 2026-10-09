@@ -21,6 +21,8 @@ extern atomic_t rbin_allocated_pages;
 extern atomic_t rbin_pool_pages;
 extern phys_addr_t cma_get_base(const struct cma *cma);
 extern unsigned long cma_get_size(const struct cma *cma);
+extern unsigned long long cma_get_busy_retries(const struct cma *cma);
+extern unsigned long long cma_get_failed_requests(const struct cma *cma);
 
 extern int __init cma_declare_contiguous(phys_addr_t base,
 			phys_addr_t size, phys_addr_t limit,

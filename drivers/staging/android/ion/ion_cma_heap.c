@@ -23,6 +23,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/exynos_ion.h>
 #include <linux/dma-contiguous.h>
+#include <linux/cma.h>
 
 /* for ion_heap_ops structure */
 #include "ion_priv.h"
@@ -30,6 +31,16 @@
 struct ion_cma_heap {
 	struct ion_heap heap;
 	struct device *dev;
+	/* Per-ION-heap counters, not global CMA ownership. */
+	atomic64_t diag_alloc_requests;
+	atomic64_t diag_alloc_success;
+	atomic64_t diag_alloc_failed;
+	atomic64_t diag_dma_failed;
+	atomic64_t diag_live_buffers;
+	atomic64_t diag_live_bytes;
+	atomic64_t diag_last_failed_bytes;
+	atomic64_t diag_last_dma_failed_bytes;
+	atomic_t diag_last_errno;
 };
 
 #define to_cma_heap(x) container_of(x, struct ion_cma_heap, heap)
@@ -46,15 +57,19 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 	unsigned long size = len;
 	int ret;
 
+	atomic64_inc(&cma_heap->diag_alloc_requests);
 	dev_dbg(dev, "Request buffer allocation len %ld\n", len);
 
-	if (!ion_is_heap_available(heap, flags, NULL))
-		return -EPERM;
+	if (!ion_is_heap_available(heap, flags, NULL)) {
+		ret = -EPERM;
+		goto failed;
+	}
 
 	info = kzalloc(sizeof(struct ion_buffer_info), GFP_KERNEL);
 	if (!info) {
+		ret = -ENOMEM;
 		dev_err(dev, "Can't allocate buffer info\n");
-		return -ENOMEM;
+		goto failed;
 	}
 
 	if (buffer->flags & ION_FLAG_PROTECTED) {
@@ -67,6 +82,8 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 			(align ? get_order(align) : 0));
 	if (!page) {
 		ret = -ENOMEM;
+		atomic64_inc(&cma_heap->diag_dma_failed);
+		atomic64_set(&cma_heap->diag_last_dma_failed_bytes, size);
 		dev_err(dev, "Fail to allocate buffer\n");
 		goto err;
 	}
@@ -104,6 +121,9 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 		}
 	}
 
+	atomic64_inc(&cma_heap->diag_alloc_success);
+	atomic64_inc(&cma_heap->diag_live_buffers);
+	atomic64_add(PAGE_ALIGN(size), &cma_heap->diag_live_bytes);
 	dev_dbg(dev, "Allocate buffer %p\n", buffer);
 	return 0;
 err_protect:
@@ -114,6 +134,10 @@ free_mem:
 err:
 	kfree(info);
 	ion_debug_heap_usage_show(heap);
+failed:
+	atomic64_inc(&cma_heap->diag_alloc_failed);
+	atomic64_set(&cma_heap->diag_last_failed_bytes, len);
+	atomic_set(&cma_heap->diag_last_errno, ret);
 	return ret;
 }
 
@@ -139,6 +163,8 @@ static void ion_cma_free(struct ion_buffer *buffer)
 	/* release sg table */
 	sg_free_table(&info->table);
 	kfree(info);
+	atomic64_dec(&cma_heap->diag_live_buffers);
+	atomic64_sub(PAGE_ALIGN(size), &cma_heap->diag_live_bytes);
 }
 
 /* return physical address in addr */
@@ -206,6 +232,43 @@ static struct ion_heap_ops ion_cma_ops = {
 	.unmap_kernel = ion_cma_unmap_kernel,
 };
 
+/*
+ * Sysfs diagnostics are read-only: no physical addresses, owner PIDs or
+ * buffer contents are exposed.  cma_*_region counts can include non-ION
+ * callers sharing the same CMA area.
+ */
+ssize_t ion_cma_diag_show(struct ion_heap *heap, char *buf)
+{
+	struct ion_cma_heap *ch = to_cma_heap(heap);
+	struct cma *area = dev_get_cma_area(ch->dev);
+
+	return scnprintf(buf, PAGE_SIZE,
+		"alloc_requests=%lld\n"
+		"alloc_success=%lld\n"
+		"alloc_failed=%lld\n"
+		"alloc_dma_failed=%lld\n"
+		"live_buffers=%lld\n"
+		"live_bytes=%lld\n"
+		"last_failed_bytes=%lld\n"
+		"last_dma_failed_bytes=%lld\n"
+		"last_errno=%d\n"
+		"cma_bytes_region=%lu\n"
+		"cma_busy_retries_region=%llu\n"
+		"cma_failed_requests_region=%llu\n",
+		(long long)atomic64_read(&ch->diag_alloc_requests),
+		(long long)atomic64_read(&ch->diag_alloc_success),
+		(long long)atomic64_read(&ch->diag_alloc_failed),
+		(long long)atomic64_read(&ch->diag_dma_failed),
+		(long long)atomic64_read(&ch->diag_live_buffers),
+		(long long)atomic64_read(&ch->diag_live_bytes),
+		(long long)atomic64_read(&ch->diag_last_failed_bytes),
+		(long long)atomic64_read(&ch->diag_last_dma_failed_bytes),
+		atomic_read(&ch->diag_last_errno),
+		area ? cma_get_size(area) : 0,
+		cma_get_busy_retries(area),
+		cma_get_failed_requests(area));
+}
+
 struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
 {
 	struct ion_cma_heap *cma_heap;
@@ -223,6 +286,15 @@ struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
 	 */
 	cma_heap->dev = data->priv;
 	cma_heap->heap.type = ION_HEAP_TYPE_DMA;
+	atomic64_set(&cma_heap->diag_alloc_requests, 0);
+	atomic64_set(&cma_heap->diag_alloc_success, 0);
+	atomic64_set(&cma_heap->diag_alloc_failed, 0);
+	atomic64_set(&cma_heap->diag_dma_failed, 0);
+	atomic64_set(&cma_heap->diag_live_buffers, 0);
+	atomic64_set(&cma_heap->diag_live_bytes, 0);
+	atomic64_set(&cma_heap->diag_last_failed_bytes, 0);
+	atomic64_set(&cma_heap->diag_last_dma_failed_bytes, 0);
+	atomic_set(&cma_heap->diag_last_errno, 0);
 	return &cma_heap->heap;
 }
 
