@@ -4,7 +4,9 @@ on:
   push:
     branches: ['research/k510-dream2lte-p1']
     paths:
-      - 'research/k510/**'
+      - 'research/k510/bootstrap.sh'
+      - 'research/k510/p1-import-dts.sh'
+      - 'research/k510/p1-import-pinctrl.sh'
       - '.github/workflows/k510-p1b-pinctrl.yml'
   workflow_dispatch:
 
