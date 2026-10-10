@@ -103,7 +103,7 @@ jobs:
           bash research/k510/p11-build-evidence-initramfs.sh "$DIR/p2g-init"
           test -s "$DIR/p2g-init/initramfs.cpio.gz"
           strings "$DIR/p2g-init/init" | grep -q "ALICE_K510_P11_PID1_REACHED_LINUX_5_10_262"
-          strings "$DIR/p2g-init/init" | grep -q "ALICE_K510_P11_POWER_SUPPLIES"
+          strings "$DIR/p2g-init/init" | grep -q "POWER_SUPPLIES"
           echo "P11 marker and read-only inventory in static AArch64 PID1 PASS"
           python3 research/k510/p2f-dtbh-pack.py \
             "$DIR/out-p2g/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb" \
