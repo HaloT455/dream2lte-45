@@ -4,15 +4,32 @@
 # This produces only code for compile-time study; hardware handoff unproven.
 set -euo pipefail
 SRC="$1"
+IMAGE="${2:?P2G-R2 requires raw ARM64 Image to derive the boot entry}"
 test -s "$SRC/configs/dreamlte_defconfig"
-python3 - "$SRC" <<'PY'
+test -s "$IMAGE"
+python3 - "$SRC" "$IMAGE" <<'PY'
 from pathlib import Path
-import sys
+import sys,struct
 root=Path(sys.argv[1])
+image=Path(sys.argv[2])
+with image.open('rb') as fd:
+    header=fd.read(64)
+if len(header)!=64 or header[0x38:0x3c]!=b'ARM\x64':
+    raise SystemExit('Not an ARM64 Image header')
+text_offset,image_size,flags=struct.unpack_from('<QQQ',header,8)
+if text_offset>=0x200000 or (flags & 1):
+    raise SystemExit('Unexpected ARM64 image offset / non-little-endian image')
+kernel_load=0x98000000+text_offset
+
 old_config=(root/"configs/dreamlte_defconfig").read_text()
 assert old_config.count("CONFIG_SAMSUNG_DREAMLTE=y")==1
 new_config=old_config.replace("CONFIG_SAMSUNG_DREAMLTE=y",
                               "CONFIG_SAMSUNG_DREAM2LTE=y")
+assert old_config.count("CONFIG_PAYLOAD_ENTRY=0x90000000")==1
+new_config=new_config.replace("CONFIG_PAYLOAD_ENTRY=0x90000000",
+                              f"CONFIG_PAYLOAD_ENTRY=0x{kernel_load:x}")
+assert kernel_load>=0x98000000 and kernel_load<0x98200000
+print(f'R2 ARM64 Image text_offset=0x{text_offset:x}, image_size=0x{image_size:x}; load_entry=0x{kernel_load:x}')
 (root/"configs/dream2lte_defconfig").write_text(new_config)
 
 kconfig=root/"board/Kconfig"
