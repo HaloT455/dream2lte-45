@@ -65,7 +65,7 @@ for typ in TYPES:
     if not re.search(r"\b" + typ + r"\b", vendor_h):
         refuse("donor missing type " + typ)
 for bit in MODE_BITS:
-    if not re.search(r"\b#define\s+" + bit + r"\b", vendor_h):
+    if not re.search(r"(?m)^\s*#define\s+" + bit + r"\b", vendor_h):
         refuse("donor missing mode " + bit)
 
 clean = re.sub(r"/\*.*?\*/", "", node, flags=re.S)
