@@ -20,10 +20,16 @@ test -s "$LAB/ufs-exynos.h"
 # Keep the original relative UFS header includes pointing to the 5.10 UFS
 # host interfaces. This deliberately exposes real incompatible vendor APIs.
 cat > "$LAB/Makefile" <<'EOF'
-# P18 isolated SOURCE-COMPAT test only; not connected to the main kernel Makefile.
+# P18 isolated SOURCE-COMPAT test only; NOT FOR FINAL VMLINUX OR BOOT.
 ccflags-y += -I$(srctree)/drivers/scsi/ufs
 obj-y += ufs-exynos-vendor.o
 EOF
+# Register ONLY in ephemeral CI kernel tree so Kbuild can compile the exact
+# donor translation unit. Do not ever use this temporary tree for a runtime Image.
+MAIN="$TREE/drivers/scsi/ufs/Makefile"
+test -s "$MAIN"
+grep -q 'alice-p18-vendor/' "$MAIN" && { echo 'Duplicate P18 rule' >&2; exit 22; }
+printf '\n# P18 compile-only diagnostic; NEVER ship this directory\nobj-y += alice-p18-vendor/\n' >> "$MAIN"
 echo 'P18: ORIGINAL Exynos8895 UFS driver + header in isolated compilation test.'
 sha256sum "$LAB/ufs-exynos-vendor.c" "$LAB/ufs-exynos.h"
 echo 'Never register in production Kbuild; native UFS remains separate and disabled in DT.'
