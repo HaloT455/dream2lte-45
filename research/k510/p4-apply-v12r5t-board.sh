@@ -56,7 +56,8 @@ s += r"""
         };
         wink-key {
             label = "Bixby";
-            linux,code = <KEY_CAMERA>;
+            /* Exact V12R5T stock keycode 0x2bf; don't silently remap. */
+            linux,code = <0x2bf>;
             gpios = <&gpa0 6 GPIO_ACTIVE_LOW>;
             wakeup-source;
         };
