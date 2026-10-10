@@ -17,7 +17,11 @@ test -r "$IMG" && test -r "$SUMS" && test -r "$STOCK"
 [[ "$(stat -c %s "$STOCK")" == 41943040 ]] || { echo "FAIL: original BOOT must be exactly 40 MiB" >&2; exit 1; }
 [[ "$(head -c 8 "$IMG")" == 'ANDROID!' ]] || { echo "FAIL: P7 BOOT header not ANDROID!" >&2; exit 1; }
 echo "$STOCK_HASH  $STOCK" | sha256sum -c - || { echo "FAIL: V12R5T stock backup SHA differs; STOP!" >&2; exit 2; }
-(cd "$DIR" && sha256sum -c "$(basename "$SUMS")") || { echo "FAIL: P7 image SHA differs; STOP!" >&2; exit 3; }
+# GitHub Actions upload strips ci-p2g/ dir; SHA256SUMS retains original path.
+# Read expected digest by basename, then check the actual extracted file.
+EXPECTED="$(awk -v file="$(basename "$IMG")" '$NF == file || $NF == "ci-p2g/"file {print $1}' "$SUMS")"
+[[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: invalid or ambiguous P7 SHA256SUMS" >&2; exit 3; }
+echo "$EXPECTED  $IMG" | sha256sum -c - || { echo "FAIL: P7 image SHA differs; STOP!" >&2; exit 3; }
 COUNT="$(adb devices | awk '$2=="device"{n++}END{print n+0}')"
 [[ "$COUNT" == 1 ]] || { echo "FAIL: expected one adb-connected phone, got $COUNT" >&2; exit 4; }
 MODEL="$(adb shell getprop ro.product.model | tr -d '\r')"
