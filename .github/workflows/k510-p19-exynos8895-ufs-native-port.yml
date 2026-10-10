@@ -1,0 +1,120 @@
+name: ALICE K510 P19 Exynos8895 UFS vendor UniPro port to native 5.10 (NO FLASH)
+on:
+  push:
+    branches: ['experimental/k510-p19-exynos8895-ufs-native-port']
+    paths:
+      - 'research/k510/p19-*'
+      - 'research/k510/P19-*'
+      - '.github/workflows/k510-p19-exynos8895-ufs-native-port.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-driver-port:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross compiler and DT tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Verify pinned working Exynos8895 donor
+        run: |
+          set -euxo pipefail
+          mkdir -p ci-p19
+          PIN=3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3
+          git fetch --no-tags --depth=1 origin refs/heads/agent/v12r5t-mglru-aging-stability
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          git cat-file -e "$PIN^{commit}"
+      - name: Stage genuine Linux 5.10.262 and working Exynos8895 board
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p19"
+          mkdir -p "$OUT"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = "5.10.262"
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT"
+          bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
+          bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT"
+          bash research/k510/p13-stage-v12r5t-acpm.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p19/pinned-acpm.log
+          bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" | tee ci-p19/kbuild.log
+          python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" | tee ci-p19/i2c-bridge.log
+          bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p19/acpm-lab.log
+          bash research/k510/p17-import-powermeter.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p19/powermeter.log
+          bash research/k510/p17-stage-final-link-config.sh "$SRC" "$OUT" | tee ci-p19/acpm-link-config.log
+          python3 research/k510/p19-port-exynos8895-ufs.py "$GITHUB_WORKSPACE" "$SRC" ci-p19 \
+            | tee ci-p19/port-source-validation.log
+          grep -q '"ready_to_flash": false' ci-p19/p19-ported-vendor-unipro.json
+          cp "$OUT/.config" ci-p19/K510-P19.config
+      - name: Require real Exynos8895 Linux 5.10 UFS driver object and DTB
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p19"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/ufs-exynos.o drivers/phy/samsung/phy-samsung-ufs.o \
+            exynos/exynos8895-dream2lte.dtb > ci-p19/driver-object-build.log 2>&1; then
+            echo 'P19_EXYNOS8895_5_10_UFS_SOURCE_COMPILE_PASS' | tee ci-p19/driver-status.txt
+          else
+            rc=$?
+            echo "P19_DRIVER_OBJECT_COMPILE_FAIL rc=$rc" | tee ci-p19/driver-status.txt
+            grep -En 'fatal error:|error:|No rule to make target' ci-p19/driver-object-build.log | tail -n 100 || true
+            tail -n 90 ci-p19/driver-object-build.log
+            exit "$rc"
+          fi
+          test -s "$OUT/drivers/scsi/ufs/ufs-exynos.o"
+          test -s "$OUT/drivers/phy/samsung/phy-samsung-ufs.o"
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/ufs-exynos.o" \
+            | tee ci-p19/exynos8895-variant-symbols.txt \
+            | grep -q 'exynos8895_ufs_pre_link'
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 compatible | grep -qx samsung,exynos8895-ufs
+          echo 'P19: compiled actual Exynos8895 vendor UIC port with Linux 5.10 callback API; UFS still disabled.' \
+            | tee ci-p19/README.txt
+      - name: Verify true vmlinux final linkage plus Exynos8895 variant symbol
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p19"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 vmlinux > ci-p19/full-vmlinux.log 2>&1; then
+            echo 'P19_FULL_VMLINUX_LINK=PASS' | tee ci-p19/final-link-status.txt
+          else
+            rc=$?
+            echo "P19_FULL_VMLINUX_LINK=FAIL rc=$rc" | tee ci-p19/final-link-status.txt
+            grep -En 'undefined reference|multiple definition|fatal error:|error:' ci-p19/full-vmlinux.log | tail -n 100 || true
+            tail -n 85 ci-p19/full-vmlinux.log
+            exit "$rc"
+          fi
+          test -s "$OUT/vmlinux"
+          aarch64-linux-gnu-readelf -h "$OUT/vmlinux" > ci-p19/vmlinux-elf-header.txt
+          grep -q 'Machine:.*AArch64' ci-p19/vmlinux-elf-header.txt
+          grep -Eq ' [Tt] exynos8895_ufs_pre_link$' "$OUT/System.map"
+          grep -Eq ' [Tt] exynos8895_ufs_post_link$' "$OUT/System.map"
+          grep -Eq ' [Tt] exynos8895_ufs_pre_pwr_change$' "$OUT/System.map"
+          sha256sum "$OUT/vmlinux" > ci-p19/vmlinux-sha256-only.txt
+          echo 'REAL 5.10.262 FULL-LINK PASS. Vendor-only PCM/PHY/SMC/Speedy code NOT ported.' \
+            | tee -a ci-p19/README.txt
+          echo 'UFS disabled. NO BOOT IMAGE. NEVER FLASH P19.' | tee -a ci-p19/README.txt
+      - name: Preserve compiler and linkage diagnostics (no kernel binaries)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ALICE-K510-P19-EXYNOS8895-UIC-HOST-PORT-NO-FLASH
+          path: ci-p19/
+          if-no-files-found: warn
+          retention-days: 21
