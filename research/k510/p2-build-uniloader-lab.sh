@@ -30,6 +30,9 @@ fi
 if [[ "${ALICE_K510_P9_CPU_PROBE:-0}" == "1" ]]; then
     python3 "$OLDPWD/research/k510/p9-probe-cpu-entry.py" .
 fi
+if [[ "${ALICE_K510_P10_FIX_HANDOFF:-0}" == "1" ]]; then
+    python3 "$OLDPWD/research/k510/p10-fix-arm64-handoff.py" .
+fi
 mkdir -p blob
 cp "$SRC" blob/Image
 cp "$DTB" blob/dtb
