@@ -1,0 +1,51 @@
+name: Alice K510 P6 V12R5T full-driver dependency audit (NO FLASH)
+on:
+  push:
+    branches: ['experimental/k510-p6-full-v12r5t-port-plan']
+    paths:
+      - 'research/k510/p6-audit-critical-driver-deps.py'
+      - 'research/k510/bootstrap.sh'
+      - '.github/workflows/k510-p6-port-dependency-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-verified-donor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact V12R5T source snapshot
+        run: |
+          set -euxo pipefail
+          PIN=3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3
+          git fetch --no-tags --depth=1 origin refs/heads/agent/v12r5t-mglru-aging-stability
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          git cat-file -e "$PIN^{commit}"
+      - name: Fetch exact Linux 5.10.262 source without compiling
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          test "$(make -s -C "$K510_WORKDIR/linux-5.10.262" kernelversion)" = 5.10.262
+      - name: Generate source-port blocker matrix
+        run: |
+          set -euxo pipefail
+          python3 research/k510/p6-audit-critical-driver-deps.py \
+            --donor-repo "$GITHUB_WORKSPACE" \
+            --linux-510 "$RUNNER_TEMP/alice-k510/linux-5.10.262" \
+            --out ci-p6 | tee ci-p6-script.log
+          test -s ci-p6/P6-HARDWARE-PORT-READINESS.json
+          test -s ci-p6/P6-HARDWARE-PORT-READINESS.md
+          test -s ci-p6/P6-HARDWARE-PORT-READINESS.csv
+          echo "Research audit only — DO NOT FLASH" > ci-p6/README.txt
+      - name: Upload audit reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P6-V12R5T-HARDWARE-PORT-AUDIT-NO-FLASH
+          path: |
+            ci-p6/
+            ci-p6-script.log
+          retention-days: 30
+          if-no-files-found: warn
