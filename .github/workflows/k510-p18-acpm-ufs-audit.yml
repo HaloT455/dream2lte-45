@@ -75,11 +75,15 @@ jobs:
           OUT="$RUNNER_TEMP/alice-k510/out-p18"
           bash research/k510/p18-stage-original-ufs.sh "$GITHUB_WORKSPACE" "$SRC" \
             | tee ci-p18/original-vendor-ufs-sha256.log
+          bash research/k510/p18-stage-vendor-power-headers.sh "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p18/original-power-header-sha256.log
           make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j4 prepare scripts > ci-p18/vendor-prepare.log 2>&1
           obj=drivers/scsi/ufs/alice-p18-vendor/ufs-exynos-vendor.o
+          # CONFIG_CAL_IF is for the isolated V12R5T header's Linux-side
+          # declarations ONLY. It is NOT enabled in runnable Linux 5.10.
           if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            "$obj" > ci-p18/vendor-ufs-compat.log 2>&1; then
+            KCFLAGS=-DCONFIG_CAL_IF "$obj" > ci-p18/vendor-ufs-compat.log 2>&1; then
             rc=0
           else
             rc=$?
