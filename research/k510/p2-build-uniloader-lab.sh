@@ -27,6 +27,9 @@ bash "$OLDPWD/research/k510/p2-adapt-uniloader-dream2lte.sh" . "$SRC"
 if [[ "${ALICE_K510_P8_COPY_CHECK:-0}" == "1" ]]; then
     python3 "$OLDPWD/research/k510/p8-instrument-uniloader-handoff.py" .
 fi
+if [[ "${ALICE_K510_P9_CPU_PROBE:-0}" == "1" ]]; then
+    python3 "$OLDPWD/research/k510/p9-probe-cpu-entry.py" .
+fi
 mkdir -p blob
 cp "$SRC" blob/Image
 cp "$DTB" blob/dtb
