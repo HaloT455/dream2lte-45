@@ -1,4 +1,4 @@
-name: Alice K510 P21 Exynos8895 UFS PHY UniPro calibration engine full vmlinux link (NO FLASH)
+name: Alice K510 P21 Exynos8895 UFS PHY UniPro engine + full vmlinux (NO FLASH)
 on:
   push:
     branches: ['experimental/k510-p21-ufs8895-calibration-engine']
@@ -83,14 +83,13 @@ jobs:
           aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-calibration.o" \
             | grep -E ' T alice_ufs8895_get_calibration$'
           echo 'P20_8895_CALIBRATION_C_OBJECT_PASS' | tee ci-p21/calibration-compile-status.txt
-      - name: Compile Exynos8895 UFS PHY UniPro interpreter against Linux 5.10
+      - name: Compile real UFS 8895 PHY/UniPro interpreter against Linux 5.10
         run: |
           set -euo pipefail
           SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
           OUT="$RUNNER_TEMP/alice-k510/out-p21"
           if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-              -j4 drivers/scsi/ufs/alice-ufs8895-engine.o \
-              > ci-p21/ufs-engine-compile.log 2>&1; then
+            -j4 drivers/scsi/ufs/alice-ufs8895-engine.o > ci-p21/ufs-engine-compile.log 2>&1; then
             test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-engine.o"
           else
             rc=$?
@@ -100,89 +99,12 @@ jobs:
             exit "$rc"
           fi
           aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-engine.o" \
-            | grep -E ' T alice_ufs8895_(check_phase|run_phase)
-        run: |
-          set -euo pipefail
-          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
-          OUT="$RUNNER_TEMP/alice-k510/out-p21"
-          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            -j4 drivers/regulator/s2mps17_powermeter.o > ci-p21/powermeter-build.log 2>&1; then
-            test -s "$OUT/drivers/regulator/s2mps17_powermeter.o"
-            echo 'Original Samsung S2MPS17 powermeter compiled (C object only).'
-          else
-            rc=$?
-            grep -En 'fatal error:|error:|No rule|Error [0-9]' ci-p21/powermeter-build.log | tail -n 40 || true
-            tail -n 60 ci-p21/powermeter-build.log
-            exit "$rc"
-          fi
-      - name: Build real vmlinux and DTB; fail on any kernel linker error
-        run: |
-          set -euo pipefail
-          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
-          OUT="$RUNNER_TEMP/alice-k510/out-p21"
-          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            -j4 vmlinux exynos/exynos8895-dream2lte.dtb > ci-p21/full-build.log 2>&1; then
-            echo 'FULL_VMLINUX_LINK=PASS' | tee ci-p21/build-status.txt
-          else
-            rc=$?
-            echo "FULL_VMLINUX_LINK=FAIL exit=$rc" | tee ci-p21/build-status.txt
-            grep -En 'undefined reference|multiple definition|fatal error:|error:|Error [0-9]+|No rule to make target' \
-              ci-p21/full-build.log | tail -n 85 || true
-            tail -n 90 ci-p21/full-build.log
-            exit "$rc"
-          fi
-          test -s "$OUT/vmlinux"
-          test -s "$OUT/System.map"
-          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
-          test -s "$DTB"
-          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
-          aarch64-linux-gnu-readelf -h "$OUT/vmlinux" > ci-p21/vmlinux-elf-header.txt
-          grep -q 'Machine:.*AArch64' ci-p21/vmlinux-elf-header.txt
-          cp "$OUT/System.map" ci-p21/System.map
-          for sym in \
-            s2mps17_powermeter_init s2mps17_powermeter_deinit \
-            acpm_ipc_request_channel acpm_ipc_send_data exynos_acpm_read_reg \
-            exynos_acpm_write_reg s2mps17_read_reg s2mps17_write_reg; do
-            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
-              echo "P17 FAILED: required interface $sym missing from final System.map" >&2
-              exit 50
-            }
-          done
-          grep -Eq ' [Tt] alice_ufs8895_get_calibration$' "$OUT/System.map" || {
-            echo 'P21 FAILED: 8895 calibration C data absent from final vmlinux'
-            exit 48
-          }
-          echo 'P20 124/124 original 8895 calibration rows linked, NO HW PROBE' \
-            | tee ci-p21/calibration-link-status.txt
-          for sym in alice_ufs8895_check_phase alice_ufs8895_run_phase; do
-            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
-              echo "P21 FAILED: hardware-gated UFS engine symbol $sym missing"; exit 54;
-            }
-          done
-          echo 'P21 UFS 124-entry engine compiled + final link PASS; no hardware probe' \
-            | tee ci-p21/ufs-engine-final-link.txt
-          sha256sum "$OUT/vmlinux" "$DTB" > ci-p21/checksums-no-binaries.txt
-          {
-            echo 'P21: REAL vmlinux final kernel link and AArch64 ELF PASS.'
-            echo 'All 7 donor ACPM/PMIC drivers and 124-row Exynos8895 calibration tables plus gated PHY/UniPro interpreter in final vmlinux.'
-            echo 'DTB UFS still status=disabled.'
-            echo 'NOT RUNTIME VERIFIED. UFS interpreter is unregistered and hardware I/O forbidden by default; no SMC/FMP or PMIC runtime, UFS probe or Android init.'
-            echo 'No kernel binaries or boot.img published. NEVER FLASH.'
-          } | tee ci-p21/README.txt
-      - name: Publish exact compile/link evidence (exclude kernel binaries)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ALICE-K510-P21-FULL-VMLINUX-GATE-NO-FLASH
-          path: ci-p21/
-          if-no-files-found: warn
-          retention-days: 21
- \
+            | grep -E ' T alice_ufs8895_(check_phase|run_phase)$' \
             | tee ci-p21/ufs-engine-elf-symbols.txt
           test "$(wc -l < ci-p21/ufs-engine-elf-symbols.txt)" -eq 2
           if grep -Eq 'platform_driver_register|__platform_driver|of_match_table' \
               research/k510/p21-ufs8895-engine.c; then
-            echo 'UNSAFE: P21 source must never register a hardware driver' >&2
+            echo 'P21 UNSAFE: must never register a hardware UFS driver' >&2
             exit 55
           fi
           echo 'P21_UFS_ENGINE_C_OBJECT=PASS; NO HARDWARE PROBE' \
@@ -236,17 +158,24 @@ jobs:
             }
           done
           grep -Eq ' [Tt] alice_ufs8895_get_calibration$' "$OUT/System.map" || {
-            echo 'P21 FAILED: 8895 calibration C data absent from final vmlinux'
+            echo 'P20 FAILED: 8895 calibration C data absent from final vmlinux'
             exit 48
           }
           echo 'P20 124/124 original 8895 calibration rows linked, NO HW PROBE' \
             | tee ci-p21/calibration-link-status.txt
+          for sym in alice_ufs8895_check_phase alice_ufs8895_run_phase; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P21 FAILED: hardware-gated UFS engine symbol $sym missing"; exit 54;
+            }
+          done
+          echo 'P21 UFS 124-entry engine compiled and linked, NO HW PROBE' \
+            | tee ci-p21/ufs-engine-final-link.txt
           sha256sum "$OUT/vmlinux" "$DTB" > ci-p21/checksums-no-binaries.txt
           {
-            echo 'P21: REAL vmlinux final kernel link and AArch64 ELF PASS.'
-            echo 'All 7 donor ACPM/PMIC drivers and 124-row Exynos8895 calibration C arrays in final vmlinux.'
+            echo 'P20: REAL vmlinux final kernel link and AArch64 ELF PASS.'
+            echo 'All 7 donor ACPM/PMIC drivers, 124-row calibration tables, and gated UFS PHY/UniPro interpreter linked in vmlinux.'
             echo 'DTB UFS still status=disabled.'
-            echo 'NOT RUNTIME VERIFIED. No Exynos8895 PHY MMIO, SMC/FMP, PMIC runtime, UFS probe or Android init.'
+            echo 'NOT RUNTIME VERIFIED. Interpreter has zero clients, I/O denied by default; no UFS probe, SMC/FMP, or PMIC runtime.'
             echo 'No kernel binaries or boot.img published. NEVER FLASH.'
           } | tee ci-p21/README.txt
       - name: Publish exact compile/link evidence (exclude kernel binaries)
