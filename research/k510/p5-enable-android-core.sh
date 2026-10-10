@@ -16,6 +16,10 @@ cfg="$TREE/scripts/config"
   --enable NAMESPACES \
   --enable SECURITY \
   --enable SECURITYFS \
+  --enable NET \
+  --enable INET \
+  --enable AUDIT \
+  --enable SECURITY_NETWORK \
   --enable SECURITY_SELINUX \
   --enable FS_ENCRYPTION \
   --enable EROFS_FS \
