@@ -1,0 +1,83 @@
+name: Alice K510 P12 UFS PHY + power frameworks (COMPILE ONLY)
+on:
+  push:
+    branches: ['experimental/k510-p12-ufs-power-android-init-stage']
+    paths:
+      - 'research/k510/p12-*.sh'
+      - 'research/k510/p12-*.py'
+      - '.github/workflows/k510-p12-ufs-power-frameworks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-native-drivers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 cross-compile dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Prepare genuine Linux 5.10.262 Exynos8895 tree
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = 5.10.262
+      - name: Integrate P4 P5 P12 native base driver frameworks
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p12"
+          mkdir -p "$OUT" ci-p12
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT"
+          bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
+          bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT" \
+            | tee ci-p12/framework-config.log
+          cp "$OUT/.config" ci-p12/K510-P12.config
+      - name: Compile actual Linux kernel, native UFS PHY and DTB
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p12"
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 Image exynos/exynos8895-dream2lte.dtb \
+            2>&1 | tee ci-p12/kernel-build.log
+          test -s "$OUT/arch/arm64/boot/Image"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
+          for k in PHY_SAMSUNG_UFS SCSI_UFS_EXYNOS REGULATOR GENERIC_PHY; do
+            grep -qx "CONFIG_$k=y" "$OUT/.config"
+          done
+          # Actual built-in object proof (not generic CONFIG smoke test).
+          test -s "$OUT/drivers/phy/samsung/phy-samsung-ufs.o"
+          test -s "$OUT/drivers/scsi/ufs/ufs-exynos.o"
+          cp "$DTB" ci-p12/exynos8895-P12-compileonly.dtb
+          echo "P12 PHY/host compiled for Linux 5.10; exynos8895 physical UFS NOT enabled" > ci-p12/README.txt
+          echo "S2MPS17 ACPM and correct UFS PHY calibration NOT ported" >> ci-p12/README.txt
+          echo "Android 16 / One UI 8 ramdisk is NOT present in CI" >> ci-p12/README.txt
+          echo "NO BOOT.IMG PRODUCED. DO NOT FLASH THIS ARTIFACT." >> ci-p12/README.txt
+      - name: Publish compiled kernel/DT evidence, no BOOT flash image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P12-DRIVER-FOUNDATION-NO-FLASH
+          path: |
+            ci-p12/framework-config.log
+            ci-p12/K510-P12.config
+            ci-p12/exynos8895-P12-compileonly.dtb
+            ci-p12/README.txt
+          if-no-files-found: warn
+          retention-days: 21
