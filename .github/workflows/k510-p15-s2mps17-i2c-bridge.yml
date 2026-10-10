@@ -1,0 +1,112 @@
+name: Alice K510 P15 S2MPS17 I2C API compatibility (NO BOOT)
+on:
+  push:
+    branches: ['experimental/k510-p15-s2mps17-i2c-api-bridge']
+    paths:
+      - 'research/k510/p15-*'
+      - 'research/k510/P15-*'
+      - '.github/workflows/k510-p15-s2mps17-i2c-bridge.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compiler-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 compilation tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Verify exact V12R5T donor
+        run: |
+          set -euxo pipefail
+          PIN=3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3
+          git fetch --no-tags --depth=1 origin refs/heads/agent/v12r5t-mglru-aging-stability
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          git cat-file -e "$PIN^{commit}"
+      - name: Stage genuine Linux 5.10 baseline and donor sources
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p15"
+          mkdir -p "$OUT" ci-p15
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = "5.10.262"
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT"
+          bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
+          bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT"
+          bash research/k510/p13-stage-v12r5t-acpm.sh "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p15/pinned-donor-sha256.log
+          bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" \
+            | tee ci-p15/kbuild-registration.log
+          python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p15/i2c-bridge.log
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 prepare scripts
+      - name: Compile four actual donor objects; fail on missing Kbuild rules
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p15"
+          printf 'SOURCE\tRESULT\tEXIT_CODE\n' > ci-p15/compat-status.tsv
+          bad_harness=0
+          unknown=0
+          for obj in \
+            drivers/soc/samsung/acpm/acpm_mfd.o \
+            drivers/mfd/s2mps17_core.o \
+            drivers/mfd/s2mps17_irq.o \
+            drivers/regulator/s2mps17.o; do
+            name="$(basename "$obj" .o)"
+            log="ci-p15/$name.log"
+            if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+              KCFLAGS=-DCONFIG_EXYNOS_ACPM "$obj" > "$log" 2>&1; then
+              rc=0
+            else
+              rc=$?
+            fi
+            if grep -Eiq 'No rule to make target|No targets specified|No rule to make' "$log"; then
+              status=HARNESS_ERROR
+              bad_harness=1
+            elif [ "$rc" -eq 0 ] && [ -s "$OUT/$obj" ]; then
+              status=C_COMPILE_PASS_ONLY
+            elif grep -Eq '(^|[[:space:]])(fatal )?error:|:[0-9]+(:[0-9]+)?: (fatal )?error:' "$log"; then
+              status=C_API_OR_HEADER_BLOCKED
+            else
+              status=UNCLASSIFIED_BUILD_FAILURE
+              unknown=1
+            fi
+            printf '%s\t%s\t%d\n' "$obj" "$status" "$rc" >> ci-p15/compat-status.tsv
+            echo "===== $obj :: $status (make=$rc) ====="
+            grep -En 'fatal error:|error:|No rule to make target' "$log" | head -n 12 || true
+            tail -n 4 "$log"
+          done
+          cat ci-p15/compat-status.tsv
+          test "$(wc -l < ci-p15/compat-status.tsv)" -eq 5
+          if [ "$bad_harness" -ne 0 ] || [ "$unknown" -ne 0 ]; then
+            echo 'P15 FAIL: test harness did not reach reliable compiler diagnostics.' >&2
+            exit 33
+          fi
+          echo 'P15 compile inventory trustworthy; C_COMPILE_PASS_ONLY is not runtime support.' \
+            | tee ci-p15/README.txt
+          echo 'NO runtime-enabled ACPM, UFS, DT, Android init or boot.img. DO NOT FLASH.' \
+            >> ci-p15/README.txt
+      - name: Preserve real compiler logs (not flashable)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P15-I2C-API-COMPAT-EVIDENCE-NO-BOOT
+          path: ci-p15/
+          if-no-files-found: warn
+          retention-days: 21
