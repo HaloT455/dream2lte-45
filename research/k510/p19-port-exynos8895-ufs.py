@@ -190,7 +190,11 @@ variant="""struct exynos_ufs_drv_data exynos8895_ufs_drvs = {
 };
 
 """
-patched=patched.replace(decl,variant+decl,1)
+# The variant data is referenced by exynos_ufs_parse_dt() above the
+# original exynos_ufs_drvs definition; place our definition before parser.
+parse_fn="static int exynos_ufs_parse_dt(struct device *dev, struct exynos_ufs *ufs)"
+require(patched.count(parse_fn)==1,"5.10 DT parser changed")
+patched=patched.replace(parse_fn, variant+parse_fn,1)
 old_parser="struct exynos_ufs_drv_data *drv_data = &exynos_ufs_drvs;"
 require(patched.count(old_parser)==1,"native DT matching implementation changed")
 patched=patched.replace(
