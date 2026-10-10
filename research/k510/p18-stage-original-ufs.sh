@@ -15,6 +15,10 @@ test ! -e "$LAB/ufs-exynos-vendor.c" || {
 }
 git -C "$DONOR" show "$PIN:drivers/scsi/ufs/ufs-exynos.c" > "$LAB/ufs-exynos-vendor.c"
 git -C "$DONOR" show "$PIN:drivers/scsi/ufs/ufs-exynos.h" > "$LAB/ufs-exynos.h"
+git -C "$DONOR" show "$PIN:drivers/scsi/ufs/mphy.h" > "$LAB/mphy.h"
+git -C "$DONOR" show "$PIN:drivers/scsi/ufs/unipro.h" > "$LAB/unipro.h"
+test -s "$LAB/mphy.h"
+test -s "$LAB/unipro.h"
 test -s "$LAB/ufs-exynos-vendor.c"
 test -s "$LAB/ufs-exynos.h"
 # Keep the original relative UFS header includes pointing to the 5.10 UFS
@@ -31,5 +35,5 @@ test -s "$MAIN"
 grep -q 'alice-p18-vendor/' "$MAIN" && { echo 'Duplicate P18 rule' >&2; exit 22; }
 printf '\n# P18 compile-only diagnostic; NEVER ship this directory\nobj-y += alice-p18-vendor/\n' >> "$MAIN"
 echo 'P18: ORIGINAL Exynos8895 UFS driver + header in isolated compilation test.'
-sha256sum "$LAB/ufs-exynos-vendor.c" "$LAB/ufs-exynos.h"
+sha256sum "$LAB/ufs-exynos-vendor.c" "$LAB/ufs-exynos.h" "$LAB/mphy.h" "$LAB/unipro.h"
 echo 'Never register in production Kbuild; native UFS remains separate and disabled in DT.'
