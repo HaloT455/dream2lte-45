@@ -1,11 +1,11 @@
 name: Alice K510 P19 ACPM Speedy + Exynos8895 UFS compatibility audit (NO FLASH)
 on:
   push:
-    branches: ['experimental/k510-p19-acpm-power-ufs-calibration-audit']
+    branches: ['experimental/k510-p19-vendor-ufs-api-port']
     paths:
       - 'research/k510/p19-*'
       - 'research/k510/P19-*'
-      - '.github/workflows/k510-p19-acpm-ufs-audit.yml'
+      - '.github/workflows/k510-p19-vendor-ufs-port.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -49,10 +49,10 @@ jobs:
           bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
           bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT"
           cp "$OUT/.config" ci-p19/K510-P19-native-5.10.config
-          python3 research/k510/p19-audit-hardware.py "$GITHUB_WORKSPACE" "$SRC" ci-p19 \
+          python3 research/k510/p18-audit-hardware.py "$GITHUB_WORKSPACE" "$SRC" ci-p19 \
             | tee ci-p19/audit-console.log
-          grep -q '"ready_to_flash": false' ci-p19/p19-hardware-audit.json
-          grep -q '"native_5_10_status": "disabled"' ci-p19/p19-hardware-audit.json
+          grep -q '"ready_to_flash": false' ci-p19/p18-hardware-audit.json
+          grep -q '"native_5_10_status": "disabled"' ci-p19/p18-hardware-audit.json
       - name: Verify native Linux 5.10 UFS host and PHY actually compile (NOT runtime)
         run: |
           set -euxo pipefail
@@ -73,13 +73,13 @@ jobs:
           set -euo pipefail
           SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
           OUT="$RUNNER_TEMP/alice-k510/out-p19"
-          bash research/k510/p19-stage-original-ufs.sh "$GITHUB_WORKSPACE" "$SRC" \
+          bash research/k510/p18-stage-original-ufs.sh "$GITHUB_WORKSPACE" "$SRC" \
             | tee ci-p19/original-vendor-ufs-sha256.log
-          bash research/k510/p19-stage-vendor-power-headers.sh "$GITHUB_WORKSPACE" "$SRC" \
+          bash research/k510/p18-stage-vendor-power-headers.sh "$GITHUB_WORKSPACE" "$SRC" \
             | tee ci-p19/original-power-header-sha256.log
           make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j4 prepare scripts > ci-p19/vendor-prepare.log 2>&1
-          obj=drivers/scsi/ufs/alice-p19-vendor/ufs-exynos-vendor.o
+          obj=drivers/scsi/ufs/alice-p18-vendor/ufs-exynos-vendor.o
           # CONFIG_CAL_IF is for the isolated V12R5T header's Linux-side
           # declarations ONLY. It is NOT enabled in runnable Linux 5.10.
           if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
