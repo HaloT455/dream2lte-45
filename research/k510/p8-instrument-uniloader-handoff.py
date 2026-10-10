@@ -76,7 +76,7 @@ void arch_load_kernel(void* kernel, void* dt, void* ramdisk)
 }
 '''
 # Strings are C escaped newlines, not raw literal newline characters.
-new=new.replace('\\\\n"', '\\n"') if False else new
+new=new.replace(chr(92)*2 + "n", chr(92) + "n")
 assert 'ALICE_P8_BEFORE_ARM64_BRANCH' in new
 p.write_text(s.replace(old,new))
 print("P8 instrumented before/after kernel & ramdisk copy and ARM64 branch")
