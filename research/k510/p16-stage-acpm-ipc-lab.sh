@@ -25,6 +25,36 @@ for path in \
   copy_pinned "$path"
 done
 
+
+# Linux 5.10 moved sched_clock declaration to this public header; the older
+# Samsung 4.4 code relied on transitive inclusions. This is a declaration-only
+# port, not a fake API or hardware access shim.
+python3 - "$TREE" <<'PY'
+from pathlib import Path
+import sys
+tree = Path(sys.argv[1])
+for rel in (
+    "drivers/soc/samsung/acpm/acpm.c",
+    "drivers/soc/samsung/acpm/acpm_ipc.c",
+):
+    path = tree / rel
+    source = path.read_text()
+    anchor = "#include <linux/kernel.h>\n"
+    if source.count(anchor) != 1:
+        raise SystemExit(f"P16 refused: unexpected source includes in {rel}")
+    source = source.replace(anchor, anchor + "#include <linux/sched/clock.h>\n", 1)
+    if rel.endswith("acpm_ipc.c"):
+        # The pinned donor header already has #if CONFIG_EXYNOS_SNAPSHOT_ACPM
+        # and a legitimate no-op trace macro for builds without snapshot.
+        source = source.replace(
+            "#include <linux/sched/clock.h>\n",
+            "#include <linux/sched/clock.h>\n#include <linux/exynos-ss.h>\n",
+            1,
+        )
+    path.write_text(source)
+print("P16: declared sched_clock and existing snapshot instrumentation API.")
+PY
+
 # P14 already registers acpm_mfd.o in disposable Kbuild.
 FILE="$TREE/drivers/soc/samsung/acpm/Makefile"
 test -f "$FILE"
