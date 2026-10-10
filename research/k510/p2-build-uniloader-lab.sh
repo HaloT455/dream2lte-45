@@ -23,7 +23,7 @@ fi
 cd "$WORK/uniLoader"
 # Adapt donor SM-G950F board into explicit compiler-tested SM-G955F profile.
 # P2B disabled unverified DECON and PMIC writes.
-bash "$OLDPWD/research/k510/p2-adapt-uniloader-dream2lte.sh" .
+bash "$OLDPWD/research/k510/p2-adapt-uniloader-dream2lte.sh" . "$SRC"
 mkdir -p blob
 cp "$SRC" blob/Image
 cp "$DTB" blob/dtb
