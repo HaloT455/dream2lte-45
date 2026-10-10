@@ -3,9 +3,9 @@ on:
   push:
     branches: ['experimental/k510-p20-exynos8895-calibration-native']
     paths:
-      - 'research/k510/p17-*'
+      - 'research/k510/p20-*'
       - 'research/k510/P20-*'
-      - '.github/workflows/k510-p17-full-vmlinux-link.yml'
+      - '.github/workflows/k510-p20-exynos8895-calibration.yml'
   workflow_dispatch:
 permissions:
   contents: read
