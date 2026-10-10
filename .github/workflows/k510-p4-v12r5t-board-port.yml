@@ -1,0 +1,92 @@
+name: Alice K510 P4 V12R5T board DT port - compile only
+on:
+  push:
+    branches: ['experimental/k510-p2g-r4-v12r5t-board-port']
+    paths:
+      - 'research/k510/p4-apply-v12r5t-board.sh'
+      - 'research/k510/p1-*.sh'
+      - 'research/k510/p2-*.sh'
+      - 'research/k510/p2g-r1-pstore.sh'
+      - 'research/k510/P1D-RMEM.txt'
+      - 'research/k510/bootstrap.sh'
+      - '.github/workflows/k510-p4-v12r5t-board-port.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-board-port:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain and Device Tree tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler curl python3
+      - name: Prepare genuine Linux 5.10.262 Exynos8895 source
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = 5.10.262
+      - name: Port supported V12R5T board nodes and driver options
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p4"
+          mkdir -p "$OUT" ci-p4
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT" 2>&1 | tee ci-p4/board-port-config.log
+          cp "$OUT/.config" ci-p4/board-port.config
+      - name: Compile kernel and DTB with board port
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p4"
+          make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 Image exynos/exynos8895-dream2lte.dtb 2>&1 | tee ci-p4/board-port-build.log
+          test -s "$OUT/arch/arm64/boot/Image"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t s "$DTB" / model | tee ci-p4/board-model.txt
+          fdtget -t x "$DTB" /osc-clock clock-frequency | grep -qx '18cba80'
+          fdtget -t x "$DTB" /soc@0/serial@10430000 reg | grep -qx '10430000 100'
+          fdtget -t x "$DTB" /soc@0/serial@10430000 interrupts | grep -qx '0 181 4'
+          fdtget -t s "$DTB" /soc@0/serial@10430000 status | grep -qx okay
+          fdtget -t s "$DTB" /chosen stdout-path | grep -qx 'serial0:115200n8'
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
+          fdtget -t x "$DTB" /soc@0/ufs@11120000 interrupts | grep -qx '0 14e 4'
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 compatible | grep -qx 'samsung,exynos7-ufs'
+          for k in power-key voldown-key volup-key wink-key; do
+            fdtget -t s "$DTB" "/gpio-keys/$k" label
+          done
+          fdtget -t x "$DTB" '/reserved-memory/ramoops@92000000' reg | grep -qx '0 92000000 8000'
+          dtc -I dtb -O dts "$DTB" > ci-p4/decompiled-roundtrip.dts 2>ci-p4/dtc-warnings.txt
+          dtc -I dts -O dtb -o ci-p4/dtb-roundtrip.dtb ci-p4/decompiled-roundtrip.dts \
+            2>>ci-p4/dtc-warnings.txt
+          test -s ci-p4/dtb-roundtrip.dtb
+          # Disable runtime writes to unvalidated Samsung UFS by design.
+          echo "P4 DT verified; UART is enabled, UFS intentionally disabled." > ci-p4/README.txt
+          echo "No Android/OneUI support or hardware boot proof; DO NOT FLASH." >> ci-p4/README.txt
+      - name: Publish compile diagnostics only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P4-V12R5T-BOARD-PORT-COMPILE-ONLY
+          path: |
+            ci-p4/board-port-config.log
+            ci-p4/board-port.config
+            ci-p4/board-model.txt
+            ci-p4/dtc-warnings.txt
+            ci-p4/README.txt
+          if-no-files-found: warn
+          retention-days: 14
