@@ -30,3 +30,13 @@ Review of pinned upstream `ivoszbg/uniLoader` commit `1144a9ff7fc9e99ca7f52433f4
 5. Build next candidate only after pre-Linux observability is established and structural checks pass. Passing CI alone does not validate physical boot.
 
 **No private user BOOT image or raw log has been committed to GitHub.**
+
+## Additional read-only evidence: ALICE_K510_R1_EXTRA + ERRORS
+
+Verified from on-device BOOT SHA (recovery read-only): `72f20c54809d7a5c85ce0b82eefdbc410849655215bcbb889f715110995e32b1`. This **exactly matches** successful P2G-R1 GitHub Actions run 38004847699. Recovery is TWRP 4.4.302; `/proc/last_kmsg` is an S-Boot RECOVERY handoff, not failed P2G BOOT. Pstore directory is empty. Reset reason `MPON` alone does **not** identify a K510 kernel panic. `ALICE_K510_R1_ERRORS.txt` is a grep of recovery log for watchdog/reset/panic keywords, not an independent exception trace. `/proc/boot_stat` reports TWRP kernel initcall stages to late, not Linux 5.10.
+
+New important RAM collision **risk**, not yet causal proof: actual R1 raw Linux 5.10 ARM64 Image size in CI is `31,980,032 = 0x1e7fa00` bytes and donor uniLoader copies it to `CONFIG_PAYLOAD_ENTRY=0x90000000`. Thus written binary extent is `[0x90000000, 0x91e7fa00)`. Recovery S-Boot-provided cmdline contains `ess_setup=0x91200000`, **inside** that payload extent. It also names `sec_avc_log` 0x92202000, `sec_tsp_log` 0x92244000, `sec_debug.base` 0x92286000, `auto_summary_log` 0x92388000. These parameters are from the RECOVERY command line and do not prove that the failed P2G BOOT uses identical reservations. Nevertheless, the next build must **not assume** the area 0x90000000..0x923fffff is disposable RAM. Investigate Samsung ESS region lifetime, memory ownership, and verify the ARM64 Image header runtime image_size before relocating. No arbitrary MMIO writes or uncontrolled memory reads recommended.
+
+The raw binary ends **0x180600 bytes** before the reserved R1 ramoops at `0x92000000`; CI's length test only proves the binary extent, not all runtime allocations. The `pstore` directory being empty does not distinguish firmware/loader failure, Linux early panic, RAM clearing on reset, and display-only hangs.
+
+Do not repeat the same uninstrumented R1 flash. Next candidate should pass static exclusion tests for Samsung debug buffers and obtain a pre-Linux observable progress marker.
