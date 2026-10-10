@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P2B: create a distinct dream2lte uniLoader board profile from S8 donor.
-# Crucially, disable all unverified PMIC and DECON MMIO writes.
-# This produces only code for compile-time study; hardware handoff unproven.
+# R3: leave PMIC writes disabled; enable a controlled S8 donor display probe.
+# The DECON MMIO and S-Boot framebuffer are not confirmed on G955F hardware.
 set -euo pipefail
 SRC="$1"
 IMAGE="${2:?P2G-R2 requires raw ARM64 Image to derive the boot entry}"
@@ -58,21 +58,38 @@ t=t.replace("dreamlte","dream2lte")
 t=t.replace("s2mps17_setup();",
             "/* S8+ PMIC LDO register sequence UNVERIFIED: intentionally disabled. */\n"
             "\t(void)s2mps17_setup;")
+# R3 SCREEN PROBE: identical donor S8 DECON update at 0x12860070.
+# This write is present in pinned SM-G950F source. It is experimental
+# on SM-G955F, unlike unverified PMIC regulator writes (remain disabled).
 t=t.replace("*(int*) (DECON_F_BASE + HW_SW_TRIG_CONTROL) = 0x1281;",
-            "/* S8+ DECON MMIO write UNVERIFIED: intentionally disabled. */")
-# Donor simplefb at 0xCC000000 is WITHIN live camera reserved memory
-# (0xC0400000..0xCE800000). Block all framebuffer registration.
+            "/* ALICE_R3_DECON_PROBE: donor S8 DECON trigger, experimental S8+ */\n"
+            "\t*(int*) (DECON_F_BASE + HW_SW_TRIG_CONTROL) = 0x1281;")
+# Exynos8895 upstream dreamlte intentionally uses continuous splash fb
+# at 0xcc000000; TWRP cmdline of SM-G955F confirms same framebuffer.
+# Avoid any other camera/reserved RAM writes. No camera driver loads here.
 assert t.count(".devices = dream2lte_devices,")==1
 assert t.count(".num_devices = ARRAY_SIZE(dream2lte_devices),")==1
 t=t.replace(".devices = dream2lte_devices,",
-            "/* S8+ simplefb 0xCC000000 overlaps camera carveout; disabled. */\n"
+            "/* ALICE_R3_SIMPLEFB_PROBE: bootloader fb at 0xcc000000 */\n"
             "    .devices = dream2lte_devices,")
-t=t.replace(".num_devices = ARRAY_SIZE(dream2lte_devices),",
-            "    .num_devices = 0,")
+# Keep the S8 donor simplefb driver enabled to draw visible progress markers.
+assert ".num_devices = ARRAY_SIZE(dream2lte_devices)," in t
 t=t.replace("/* SPDX-License-Identifier: GPL-2.0 */",
             "/* SPDX-License-Identifier: GPL-2.0 */\n"
             "/* K510 P2B: experimental SM-G955F profile derived from donor SM-G950F. */\n"
             "/* NOT FLASHABLE. Hardware clocks/regulators/display unverified. */",1)
 c.write_text(t)
-print("P2B dream2lte uniLoader target configured with MMIO/PMIC writes disabled")
+# Stage messages print *after* simplefb probe. They will not be visible if
+# S-Boot never jumps into the loader, or if DECON/framebuffer is inoperative.
+main=root/"main/main.c"
+m=main.read_text()
+anchor="\tprint_splash();"
+assert m.count(anchor)==1
+m=m.replace(anchor, anchor + '\n\tprintk(KERN_NOTICE, "ALICE_R3_STAGE_A_UNILOADER_VISIBLE\\n");')
+anchor2="\tboot_kernel(dt, kernel, ramdisk);"
+assert m.count(anchor2)==1
+m=m.replace(anchor2, '\tprintk(KERN_NOTICE, "ALICE_R3_STAGE_B_KERNEL_HANDOFF\\n");\n'+anchor2)
+main.write_text(m)
+print("R3 screen probe: donor DECON + simplefb enabled; PMIC still disabled")
+
 PY
