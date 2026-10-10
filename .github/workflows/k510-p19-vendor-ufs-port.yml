@@ -77,6 +77,8 @@ jobs:
             | tee ci-p19/original-vendor-ufs-sha256.log
           bash research/k510/p18-stage-vendor-power-headers.sh "$GITHUB_WORKSPACE" "$SRC" \
             | tee ci-p19/original-power-header-sha256.log
+          python3 research/k510/p19-port-ufs-abi.py "$SRC" \
+            | tee ci-p19/real-abi-migration.log
           make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j4 prepare scripts > ci-p19/vendor-prepare.log 2>&1
           obj=drivers/scsi/ufs/alice-p18-vendor/ufs-exynos-vendor.o
