@@ -74,6 +74,8 @@ jobs:
           dtc -I dts -O dtb -o ci-p4/dtb-roundtrip.dtb ci-p4/decompiled-roundtrip.dts \
             2>>ci-p4/dtc-warnings.txt
           test -s ci-p4/dtb-roundtrip.dtb
+          # Compile-only export: inspect actual DTS/DTB without flashing.
+          cp "$DTB" ci-p4/exynos8895-dream2lte-p4.dtb
           # Disable runtime writes to unvalidated Samsung UFS by design.
           echo "P4 DT verified; UART is enabled, UFS intentionally disabled." > ci-p4/README.txt
           echo "No Android/OneUI support or hardware boot proof; DO NOT FLASH." >> ci-p4/README.txt
@@ -87,6 +89,8 @@ jobs:
             ci-p4/board-port.config
             ci-p4/board-model.txt
             ci-p4/dtc-warnings.txt
+            ci-p4/exynos8895-dream2lte-p4.dtb
+            ci-p4/decompiled-roundtrip.dts
             ci-p4/README.txt
           if-no-files-found: warn
           retention-days: 14
