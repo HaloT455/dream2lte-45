@@ -13,7 +13,8 @@ for src in \
   drivers/soc/samsung/acpm/acpm_mfd.c \
   drivers/mfd/s2mps17_core.c \
   drivers/mfd/s2mps17_irq.c \
-  drivers/regulator/s2mps17.c; do
+  drivers/regulator/s2mps17.c \
+  drivers/regulator/s2mps17_powermeter.c; do
   test -s "$TREE/$src"
 done
 
@@ -36,7 +37,7 @@ rules={
     "drivers/mfd/Makefile": (
         "obj-y += s2mps17_core.o", "obj-y += s2mps17_irq.o"
     ),
-    "drivers/regulator/Makefile": ("obj-y += s2mps17.o",),
+    "drivers/regulator/Makefile": ("obj-y += s2mps17.o","obj-y += s2mps17_powermeter.o",),
 }
 for path,expected in rules.items():
     body=(tree/path).read_text()
@@ -61,7 +62,7 @@ config EXYNOS_ACPM
       are unvalidated for Linux 5.10. This option must never be used to boot.
 '''
 kcfg.write_text(s)
-print("P17 checked 6 Kbuild donor objects, added real Kconfig option; UFS stays disabled.")
+print("P17 checked 7 Kbuild donor objects, added real Kconfig option; UFS stays disabled.")
 PY
 
 "$TREE/scripts/config" --file "$OUT/.config" \
@@ -77,5 +78,5 @@ grep -qx 'CONFIG_EXYNOS_ACPM=y' "$OUT/.config" || {
   exit 23
 }
 grep -qx 'CONFIG_LOCALVERSION="-ALICE-K510-P17-NOFLASH"' "$OUT/.config"
-echo 'P17 GATE: genuine CONFIG_EXYNOS_ACPM=y; 6 Kbuild objects included for final vmlinux link.'
+echo 'P17 GATE: genuine CONFIG_EXYNOS_ACPM=y; 7 Kbuild objects included for final vmlinux link.'
 echo 'NO FLASH: initcall probe safety not established; no Android init, PMIC, or UFS support validated.'

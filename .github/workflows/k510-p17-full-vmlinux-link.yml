@@ -51,9 +51,25 @@ jobs:
           bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" | tee ci-p17/kbuild.log
           python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/i2c-migrate.log
           bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/acpm-stage.log
+          bash research/k510/p17-import-powermeter.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/powermeter-stage.log
           bash research/k510/p17-stage-final-link-config.sh "$SRC" "$OUT" | tee ci-p17/link-config-gate.log
           cp "$OUT/.config" ci-p17/K510-P17.config
           test "$(grep -c '^obj-y += .*\.o$' "$SRC/drivers/soc/samsung/acpm/Makefile")" -eq 3
+      - name: Verify real Samsung powermeter C object before full kernel link
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p17"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/regulator/s2mps17_powermeter.o > ci-p17/powermeter-build.log 2>&1; then
+            test -s "$OUT/drivers/regulator/s2mps17_powermeter.o"
+            echo 'Original Samsung S2MPS17 powermeter compiled (C object only).'
+          else
+            rc=$?
+            grep -En 'fatal error:|error:|No rule|Error [0-9]' ci-p17/powermeter-build.log | tail -n 40 || true
+            tail -n 60 ci-p17/powermeter-build.log
+            exit "$rc"
+          fi
       - name: Build real vmlinux and DTB; fail on any kernel linker error
         run: |
           set -euo pipefail
@@ -79,6 +95,7 @@ jobs:
           grep -q 'Machine:.*AArch64' ci-p17/vmlinux-elf-header.txt
           cp "$OUT/System.map" ci-p17/System.map
           for sym in \
+            s2mps17_powermeter_init s2mps17_powermeter_deinit \
             acpm_ipc_request_channel acpm_ipc_send_data exynos_acpm_read_reg \
             exynos_acpm_write_reg s2mps17_read_reg s2mps17_write_reg; do
             grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
@@ -89,7 +106,7 @@ jobs:
           sha256sum "$OUT/vmlinux" "$DTB" > ci-p17/checksums-no-binaries.txt
           {
             echo 'P17: REAL vmlinux final kernel link and AArch64 ELF PASS.'
-            echo 'All 6 donor drivers linked in final vmlinux and critical symbols found.'
+            echo 'All 7 donor drivers linked in final vmlinux and critical symbols found.'
             echo 'DTB UFS still status=disabled.'
             echo 'NOT RUNTIME VERIFIED. No ACPM firmware, PMIC power, UFS or Android init.'
             echo 'No kernel binaries or boot.img published. NEVER FLASH.'
