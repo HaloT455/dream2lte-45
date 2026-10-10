@@ -146,14 +146,17 @@ PY
   --enable SERIAL_SAMSUNG \
   --enable SERIAL_SAMSUNG_CONSOLE \
   --enable SERIAL_EARLYCON \
-  --enable INPUT_GPIO_KEYS \
+  --enable INPUT \
+  --enable INPUT_KEYBOARD \
+  --enable GPIOLIB \
+  --enable KEYBOARD_GPIO \
   --enable SCSI \
   --enable SCSI_DMA \
   --enable SCSI_UFSHCD \
   --enable SCSI_UFSHCD_PLATFORM \
   --enable SCSI_UFS_EXYNOS
 make -s -C "$TREE" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-for key in SERIAL_SAMSUNG SERIAL_SAMSUNG_CONSOLE SERIAL_EARLYCON INPUT_GPIO_KEYS SCSI_UFSHCD SCSI_UFSHCD_PLATFORM SCSI_UFS_EXYNOS; do
+for key in SERIAL_SAMSUNG SERIAL_SAMSUNG_CONSOLE SERIAL_EARLYCON INPUT INPUT_KEYBOARD GPIOLIB KEYBOARD_GPIO SCSI_UFSHCD SCSI_UFSHCD_PLATFORM SCSI_UFS_EXYNOS; do
   grep -q "^CONFIG_$key=y$" "$OUT/.config" || {
       echo "P4: dependency rejected CONFIG_$key=y (fail closed)" >&2
       exit 12
