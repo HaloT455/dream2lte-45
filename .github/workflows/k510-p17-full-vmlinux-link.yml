@@ -1,0 +1,104 @@
+name: Alice K510 P17 FULL vmlinux ACPM PMIC link gate (NO FLASH)
+on:
+  push:
+    branches: ['experimental/k510-p17-full-vmlinux-link-gate']
+    paths:
+      - 'research/k510/p17-*'
+      - 'research/k510/P17-*'
+      - '.github/workflows/k510-p17-full-vmlinux-link.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-final-kernel-link:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 kernel build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Validate V12R5T donor revision
+        run: |
+          set -euxo pipefail
+          PIN=3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3
+          git fetch --no-tags --depth=1 origin refs/heads/agent/v12r5t-mglru-aging-stability
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          git cat-file -e "$PIN^{commit}"
+      - name: Create Linux 5.10.262 full-link test tree
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p17"
+          mkdir -p "$OUT" ci-p17
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = 5.10.262
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT"
+          bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
+          bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT"
+          bash research/k510/p13-stage-v12r5t-acpm.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/pinned-donor.log
+          bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" | tee ci-p17/kbuild.log
+          python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/i2c-migrate.log
+          bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p17/acpm-stage.log
+          bash research/k510/p17-stage-final-link-config.sh "$SRC" "$OUT" | tee ci-p17/link-config-gate.log
+          cp "$OUT/.config" ci-p17/K510-P17.config
+          test "$(grep -c '^obj-y += .*\.o$' "$SRC/drivers/soc/samsung/acpm/Makefile")" -eq 3
+      - name: Build real vmlinux and DTB; fail on any kernel linker error
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p17"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 vmlinux exynos/exynos8895-dream2lte.dtb > ci-p17/full-build.log 2>&1; then
+            echo 'FULL_VMLINUX_LINK=PASS' | tee ci-p17/build-status.txt
+          else
+            rc=$?
+            echo "FULL_VMLINUX_LINK=FAIL exit=$rc" | tee ci-p17/build-status.txt
+            grep -En 'undefined reference|multiple definition|fatal error:|error:|Error [0-9]+|No rule to make target' \
+              ci-p17/full-build.log | tail -n 85 || true
+            tail -n 90 ci-p17/full-build.log
+            exit "$rc"
+          fi
+          test -s "$OUT/vmlinux"
+          test -s "$OUT/System.map"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
+          aarch64-linux-gnu-readelf -h "$OUT/vmlinux" > ci-p17/vmlinux-elf-header.txt
+          grep -q 'Machine:.*AArch64' ci-p17/vmlinux-elf-header.txt
+          cp "$OUT/System.map" ci-p17/System.map
+          for sym in \
+            acpm_ipc_request_channel acpm_ipc_send_data exynos_acpm_read_reg \
+            exynos_acpm_write_reg s2mps17_read_reg s2mps17_write_reg; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P17 FAILED: required interface $sym missing from final System.map" >&2
+              exit 50
+            }
+          done
+          sha256sum "$OUT/vmlinux" "$DTB" > ci-p17/checksums-no-binaries.txt
+          {
+            echo 'P17: REAL vmlinux final kernel link and AArch64 ELF PASS.'
+            echo 'All 6 donor drivers linked in final vmlinux and critical symbols found.'
+            echo 'DTB UFS still status=disabled.'
+            echo 'NOT RUNTIME VERIFIED. No ACPM firmware, PMIC power, UFS or Android init.'
+            echo 'No kernel binaries or boot.img published. NEVER FLASH.'
+          } | tee ci-p17/README.txt
+      - name: Publish exact compile/link evidence (exclude kernel binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P17-FULL-VMLINUX-GATE-NO-FLASH
+          path: ci-p17/
+          if-no-files-found: warn
+          retention-days: 21
