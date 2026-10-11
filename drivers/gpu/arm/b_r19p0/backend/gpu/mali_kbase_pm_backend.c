@@ -421,53 +421,68 @@ static u64 halo_npu_take_high_cores(u64 available, unsigned int count)
 static void kbase_halo_npu_init_partition(struct kbase_device *kbdev)
 {
 	u64 shader_present = kbdev->gpu_props.props.raw_props.shader_present;
-	u64 npu_candidates = shader_present;
-	u64 npu_mask;
-	u64 graphics_mask;
-	unsigned int wanted = HALO_NPU_GPU_CORE_COUNT;
-	unsigned int have;
+	u64 compute_group = 0;
+	u64 graphics_group = 0;
+	u64 compute_mask = 0;
+	u64 graphics_mask = 0;
 
 	/*
-	 * JS2 targets coherent group 1 on dual-group GPUs. Prefer those cores
-	 * so ONLY_COMPUTE device_nr=1 atoms stay inside the NPU partition.
+	 * EXYNOS8895 / Mali-G71 MP20 experimental 15+5 partition.
+	 *
+	 * JS0/JS1: the complete 15-core graphics mask at stock DVFS limits.
+	 * JS2: five shader cores in the second coherent group, intended ONLY
+	 * for explicit ONLY_COMPUTE + device_nr=1 jobs.
+	 *
+	 * Do not borrow cores from a different coherency group: job atoms
+	 * requesting group 1 must never receive a mask from group 0.
+	 * Do not set GPU clocks here, and never route MGLRU reclaim into a
+	 * GPU job. Page tables and LRU list locks remain CPU/kernel owned.
+	 *
+	 * The 20-core/2-group topology guard is intentional. If a shader is
+	 * fused off or the hardware topology differs, use the full stock
+	 * shader mask on every job slot rather than risking an invalid mask.
 	 */
-	if (kbdev->gpu_props.num_core_groups > 1)
-		npu_candidates &=
-			kbdev->gpu_props.props.coherency_info.group[1].core_mask;
+	if (halo_npu_mask_weight(shader_present) == 20 &&
+	    kbdev->gpu_props.num_core_groups == 2) {
+		compute_group =
+			kbdev->gpu_props.props.coherency_info.group[1].core_mask &
+			shader_present;
+		graphics_group =
+			kbdev->gpu_props.props.coherency_info.group[0].core_mask &
+			shader_present;
 
-	npu_mask = halo_npu_take_high_cores(npu_candidates, wanted);
-	have = halo_npu_mask_weight(npu_mask);
+		if (halo_npu_mask_weight(compute_group) >= HALO_NPU_GPU_CORE_COUNT &&
+		    graphics_group && !(graphics_group & compute_group)) {
+			compute_mask = halo_npu_take_high_cores(
+				compute_group, HALO_NPU_GPU_CORE_COUNT);
+			graphics_mask = shader_present & ~compute_mask;
+		}
+	}
 
-	if (have < wanted)
-		npu_mask |= halo_npu_take_high_cores(
-			shader_present & ~npu_mask, wanted - have);
-
-	graphics_mask = shader_present & ~npu_mask;
-
-	/* Never strand the GPU if a future/odd topology is detected. */
-	if (!npu_mask || !graphics_mask) {
+	if (halo_npu_mask_weight(graphics_mask) != 15 ||
+	    halo_npu_mask_weight(compute_mask) != HALO_NPU_GPU_CORE_COUNT ||
+	    (graphics_mask & compute_mask) ||
+	    ((graphics_mask | compute_mask) != shader_present)) {
 		kbdev->pm.debug_core_mask[0] = shader_present;
 		kbdev->pm.debug_core_mask[1] = shader_present;
 		kbdev->pm.debug_core_mask[2] = shader_present;
 		kbdev->pm.debug_core_mask_all = shader_present;
 		dev_warn(kbdev->dev,
-			"HALO NPU: invalid GPU topology, partition disabled (shader=0x%llx)\n",
-			(unsigned long long)shader_present);
+			 "HALO compute: unsafe shader topology; stock GPU masks retained (shader=0x%llx groups=%u)\\n",
+			 (unsigned long long)shader_present,
+			 kbdev->gpu_props.num_core_groups);
 		return;
 	}
 
 	kbdev->pm.debug_core_mask[0] = graphics_mask;
 	kbdev->pm.debug_core_mask[1] = graphics_mask;
-	kbdev->pm.debug_core_mask[2] = npu_mask;
+	kbdev->pm.debug_core_mask[2] = compute_mask;
 	kbdev->pm.debug_core_mask_all = shader_present;
 
 	dev_info(kbdev->dev,
-		"HALO NPU: Mali partition active graphics=%u npu=%u shader=0x%llx graphics_mask=0x%llx npu_mask=0x%llx\n",
-		halo_npu_mask_weight(graphics_mask),
-		halo_npu_mask_weight(npu_mask),
-		(unsigned long long)shader_present,
-		(unsigned long long)graphics_mask,
-		(unsigned long long)npu_mask);
+		 "HALO compute: G71 graphics=15 compute=5 JS0/JS1=0x%llx JS2=0x%llx stock DVFS retained\\n",
+		 (unsigned long long)graphics_mask,
+		 (unsigned long long)compute_mask);
 }
 #endif
 
