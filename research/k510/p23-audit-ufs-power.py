@@ -31,9 +31,13 @@ v510_driver = (kernel / "drivers/scsi/ufs/ufs-exynos.c").read_text()
 h = (kernel / "drivers/scsi/ufs/alice-ufs8895-host.h").read_text()
 c = (kernel / "drivers/scsi/ufs/alice-ufs8895-host.c").read_text()
 
-node = re.search(r'ufs@0x11120000\s*\{(.*?)\n\s*\};', dts, re.S)
-need(node is not None, "pinned donor 8895 UFS DT node missing")
-n = node.group(1)
+# UFS has several nested child nodes. A first-closing-brace regex would
+# truncate the PHY subtree and miss sysreg mappings. Use the pinned sibling
+# label as the explicit end of this donor's UFS region (same P20 boundary).
+begin = dts.find("ufs@0x11120000 {")
+end = dts.find("ufs_fixed_vcc:", begin)
+need(begin >= 0 and end > begin, "pinned donor UFS/fixed-VCC node bounds")
+n = dts[begin:end]
 fixed = re.search(r'ufs_fixed_vcc:\s*fixedregulator@0\s*\{(.*?)\n\s*\};', dts, re.S)
 need(fixed is not None, "pinned donor fixed regulator missing")
 f = fixed.group(1)
