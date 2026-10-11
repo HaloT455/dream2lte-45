@@ -468,7 +468,7 @@ static void kbase_halo_npu_init_partition(struct kbase_device *kbdev)
 		kbdev->pm.debug_core_mask[2] = shader_present;
 		kbdev->pm.debug_core_mask_all = shader_present;
 		dev_warn(kbdev->dev,
-			 "HALO compute: unsafe shader topology; stock GPU masks retained (shader=0x%llx groups=%u)\\n",
+			 "HALO compute: unsafe shader topology; stock GPU masks retained (shader=0x%llx groups=%u)\n",
 			 (unsigned long long)shader_present,
 			 kbdev->gpu_props.num_core_groups);
 		return;
@@ -480,7 +480,7 @@ static void kbase_halo_npu_init_partition(struct kbase_device *kbdev)
 	kbdev->pm.debug_core_mask_all = shader_present;
 
 	dev_info(kbdev->dev,
-		 "HALO compute: G71 graphics=15 compute=5 JS0/JS1=0x%llx JS2=0x%llx stock DVFS retained\\n",
+		 "HALO compute: G71 graphics=15 compute=5 JS0/JS1=0x%llx JS2=0x%llx stock DVFS retained\n",
 		 (unsigned long long)graphics_mask,
 		 (unsigned long long)compute_mask);
 }
