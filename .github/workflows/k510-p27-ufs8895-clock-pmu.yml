@@ -78,7 +78,7 @@ jobs:
           grep -q 'CLK_GOUT_FSYS0_UFS_EMBD_I_ACLK' "$DTS"
           grep -q 'CLK_GOUT_FSYS0_UFS_EMBD_I_CLK_UNIPRO' "$DTS"
           grep -q 'samsung,pmu-phandle = <&pmu_system_controller>;' "$DTS"
-          ! grep -q 'vcc-supply' "$DTS" || {
+          ! grep -Eq '^[[:space:]]*vcc-supply[[:space:]]*=' "$DTS" || {
             echo 'P27 FAILED: UFS VCC supplier unexpectedly added'; exit 72;
           }
           test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-bind.c"
