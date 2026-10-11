@@ -1,4 +1,4 @@
-name: Build V12R5U MGLRU Live-Generation Safety + HALO NPU
+name: Build V12R5V MGLRU Reclaim Safety + HALO NPU
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -33,6 +33,7 @@ on:
       - agent/v12r5s-stability
       - agent/v12r5t-mglru-aging-stability
       - agent/v12r5u-mglru-runtime-safety
+      - agent/v12r5v-mglru-lowram-reclaim-safety
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -84,6 +85,7 @@ jobs:
           python3 scripts/test_mglru_accounting_audit.py
           python3 scripts/test_v12r5t_mglru_aging_lmkd.py
           python3 scripts/test_v12r5u_mglru_live_generation.py
+          python3 scripts/test_v12r5v_mglru_reclaim_guard.py
           python3 scripts/test_v12r5p_ion_cma_diag.py
           python3 scripts/test_v12r5q_page_isolation_diag.py
           python3 scripts/test_v12r5r_zsmalloc_cma_migration.py
@@ -99,12 +101,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5U-MGLRU-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5V-MGLRU-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5U-MGLRU-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5V-MGLRU-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -144,7 +146,7 @@ jobs:
           grep -q 'lru_gen_get_type_to_scan' mm/vmscan.c
           grep -q 'lru_gen_promote_page_locked' mm/vmscan.c
           grep -q 'lru_gen_scan_around' mm/vmscan.c
-          ! grep -q 'lru_gen_scan_around(&pvmw)' mm/rmap.c
+          grep -Fq 'lru_gen_scan_around(&pvmw)' mm/rmap.c
           grep -q 'lru_gen_reclaim_batch' mm/vmscan.c
           grep -q '__ATTR(ptwalk, 0644, lru_gen_ptwalk_show, lru_gen_ptwalk_store)' mm/vmscan.c
           grep -q 'lru_gen_age_lruvec_legacy(lruvec, sc, swappiness);' mm/vmscan.c
@@ -210,7 +212,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5u-mglru-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5v-mglru-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
