@@ -9,11 +9,23 @@ OUT="${1:-$HOME/ALICE_K510_P25_READONLY_$RUN}"
 mkdir -p "$OUT"
 echo 'P25: collecting READ-ONLY device evidence; no writes and no flashing'
 
-"$ADB" wait-for-device
-if [ "$("$ADB" get-state)" != device ]; then
-  echo 'P25 REFUSED: ADB device not connected' >&2
+# Never collect from the user's Google TV or a different phone.
+# Avoid ambiguous multi-device ADB sessions; no ADB property writes.
+ONLINE="$("$ADB" devices | awk '$2=="device"{n++}END{print n+0}')"
+if [ "$ONLINE" != 1 ]; then
+  echo "P25 REFUSED: expected exactly one online ADB device, found $ONLINE" >&2
   exit 2
 fi
+MODEL="$("$ADB" shell getprop ro.product.model | tr -d '\r')"
+if [ "$MODEL" != "SM-G955F" ]; then
+  echo "P25 REFUSED: connected model is '$MODEL', expected SM-G955F" >&2
+  exit 3
+fi
+KERNEL="$("$ADB" shell uname -r | tr -d '\r')"
+case "$KERNEL" in
+  4.4.*) ;;
+  *) echo "P25 REFUSED: expected working donor Linux 4.4.*, got '$KERNEL'" >&2; exit 4 ;;
+esac
 
 # Selected hardware/build properties only; never request IMEI, serial,
 # Android ID or app/userdata content.
