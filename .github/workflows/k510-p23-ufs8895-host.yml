@@ -71,6 +71,11 @@ jobs:
             | tee ci-p23/p23-host-stage.log
           test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-host.c"
           test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-host.h"
+          python3 research/k510/p23-audit-ufs-power.py "$GITHUB_WORKSPACE" "$SRC" \
+            ci-p23/p23-ufs-hardware-abi-audit.json \
+            | tee ci-p23/p23-ufs-hardware-abi-audit.log
+          test "$(python3 -c 'import json; print(json.load(open("ci-p23/p23-ufs-hardware-abi-audit.json"))["ufs_vcc_type"])')" = 'GPIO-controlled regulator-fixed'
+          grep -q '"registers_platform_driver": false' ci-p23/p23-ufs-hardware-abi-audit.json
           cp "$OUT/.config" ci-p23/K510-P23.config
           test "$(grep -c '^obj-y += .*\.o$' "$SRC/drivers/soc/samsung/acpm/Makefile")" -eq 3
       - name: Compile Exynos8895 original 124 calibration entries with real AArch64 toolchain
