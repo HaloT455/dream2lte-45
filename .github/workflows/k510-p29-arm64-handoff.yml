@@ -1,7 +1,7 @@
 name: Alice K510 P29 SM-G955F P10 ARM64 handoff restore plus guarded UFS (NO FLASH)
 on:
   push:
-    branches: ['experimental/k510-p29-g955f-preboot-diagnostics']
+    branches: ['experimental/k510-p29-arm64-p10-handoff-restore']
     paths:
       - 'research/k510/p29-*'
       - 'research/k510/P29-*'
