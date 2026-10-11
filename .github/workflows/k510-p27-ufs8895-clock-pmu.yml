@@ -1,0 +1,310 @@
+name: Alice K510 P27 Exynos8895 UFS clock and PMU syscon full link (NO FLASH)
+on:
+  push:
+    branches: ['experimental/k510-p27-ufs8895-clock-power-audit']
+    paths:
+      - 'research/k510/p27-*'
+      - 'research/k510/P27-*'
+      - '.github/workflows/k510-p27-ufs8895-clock-pmu.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-final-kernel-link:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 kernel build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev build-essential device-tree-compiler python3 curl
+      - name: Validate V12R5T donor revision
+        run: |
+          set -euxo pipefail
+          PIN=3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3
+          git fetch --no-tags --depth=1 origin refs/heads/agent/v12r5t-mglru-aging-stability
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          git cat-file -e "$PIN^{commit}"
+      - name: Create Linux 5.10.262 full-link test tree
+        run: |
+          set -euxo pipefail
+          export K510_WORKDIR="$RUNNER_TEMP/alice-k510"
+          bash research/k510/bootstrap.sh --fetch
+          SRC="$K510_WORKDIR/linux-5.10.262"
+          OUT="$K510_WORKDIR/out-p27"
+          mkdir -p "$OUT" ci-p27
+          bash research/k510/p1-import-dts.sh "$SRC"
+          bash research/k510/p1-import-pinctrl.sh "$SRC"
+          bash research/k510/p1-import-clocks.sh "$SRC"
+          bash research/k510/p1-fix-pll510.sh "$SRC"
+          bash research/k510/p1-apply-memory.sh "$SRC"
+          bash research/k510/p2-prepare-dtb.sh "$SRC"
+          test "$(make -s -C "$SRC" kernelversion)" = 5.10.262
+          make -s -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          bash research/k510/p2g-r1-pstore.sh "$SRC" "$OUT"
+          bash research/k510/p4-apply-v12r5t-board.sh "$SRC" "$OUT"
+          bash research/k510/p5-enable-android-core.sh "$SRC" "$OUT"
+          bash research/k510/p12-enable-ufs-power-frameworks.sh "$SRC" "$OUT"
+          bash research/k510/p13-stage-v12r5t-acpm.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p27/pinned-donor.log
+          bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" | tee ci-p27/kbuild.log
+          python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" | tee ci-p27/i2c-migrate.log
+          bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p27/acpm-stage.log
+          bash research/k510/p17-import-powermeter.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p27/powermeter-stage.log
+          bash research/k510/p17-stage-final-link-config.sh "$SRC" "$OUT" | tee ci-p27/link-config-gate.log
+          python3 research/k510/p20-port-ufs8895-calibration.py "$GITHUB_WORKSPACE" "$SRC" ci-p27 \
+            | tee ci-p27/native-8895-calibration-stage.log
+          test "$(python3 -c 'import json; print(json.load(open("ci-p27/p20-calibration-port.json"))["entry_count"])')" = 124
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-calibration.c"
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-calibration.h"
+          grep -q '"registered_driver": false' ci-p27/p20-calibration-port.json
+          bash research/k510/p21-stage-ufs8895-engine.sh "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p27/p21-engine-stage.log
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-engine.c"
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-engine.h"
+          grep -qx 'obj-y += alice-ufs8895-engine.o' <(tail -n1 "$SRC/drivers/scsi/ufs/Makefile")
+          bash research/k510/p22-stage-ufs8895-smc.sh "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p27/p22-smc-stage.log
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-smc.c"
+          bash research/k510/p23-stage-ufs8895-host.sh "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p27/p23-host-stage.log
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-host.c"
+          python3 research/k510/p24-stage-ufs8895-bind.py "$GITHUB_WORKSPACE" "$SRC" \
+            | tee ci-p27/p24-host-platform-stage.log
+          python3 research/k510/p27-fix-ufs-clock-pmu.py "$SRC" \
+            | tee ci-p27/p27-clock-pmu-stage.log
+          DTS="$SRC/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dts"
+          grep -q 'CLK_GOUT_FSYS0_UFS_EMBD_I_ACLK' "$DTS"
+          grep -q 'CLK_GOUT_FSYS0_UFS_EMBD_I_CLK_UNIPRO' "$DTS"
+          grep -q 'samsung,pmu-phandle = <&pmu_system_controller>;' "$DTS"
+          ! grep -q 'vcc-supply' "$DTS" || {
+            echo 'P27 FAILED: UFS VCC supplier unexpectedly added'; exit 72;
+          }
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-bind.c"
+          grep -q 'compatible = "alice,exynos8895-ufs-research"' \
+            "$SRC/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dts"
+          ! grep -q 'alice,hardware-audit-passed;' \
+            "$SRC/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dts"
+          grep -qx 'obj-y += alice-ufs8895-bind.o' <(tail -n 1 "$SRC/drivers/scsi/ufs/Makefile")
+          test -s "$SRC/drivers/scsi/ufs/alice-ufs8895-host.h"
+          python3 research/k510/p23-audit-ufs-power.py "$GITHUB_WORKSPACE" "$SRC" \
+            ci-p27/p23-ufs-hardware-abi-audit.json \
+            | tee ci-p27/p23-ufs-hardware-abi-audit.log
+          test "$(python3 -c 'import json; print(json.load(open("ci-p27/p23-ufs-hardware-abi-audit.json"))["ufs_vcc_type"])')" = 'GPIO-controlled regulator-fixed'
+          grep -q '"registers_platform_driver": false' ci-p27/p23-ufs-hardware-abi-audit.json
+          cp "$OUT/.config" ci-p27/K510-P27.config
+          test "$(grep -c '^obj-y += .*\.o$' "$SRC/drivers/soc/samsung/acpm/Makefile")" -eq 3
+      - name: Compile Exynos8895 original 124 calibration entries with real AArch64 toolchain
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/alice-ufs8895-calibration.o > ci-p27/8895-calibration-compile.log 2>&1; then
+            test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-calibration.o"
+          else
+            rc=$?
+            grep -En 'error:|fatal error:|No rule' ci-p27/8895-calibration-compile.log | tail -n 45 || true
+            tail -n 60 ci-p27/8895-calibration-compile.log
+            exit "$rc"
+          fi
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-calibration.o" \
+            | grep -E ' T alice_ufs8895_get_calibration$'
+          echo 'P20_8895_CALIBRATION_C_OBJECT_PASS' | tee ci-p27/calibration-compile-status.txt
+      - name: Compile real UFS 8895 PHY/UniPro interpreter against Linux 5.10
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/alice-ufs8895-engine.o > ci-p27/ufs-engine-compile.log 2>&1; then
+            test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-engine.o"
+          else
+            rc=$?
+            grep -En 'error:|fatal error:|No rule|implicit declaration|incompatible' \
+              ci-p27/ufs-engine-compile.log | tail -n 60 || true
+            tail -n 80 ci-p27/ufs-engine-compile.log
+            exit "$rc"
+          fi
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-engine.o" \
+            | grep -E ' T alice_ufs8895_(check_phase|run_phase)$' \
+            | tee ci-p27/ufs-engine-elf-symbols.txt
+          test "$(wc -l < ci-p27/ufs-engine-elf-symbols.txt)" -eq 2
+          if grep -Eq 'platform_driver_register|__platform_driver|of_match_table' \
+              research/k510/p21-ufs8895-engine.c; then
+            echo 'P21 UNSAFE: must never register a hardware UFS driver' >&2
+            exit 55
+          fi
+          echo 'P21_UFS_ENGINE_C_OBJECT=PASS; NO HARDWARE PROBE' \
+            | tee ci-p27/ufs-engine-compile-status.txt
+      - name: Compile Samsung Exynos8895 FMP SMU secure monitor bridge with real ARM64 compiler
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/alice-ufs8895-smc.o > ci-p27/ufs-smc-compile.log 2>&1; then
+            test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-smc.o"
+          else
+            rc=$?
+            grep -En 'error:|fatal error:|No rule|implicit declaration|incompatible' ci-p27/ufs-smc-compile.log | tail -n 60 || true
+            tail -n 80 ci-p27/ufs-smc-compile.log
+            exit "$rc"
+          fi
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-smc.o" \
+            | grep -E ' T alice_8895_ufs_secure_(init|resume|log)$' \
+            | tee ci-p27/ufs-smc-elf-symbols.txt
+          test "$(wc -l < ci-p27/ufs-smc-elf-symbols.txt)" -eq 3
+          echo 'P22_FMP_SMCCC_BRIDGE_C_OBJECT=PASS; NO FIRMWARE CALLS' \
+            | tee ci-p27/ufs-smc-compile-status.txt
+      - name: Compile Exynos8895 clock/regulator/SMC UFS host callbacks with real AArch64 toolchain
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/alice-ufs8895-host.o > ci-p27/ufs-host-compile.log 2>&1; then
+            test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-host.o"
+          else
+            rc=$?
+            grep -En 'error:|fatal error:|No rule|implicit declaration|incompatible' \
+              ci-p27/ufs-host-compile.log | tail -n 90 || true
+            tail -n 100 ci-p27/ufs-host-compile.log
+            exit "$rc"
+          fi
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-host.o" \
+            | grep -E ' T alice_8895_(host_validate|get_host_ops)$' \
+            | tee ci-p27/ufs-host-elf-symbols.txt
+          test "$(wc -l < ci-p27/ufs-host-elf-symbols.txt)" -eq 2
+          echo 'P23_REAL_HOST_CALLBACK_C_OBJECT=PASS; NO PLATFORM PROBE' \
+            | tee ci-p27/ufs-host-object-status.txt
+      - name: Compile real platform binding to ufshcd_pltfrm_init with AArch64 GCC
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/scsi/ufs/alice-ufs8895-bind.o \
+            > ci-p27/ufs-binding-compile.log 2>&1; then
+            test -s "$OUT/drivers/scsi/ufs/alice-ufs8895-bind.o"
+          else
+            rc=$?
+            grep -En 'error:|fatal error:|No rule|implicit declaration' \
+              ci-p27/ufs-binding-compile.log | tail -n 90 || true
+            tail -n 110 ci-p27/ufs-binding-compile.log
+            exit "$rc"
+          fi
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-bind.o" \
+            | grep -E ' T alice_8895_ufs_bind_host$' \
+            | tee ci-p27/binding-symbols.txt
+          aarch64-linux-gnu-nm "$OUT/drivers/scsi/ufs/alice-ufs8895-bind.o" \
+            | grep -E ' U ufshcd_pltfrm_init$'
+          echo 'P24_REAL_UFS_PLATFORM_BIND_C_OBJECT=PASS; DT DISABLED' \
+            | tee ci-p27/ufs-binding-status.txt
+      - name: Verify real Samsung powermeter C object before full kernel link
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 drivers/regulator/s2mps17_powermeter.o > ci-p27/powermeter-build.log 2>&1; then
+            test -s "$OUT/drivers/regulator/s2mps17_powermeter.o"
+            echo 'Original Samsung S2MPS17 powermeter compiled (C object only).'
+          else
+            rc=$?
+            grep -En 'fatal error:|error:|No rule|Error [0-9]' ci-p27/powermeter-build.log | tail -n 40 || true
+            tail -n 60 ci-p27/powermeter-build.log
+            exit "$rc"
+          fi
+      - name: Build real vmlinux and DTB; fail on any kernel linker error
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/alice-k510/linux-5.10.262"
+          OUT="$RUNNER_TEMP/alice-k510/out-p27"
+          if make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j4 vmlinux exynos/exynos8895-dream2lte.dtb > ci-p27/full-build.log 2>&1; then
+            echo 'FULL_VMLINUX_LINK=PASS' | tee ci-p27/build-status.txt
+          else
+            rc=$?
+            echo "FULL_VMLINUX_LINK=FAIL exit=$rc" | tee ci-p27/build-status.txt
+            grep -En 'undefined reference|multiple definition|fatal error:|error:|Error [0-9]+|No rule to make target' \
+              ci-p27/full-build.log | tail -n 85 || true
+            tail -n 90 ci-p27/full-build.log
+            exit "$rc"
+          fi
+          test -s "$OUT/vmlinux"
+          test -s "$OUT/System.map"
+          DTB="$OUT/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dtb"
+          test -s "$DTB"
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status | grep -qx disabled
+          aarch64-linux-gnu-readelf -h "$OUT/vmlinux" > ci-p27/vmlinux-elf-header.txt
+          grep -q 'Machine:.*AArch64' ci-p27/vmlinux-elf-header.txt
+          cp "$OUT/System.map" ci-p27/System.map
+          for sym in \
+            s2mps17_powermeter_init s2mps17_powermeter_deinit \
+            acpm_ipc_request_channel acpm_ipc_send_data exynos_acpm_read_reg \
+            exynos_acpm_write_reg s2mps17_read_reg s2mps17_write_reg; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P17 FAILED: required interface $sym missing from final System.map" >&2
+              exit 50
+            }
+          done
+          grep -Eq ' [Tt] alice_ufs8895_get_calibration$' "$OUT/System.map" || {
+            echo 'P20 FAILED: 8895 calibration C data absent from final vmlinux'
+            exit 48
+          }
+          echo 'P20 124/124 original 8895 calibration rows linked, NO HW PROBE' \
+            | tee ci-p27/calibration-link-status.txt
+          for sym in alice_ufs8895_check_phase alice_ufs8895_run_phase; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P21 FAILED: hardware-gated UFS engine symbol $sym missing"; exit 54;
+            }
+          done
+          echo 'P21 UFS 124-entry engine compiled and linked, NO HW PROBE' \
+            | tee ci-p27/ufs-engine-final-link.txt
+          for sym in alice_8895_ufs_secure_init alice_8895_ufs_secure_resume alice_8895_ufs_secure_log; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P22 FAILED: missing compiled secure SMCCC bridge $sym"; exit 57;
+            }
+          done
+          echo 'P22 Samsung UFS SMC bridge linked, firmware execution default DENIED' \
+            | tee ci-p27/ufs-smc-final-link.txt
+          for sym in alice_8895_host_validate alice_8895_get_host_ops; do
+            grep -Eq " [Tt] $sym$" "$OUT/System.map" || {
+              echo "P23 FAILED: missing Exynos8895 host callback or power gate $sym"; exit 58;
+            }
+          done
+          echo 'P23 native host ABI, fixed-regulator VCC, ACPM/Speedy prerequisites and callbacks linked; NO PROBE' \
+            | tee ci-p27/ufs-host-final-link.txt
+          grep -Eq ' [Tt] alice_8895_ufs_bind_host$' "$OUT/System.map" || {
+            echo 'P24 FAILED: missing real platform UFS binding in final vmlinux'; exit 68;
+          }
+          ! fdtget -t s "$DTB" /soc@0/ufs@11120000 compatible \
+            | grep -q 'samsung,exynos7-ufs'
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 compatible \
+            | grep -qx alice,exynos8895-ufs-research
+          echo 'P24 genuine platform host binding linked, no boot or UFS probe' \
+            | tee ci-p27/ufs-binding-final-link.txt
+          fdtget -t s "$DTB" /soc@0/ufs@11120000 status \
+            | grep -qx disabled
+          grep -q 'syscon_regmap_lookup_by_phandle' \
+            "$SRC/drivers/scsi/ufs/alice-ufs8895-bind.c"
+          echo 'P27 8895 native FSYS0 clocks and PMU phandle linked; VCC still gated' \
+            | tee ci-p27/ufs-clock-pmu-final-link.txt
+          sha256sum "$OUT/vmlinux" "$DTB" > ci-p27/checksums-no-binaries.txt
+          {
+            echo 'P20: REAL vmlinux final kernel link and AArch64 ELF PASS.'
+            echo 'All 7 donor ACPM/PMIC drivers, 124-row calibration tables, and gated UFS PHY/UniPro interpreter, FMP/SMU SMCCC bridge, and guarded research-only platform binding into actual ufshcd_pltfrm_init linked in vmlinux.'
+            echo 'DTB UFS still status=disabled.'
+            echo 'NOT RUNTIME VERIFIED. Exynos8895 platform driver matches only DISABLED research DT and rejects unaudited probe. No UFS storage runtime, SMC/PMIC validation, or Android boot.'
+            echo 'No kernel binaries or boot.img published. NEVER FLASH.'
+          } | tee ci-p27/README.txt
+      - name: Publish exact compile/link evidence (exclude kernel binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P27-FULL-VMLINUX-GATE-NO-FLASH
+          path: ci-p27/
+          if-no-files-found: warn
+          retention-days: 21
