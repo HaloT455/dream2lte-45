@@ -3888,6 +3888,15 @@ static bool lru_gen_inc_max_seq_legacy(struct lruvec *lruvec)
 	unsigned long max_seq;
 
 	spin_lock_irq(&lru_zone->lru_lock);
+	/*
+	 * The runtime OFF path migrates individual lruvecs before disabling
+	 * the static key.  Do not age a lruvec whose lists were already drained.
+	 * In particular, never recycle a generation slot during migration.
+	 */
+	if (!lru_gen_enabled() || !lrugen->enabled[1]) {
+		spin_unlock_irq(&lru_zone->lru_lock);
+		return false;
+	}
 
 	max_seq = lrugen->max_seq;
 
@@ -4049,16 +4058,17 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 	struct lrugen *lrugen = &lruvec->evictable;
 	struct list_head *head;
 
-	if (!lrugen->enabled[type])
-		goto out;
-
-	if (get_nr_gens(lruvec, type) <= MIN_NR_GENS)
-		goto out;
+	/* Revalidate enable/min_seq and select the list while holding the
+	 * zone lock: a snapshot taken before this lock may already be recycled
+	 * by aging or moved to the classic LRU during a runtime OFF switch.
+	 */
+	spin_lock_irq(&zone->lru_lock);
+	if (!lru_gen_enabled() || !lrugen->enabled[type] ||
+	    get_nr_gens(lruvec, type) <= MIN_NR_GENS)
+		goto unlock;
 
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 	head = &lrugen->lists[gen][type][zid];
-
-	spin_lock_irq(&zone->lru_lock);
 
 	while (!list_empty(head) && taken < nr_to_scan &&
 	       scanned < nr_to_scan * 4) {
@@ -4139,8 +4149,8 @@ static unsigned long lru_gen_isolate_oldest(struct lruvec *lruvec,
 	if (taken)
 		__mod_zone_page_state(zone, NR_ISOLATED_ANON + type, taken);
 
+unlock:
 	spin_unlock_irq(&zone->lru_lock);
-out:
 	*nr_scanned = scanned;
 	return taken;
 }
@@ -4248,11 +4258,15 @@ static unsigned long lru_gen_oldest_pages(struct lruvec *lruvec, int type)
 	int gen, zid = zone_idx(zone);
 	bool empty, report = false;
 
-	if (!READ_ONCE(lrugen->enabled[type]) ||
-	    get_nr_gens(lruvec, type) <= MIN_NR_GENS)
-		return 0;
-
+	/* Both the enable state and generation head must be read under lock.
+	 * Runtime OFF can drain this memcg/zone while the caller is waiting.
+	 */
 	spin_lock_irqsave(&zone->lru_lock, flags);
+	if (!lru_gen_enabled() || !lrugen->enabled[type] ||
+	    get_nr_gens(lruvec, type) <= MIN_NR_GENS) {
+		spin_unlock_irqrestore(&zone->lru_lock, flags);
+		return 0;
+	}
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
 	nr = READ_ONCE(lrugen->sizes[gen][type][zid]);
 	empty = list_empty(&lrugen->lists[gen][type][zid]);
@@ -4345,7 +4359,15 @@ static int lru_gen_pick_type(struct lruvec *lruvec, int swappiness,
 static bool lru_gen_needs_new_generation(struct lruvec *lruvec)
 {
 	struct lrugen *lrugen = &lruvec->evictable;
+	struct zone *zone = lruvec_zone(lruvec);
+	unsigned long flags;
+	bool needs = false;
 	int type;
+
+	/* Generation floor and enabled state must form one locked snapshot. */
+	spin_lock_irqsave(&zone->lru_lock, flags);
+	if (!lru_gen_enabled())
+		goto unlock;
 
 	for (type = 0; type < ANON_AND_FILE; type++) {
 		if (!lrugen->enabled[type])
@@ -4357,11 +4379,15 @@ static bool lru_gen_needs_new_generation(struct lruvec *lruvec)
 		 * floor, advance max_seq so that type gets a fresh cold generation.
 		 * Waiting for both types can starve the faster one.
 		 */
-		if (get_nr_gens(lruvec, type) <= MIN_NR_GENS + 1)
-			return true;
+		if (get_nr_gens(lruvec, type) <= MIN_NR_GENS + 1) {
+			needs = true;
+			break;
+		}
 	}
 
-	return false;
+unlock:
+	spin_unlock_irqrestore(&zone->lru_lock, flags);
+	return needs;
 }
 
 /*
@@ -4501,8 +4527,10 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 * as eligible to outer reclaim, even when this invocation hit its target.
 	 */
 	*lru_pages = lru_gen_size_zone(lruvec);
-	if (sc->nr_reclaimed != start_reclaimed ||
-	    sc->nr_scanned != start_scanned)
+	/* Only successful reclaim clears a cooldown. A scanned-but-pinned
+	 * generation may still have stale accounting or busy pages.
+	 */
+	if (sc->nr_reclaimed != start_reclaimed)
 		WRITE_ONCE(lruvec->evictable.reclaim_backoff_until, 0);
 
 	if (sc->nr_reclaimed == start_reclaimed && budget >= SWAP_CLUSTER_MAX) {
@@ -4513,11 +4541,15 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		long old_file = READ_ONCE(lruvec->evictable.sizes[fgen][1][zid]);
 
 		atomic64_inc(&lru_gen_diag_no_progress);
-		if (sc->nr_scanned == start_scanned) {
+		if (sc->nr_scanned == start_scanned ||
+		    (current_is_kswapd() &&
+		     sc->nr_scanned - start_scanned >= SWAP_CLUSTER_MAX)) {
 			/*
-			 * No page was even scanned.  Prevent the same zone/memcg
-			 * from spinning millions of times per second.  Never
-			 * sleep while in reclaim: simply stop advertising work.
+			 * Retry another zone/memcg instead of repeatedly scanning
+			 * cold pages without freeing any.  Direct reclaim is only
+			 * throttled if it could not scan anything at all: otherwise
+			 * allow allocation pressure to keep making progress.
+			 * No sleep under memory reclaim locks.
 			 */
 			WRITE_ONCE(lruvec->evictable.reclaim_backoff_until,
 				   jiffies + max_t(unsigned long, 1, msecs_to_jiffies(50)));
