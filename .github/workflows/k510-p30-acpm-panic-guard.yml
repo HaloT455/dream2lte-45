@@ -50,6 +50,7 @@ jobs:
           bash research/k510/p13-stage-v12r5t-acpm.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p30/pinned-donor.log
           bash research/k510/p14-register-donor-kbuild.sh "$SRC" "$OUT" | tee ci-p30/kbuild.log
           python3 research/k510/p15-bridge-i2c.py "$GITHUB_WORKSPACE" "$SRC" | tee ci-p30/i2c-migrate.log
+          bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p30/acpm-stage.log
           python3 research/k510/p30-stage-acpm-null-guard.py "$SRC" \
             | tee ci-p30/p30-acpm-fs-initcall-guard.log
           grep -q 'ALICE_P30_ACPM_FIRMWARE_UPDATE_SKIPPED' \
@@ -60,7 +61,6 @@ jobs:
             "$SRC/drivers/soc/samsung/acpm/acpm_ipc.h"
           ! grep -q 'alice,acpm-plugin-firmware-reviewed;' \
             "$SRC/arch/arm64/boot/dts/exynos/exynos8895-dream2lte.dts"
-          bash research/k510/p16-stage-acpm-ipc-lab.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p30/acpm-stage.log
           bash research/k510/p17-import-powermeter.sh "$GITHUB_WORKSPACE" "$SRC" | tee ci-p30/powermeter-stage.log
           bash research/k510/p17-stage-final-link-config.sh "$SRC" "$OUT" | tee ci-p30/link-config-gate.log
           python3 research/k510/p20-port-ufs8895-calibration.py "$GITHUB_WORKSPACE" "$SRC" ci-p30 \
