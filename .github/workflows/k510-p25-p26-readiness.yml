@@ -1,0 +1,59 @@
+name: Alice K510 P25 P26 read-only hardware and boot readiness gates (NO FLASH)
+on:
+  push:
+    branches: ['experimental/k510-p25-ufs-readonly-evidence-gate']
+    paths:
+      - 'research/k510/p25-*'
+      - 'research/k510/p26-*'
+      - '.github/workflows/k510-p25-p26-readiness.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-flash-readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify read-only ADB collector and Python boot gate syntax
+        run: |
+          set -euo pipefail
+          bash -n research/k510/p25-collect-working-ufs-readonly.sh
+          python3 -m py_compile research/k510/p26-boot-test-readiness.py
+          ! grep -Eq 'adb (push|install|reboot|remount|root)|[[:space:]](dd|flash|fastboot|heimdall|odin)[[:space:]]' \
+            research/k510/p25-collect-working-ufs-readonly.sh
+          echo 'P25_READONLY_COLLECTION_SYNTAX=PASS'
+      - name: Verify boot safety gate DENIES missing device evidence
+        run: |
+          set -euo pipefail
+          mkdir -p ci-p25 missing-physical-evidence
+          set +e
+          python3 research/k510/p26-boot-test-readiness.py \
+            missing-physical-evidence --report ci-p25/p26-readiness.json \
+            > ci-p25/readiness-check.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 3 ]; then
+            cat ci-p25/readiness-check.log
+            echo "UNSAFE: readiness gate did not reject missing hardware/boot evidence: exit=$rc"
+            exit 30
+          fi
+          python3 - <<'PY'
+          import json
+          p=json.load(open('ci-p25/p26-readiness.json'))
+          assert not p['original_boot_verified']
+          assert not p['diagnostic_boot_ready_to_flash']
+          assert not p['android16_boot_ready_to_flash']
+          assert len(p['why_not_ready']) >= 7
+          assert p['original_boot_expected_sha256'] == '76ab5c78bb475eba5fb994bd7a6269c693a652e6698eb68fbd9f5c858c176823'
+          print('P26_BOOT_PACKAGING_GATE=DENY_EXPECTED_PASS')
+          PY
+          echo 'NO_BOOT_IMAGE=TRUE; NO_PARTITION_WRITES=TRUE' > ci-p25/no-flash.txt
+      - name: Preserve evidence of refusal, no binary payloads
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-K510-P25-P26-READONLY-GATE-NO-FLASH
+          path: ci-p25/
+          if-no-files-found: warn
+          retention-days: 21
