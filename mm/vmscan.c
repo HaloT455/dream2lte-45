@@ -3206,7 +3206,7 @@ static int lru_gen_pte_entry(pte_t *ptep, unsigned long addr,
 	struct zone *zone;
 	struct mm_walk_args *args = walk->private;
 	struct lruvec *lruvec = args->lruvec;
-	int new_gen = lru_gen_from_seq(args->max_seq);
+	int new_gen;
 
 	pte = READ_ONCE(*ptep);
 	if (!pte_present(pte)) {
@@ -3253,6 +3253,11 @@ static int lru_gen_pte_entry(pte_t *ptep, unsigned long addr,
 	}
 
 	spin_lock_irqsave(&zone->lru_lock, flags);
+	/* V12R5U: max_seq may advance while the mmap walk sleeps.  Pick the
+	 * youngest generation under the same zone lock that protects lists,
+	 * so a sampled page cannot enter an already-reused generation slot.
+	 */
+	new_gen = lru_gen_from_seq(READ_ONCE(lruvec->evictable.max_seq));
 	if (lru_gen_page_memcg_matches(page, args->memcg) &&
 	    lru_gen_promote_accessed_locked(page, lruvec, new_gen))
 		args->mm_stats[MM_LEAF_YOUNG]++;
@@ -3411,10 +3416,17 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 	}
 
 	pte = pvmw->pte - ((pvmw->address - start) >> PAGE_SHIFT);
-	new_gen = lru_gen_from_seq(READ_ONCE(lruvec->evictable.max_seq));
 
 	arch_enter_lazy_mmu_mode();
 	spin_lock_irq(&zone->lru_lock);
+	/* V12R5U: the runtime OFF transition can migrate lists after the
+	 * optimistic pre-lock checks above. Recheck enabled state and generation
+	 * under zone->lru_lock to avoid writing stale gen bits or list entries.
+	 */
+	if (!lru_gen_enabled() ||
+	    !lruvec->evictable.enabled[page_is_file_cache(pvmw->page)])
+		goto unlock_scan_around;
+	new_gen = lru_gen_from_seq(READ_ONCE(lruvec->evictable.max_seq));
 
 	for (i = 0, addr = start; addr < end; i++, addr += PAGE_SIZE) {
 		pte_t entry = READ_ONCE(pte[i]);
@@ -3451,6 +3463,7 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 				     &lru_gen_diag_scan_promoted);
 	}
 
+unlock_scan_around:
 	spin_unlock_irq(&zone->lru_lock);
 	arch_leave_lazy_mmu_mode();
 
