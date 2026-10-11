@@ -62,6 +62,9 @@ if [ -r /proc/interrupts ]; then grep -i ufs /proc/interrupts || true; fi
 
 "$ADB" shell 'su -c "cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null | grep -iE \"name|ufs|vcc|s2mps17\""'   > "$OUT/ufs-regulators.txt" 2>&1 || true
 
+"$ADB" shell 'su -c "cat /sys/kernel/debug/clk/clk_summary 2>/dev/null | grep -iE \"clock|ufs|unipro|fsys0|fmp\""' \
+  > "$OUT/ufs-clock-rates.txt" 2>&1 || true
+
 cat > "$OUT/README-NO-FLASH.txt" <<'EOF'
 Read-only Exynos8895 V12R5T UFS/ACPM/clock baseline.
 This capture neither validates the Linux 5.10 runtime nor backs up
