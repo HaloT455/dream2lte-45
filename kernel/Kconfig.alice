@@ -1,0 +1,9 @@
+config ALICE_SYSINTEL
+	bool "ALICE read-only system and MGLRU diagnostics bridge"
+	depends on SYSFS && MMU
+	default n
+	help
+	  Export low-overhead VM reclaim counters through /sys/kernel/alice.
+	  The bridge observes MGLRU CPU reclaim and does not change any
+	  page table, CPU/GPU/VPU clock, thermal or memory policy.
+	  It does not implement GPU/VPU NPU inference or MGLRU offload.
