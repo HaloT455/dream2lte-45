@@ -1,4 +1,4 @@
-name: Build V12R69 R3 kernel
+name: Build V12R69 R4 wakeup-lock kernel
 # RESEARCH ONLY: MGLRU ON at boot, rollback boot recommended.
 
 on:
@@ -116,12 +116,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-ENERGYSTEP-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R69-R4-ENERGYSTEP-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-ENERGYSTEP-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R69-R4-ENERGYSTEP-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -235,7 +235,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R3-build-log-${{ github.sha }}
+          name: ALICE-V12R69-R4-build-log-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -305,9 +305,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R4-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R4-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package verified kernel
@@ -326,7 +326,7 @@ jobs:
       - name: Upload verified R3 kernel
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R3-kernel-${{ github.sha }}
+          name: ALICE-V12R69-R4-kernel-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
           compression-level: 9

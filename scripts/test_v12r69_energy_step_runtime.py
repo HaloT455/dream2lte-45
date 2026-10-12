@@ -9,7 +9,7 @@ import os
 import subprocess
 import tempfile
 
-source = Path("kernel/sched/cpufreq_energy_step.c").read_text()
+source = Path(os.environ.get("ENERGYSTEP_TEST_SOURCE", "kernel/sched/cpufreq_energy_step.c")).read_text()
 
 def function(marker):
     begin = source.index(marker)
@@ -27,6 +27,7 @@ stub = r'''
 #include <stddef.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <string.h>
 #define container_of(p,t,m) ((t *)((char *)(p) - offsetof(t,m)))
 #define CPUFREQ_RELATION_L 0
 #define raw_spin_lock_irqsave(l,f) do { (f)=0; pthread_mutex_lock(l); } while (0)
@@ -53,9 +54,29 @@ static pthread_t worker_thread;
 static pthread_mutex_t gate = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ready = PTHREAD_COND_INITIALIZER;
 static int mode, calls, pending, irq_pending, entered, drain_done;
+static bool irq_running, worker_running;
 static unsigned int applied[4];
 static bool queue_kthread_work(struct kthread_worker *w, struct kthread_work *k)
-{ (void)w; (void)k; pending=1; return true; }
+{
+    (void)w; (void)k;
+    /* A sleeping cpufreq worker may be woken here. The scheduler takes
+     * rq->lock and can re-enter the governor, which needs update_lock.
+     * Taking that lock models this nested scheduler/governor callback.
+     */
+    assert(pthread_mutex_trylock(&sg.update_lock) == 0);
+    pthread_mutex_unlock(&sg.update_lock);
+    if (mode==5) {
+        pthread_mutex_lock(&gate);
+        entered=1;
+        pthread_cond_broadcast(&ready);
+        while (!drain_done) pthread_cond_wait(&ready, &gate);
+        pending=1;
+        pthread_mutex_unlock(&gate);
+        return true;
+    }
+    pending=1;
+    return true;
+}
 static bool irq_work_queue(struct irq_work *i)
 { (void)i; irq_pending=1; return true; }
 static void cpufreq_remove_update_util_hook(unsigned int cpu) { (void)cpu; }
@@ -67,10 +88,11 @@ static void irq_work_sync(struct irq_work *i)
     irq_pending=0;
     drain_done=1;
     pthread_cond_broadcast(&ready);
+    while (irq_running) pthread_cond_wait(&ready, &gate);
     pthread_mutex_unlock(&gate);
 }
 static void kthread_cancel_work_sync(struct kthread_work *k)
-{ (void)k; pthread_join(worker_thread, NULL); pending=0; }
+{ (void)k; if (worker_running) pthread_join(worker_thread, NULL); pending=0; }
 static int __cpufreq_driver_target(struct cpufreq_policy *p, unsigned int f, int r)
 {
     (void)p; (void)r;
@@ -96,6 +118,7 @@ static void reset(int scenario)
 {
     mode=scenario;
     calls=pending=irq_pending=entered=drain_done=0;
+    irq_running=worker_running=false;
     sg.next_freq=100;
     sg.work_in_progress=true;
     sg.stopping=false;
@@ -104,6 +127,19 @@ static void reset(int scenario)
 }
 static void *run_worker(void *unused)
 { (void)unused; esgov_work(&sg.work); return NULL; }
+static void *run_irq(void *unused)
+{
+    (void)unused;
+    pthread_mutex_lock(&gate);
+    irq_running=true;
+    pthread_mutex_unlock(&gate);
+    esgov_irq_work(&sg.irq_work);
+    pthread_mutex_lock(&gate);
+    irq_running=false;
+    pthread_cond_broadcast(&ready);
+    pthread_mutex_unlock(&gate);
+    return NULL;
+}
 int main(int argc, char **argv)
 {
     (void)argv;
@@ -113,6 +149,8 @@ int main(int argc, char **argv)
     policy.cpus=1;
     sg.policy=&policy;
     if (argc==1) {
+        reset(0); pending=0; esgov_irq_work(&sg.irq_work);
+        assert(pending==1 && !sg.stopping);
         reset(0); esgov_work(&sg.work);
         assert(calls==1 && applied[0]==100 && !sg.work_in_progress);
         reset(1); esgov_work(&sg.work);
@@ -129,8 +167,24 @@ int main(int argc, char **argv)
         assert(!pending && !irq_pending);
         puts("PASS: stable target, replay bound, latest target, IRQ stop gate");
         puts("PASS: driver rejection invalidates target/cache without busy replay");
+        puts("PASS: IRQ enqueue and worker replay release policy lock before scheduler wakeup");
+    } else if (!strcmp(argv[1], "irq-stop")) {
+        pthread_t irq_thread;
+        reset(5);
+        pthread_create(&irq_thread, NULL, run_irq, NULL);
+        pthread_mutex_lock(&gate);
+        while (!entered) pthread_cond_wait(&ready, &gate);
+        pthread_mutex_unlock(&gate);
+        /* stop changes stopping after IRQ captured its queue decision,
+         * then waits for that enqueue before cancelling pending work.
+         */
+        esgov_stop(&policy);
+        pthread_join(irq_thread, NULL);
+        assert(sg.stopping && !pending && !irq_running);
+        puts("PASS: stop drains IRQ enqueue in flight before cancelling work");
     } else {
         reset(3);
+        worker_running=true;
         pthread_create(&worker_thread, NULL, run_worker, NULL);
         pthread_mutex_lock(&gate);
         while (!entered) pthread_cond_wait(&ready, &gate);
@@ -153,3 +207,4 @@ with tempfile.TemporaryDirectory(prefix="esgov-test-") as tmp:
                     str(c), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True, timeout=10)
     subprocess.run([str(exe), "stop"], check=True, timeout=10)
+    subprocess.run([str(exe), "irq-stop"], check=True, timeout=10)

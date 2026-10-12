@@ -451,6 +451,7 @@ static void esgov_work(struct kthread_work *work)
 	unsigned long flags;
 	int attempt;
 	int ret;
+	bool requeue = false;
 
 	/*
 	 * Keep work_in_progress set until the current target completes.
@@ -497,10 +498,17 @@ static void esgov_work(struct kthread_work *work)
 			 * cancellation. An IRQ queued here could otherwise outlive
 			 * esgov_stop()'s irq_work_sync() and access a freed policy.
 			 */
-			queue_kthread_work(&sg_policy->worker, &sg_policy->work);
+			requeue = true;
 		}
 		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
+	/* Queueing may wake a task and take rq->lock, whose cpufreq hook
+	 * needs update_lock. Never queue while holding the policy lock.
+	 * kthread_cancel_work_sync() also prevents this self-requeue while
+	 * stop waits for the currently executing work to finish.
+	 */
+	if (requeue)
+		queue_kthread_work(&sg_policy->worker, &sg_policy->work);
 	mutex_unlock(&sg_policy->work_lock);
 }
 
@@ -508,13 +516,19 @@ static void esgov_irq_work(struct irq_work *irq_work)
 {
 	struct esgov_policy *sg_policy;
 	unsigned long flags;
+	bool queue;
 
 	sg_policy = container_of(irq_work, struct esgov_policy, irq_work);
 
 	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-	if (!sg_policy->stopping)
-		queue_kthread_work(&sg_policy->worker, &sg_policy->work);
+	queue = !sg_policy->stopping;
 	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	/* A worker wakeup can re-enter cpufreq under rq->lock. Stop drains
+	 * this IRQ callback before cancelling work, so its unlocked enqueue
+	 * cannot outlive the cancellation even if stopping changes here.
+	 */
+	if (queue)
+		queue_kthread_work(&sg_policy->worker, &sg_policy->work);
 }
 
 /************************** sysfs interface ************************/
