@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/v12r60-alice-kernel-telemetry
+      - agent/v12r60-alice-android-ci
     paths:
       - 'alice/android-app/**'
       - '.github/workflows/alice-android-app.yml'
@@ -17,12 +18,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # Ubuntu Android GitHub runner already has cmdline-tools; avoid deprecated sdkmanager tools package.
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
       - name: Install Android SDK 35
         run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" >> "$GITHUB_ENV"
+          command -v sdkmanager || ls /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Build Alice debug APK
