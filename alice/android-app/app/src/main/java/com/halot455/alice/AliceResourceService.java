@@ -23,6 +23,9 @@ public final class AliceResourceService extends Service {
     private final AtomicBoolean enabled=new AtomicBoolean(false);
     private Thread worker;
     private boolean activeNotification;
+    private volatile boolean mglruExplicitOptIn;
+    private boolean mglruAttempted;
+    public static final String EXTRA_MGLRU_OPT_IN = "alice.guard_mglru_opt_in";
 
     @Override public void onCreate() {
         super.onCreate();
@@ -49,6 +52,7 @@ public final class AliceResourceService extends Service {
             return START_NOT_STICKY;
         }
         if(i==null||!START.equals(i.getAction()))return START_NOT_STICKY;
+        if(i.getBooleanExtra(EXTRA_MGLRU_OPT_IN,false)) mglruExplicitOptIn=true;
         if(!activeNotification){
             startForeground(ID,note("Kiểm tra trạng thái kernel/LMKD trước khi tối ưu"));
             activeNotification=true;
@@ -69,6 +73,7 @@ public final class AliceResourceService extends Service {
         boolean enrolled=false;
         AliceResourceEngine.Sample previous=null;
         int lastMode=-1, consistent=0, currentMode=4;
+        int mglruEligibleSamples=0;
         long lastChange=0;
         try{
             // Explicit user start authorizes *only* bounded V12R61 swappiness.
@@ -95,8 +100,27 @@ public final class AliceResourceService extends Service {
                     currentMode=decision.mode;
                     lastChange=now;
                 }
+                // MGLRU is NEVER enabled by normal resource mode.
+                // Only a separate UI-approved opt-in permits ONE guarded 8s
+                // trial per service session under sustained mild pressure.
+                boolean candidate = sample.valid && sample.some10 >= 5
+                        && sample.some10 < 22 && sample.full10 < 2
+                        && sample.availableKb >= 320000
+                        && sample.availablePercent() <= 13;
+                mglruEligibleSamples = candidate ? mglruEligibleSamples+1 : 0;
+                String mglruReport="MGLRU OFF mặc định";
+                if(mglruExplicitOptIn && !mglruAttempted && mglruEligibleSamples >= 2){
+                    mglruAttempted = true; // one attempt per session
+                    try{
+                        String result=AliceMglruGuard.root(this,"auto");
+                        mglruReport=result.contains("ALICE_MGLRU_FINISHED_OFF")
+                             ? "MGLRU 8s đã tắt lại" : "MGLRU kiểm tra xong";
+                    }catch(Exception e){
+                        mglruReport="MGLRU từ chối: "+e.getMessage();
+                    }
+                }
                 notifyStatus(decision.tier+": "+decision.reason+
-                             " | mode="+currentMode+"; MGLRU giữ nguyên");
+                             " | mode="+currentMode+"; "+mglruReport);
                 previous=sample;
                 Thread.sleep(45000);
             }
@@ -108,6 +132,10 @@ public final class AliceResourceService extends Service {
             enabled.set(false);
             // Clear interrupt before awaiting the root rollback helper.
             Thread.interrupted();
+            if(mglruAttempted){
+                try{AliceMglruGuard.root(this,"restore");}
+                catch(Exception ignored){}
+            }
             if(enrolled){
                 try{AliceResourceEngine.root(this,"policy-off",0);}
                 catch(Exception ignored){}
