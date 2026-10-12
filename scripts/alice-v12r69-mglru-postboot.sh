@@ -20,8 +20,10 @@ case "$(cat "$SYS" 2>/dev/null)" in
   0)
     # Verify known OneUI policy script; otherwise abstain.
     [ -f /system/bin/init.mglru.sh ] || { log "unknown ROM disable source; no change"; exit 0; }
-    if grep -q 'lru_gen/enabled' /system/bin/init.mglru.sh 2>/dev/null &&\n       ! grep -q '[[:space:]]OOM' /proc/pressure/memory 2>/dev/null; then
-      # Do not race a late ROM write or override a manual OFF after boot.\n      [ "$(cat "$SYS" 2>/dev/null)" = "0" ] || exit 0\n      echo 1 > "$SYS" 2>/dev/null || { log "enable failed"; exit 1; }
+    if grep -q 'lru_gen/enabled' /system/bin/init.mglru.sh 2>/dev/null; then
+      # Do not race a late ROM write or override a manual OFF after boot.
+      [ "$(cat "$SYS" 2>/dev/null)" = "0" ] || exit 0
+      echo 1 > "$SYS" 2>/dev/null || { log "enable failed"; exit 1; }
       log "one-shot restore result=$(cat "$SYS" 2>/dev/null)"
     else
       log "policy script did not reference MGLRU; no change"
