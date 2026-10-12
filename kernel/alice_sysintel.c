@@ -9,6 +9,7 @@
 #include <linux/sysfs.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/swap.h>
 #include <linux/atomic.h>
 #include <linux/timekeeping.h>
 #include <linux/alice_sysintel.h>
