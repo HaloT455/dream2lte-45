@@ -271,6 +271,42 @@ jobs:
             grep -a -q 'Linux version 4.4.302-Alice-V12R68-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
+      - name: QEMU ARM64 virtual platform probe (NOT G955FD emulation)
+        if: success()
+        run: |
+          sudo apt-get install -y qemu-system-arm
+          OUT="out-${{ matrix.variant }}"
+          mkdir -p "vm-report-${{ matrix.variant }}"
+          set +e
+          timeout 35s qemu-system-aarch64 \
+            -M virt -cpu cortex-a53 -smp 4 -m 2048 \
+            -nographic -monitor none -serial stdio \
+            -no-reboot \
+            -kernel "$OUT/arch/arm64/boot/Image" \
+            -append "console=ttyAMA0 earlycon=pl011,0x09000000 loglevel=8" \
+            > "vm-report-${{ matrix.variant }}/qemu-console.txt" 2>&1
+          rc=$?
+          set -e
+          {
+            echo "V12R68 QEMU ARM64 platform compatibility probe"
+            echo "qemu_exit_code=$rc"
+            echo "machine=virt cpu=cortex-a53 memory=2048M"
+            echo "target=Samsung G955FD Exynos8895"
+            echo "This QEMU virt VM does NOT implement Exynos8895 SoC peripherals, Mali GPU, Samsung thermal, modem or board DTB."
+            echo "A timeout or lack of Android boot is NOT a proof of G955FD failure."
+            echo "A QEMU boot is NOT proof of G955FD device stability."
+            echo "Actual G955FD boot, MGLRU, Energy Step, kill-app and reboot behavior remain unverified."
+          } > "vm-report-${{ matrix.variant }}/REPORT.txt"
+          cat "vm-report-${{ matrix.variant }}/REPORT.txt"
+
+      - name: Upload VM diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream2lte-v12r68-qemu-platform-probe-${{ matrix.variant }}-${{ github.sha }}
+          path: vm-report-${{ matrix.variant }}/
+          if-no-files-found: ignore
+
       - name: Package output
         run: |
           OUT="out-${{ matrix.variant }}"
