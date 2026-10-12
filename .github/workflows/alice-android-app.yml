@@ -1,9 +1,9 @@
-name: ALICE V12R63 Qwen3 + Process Supervisor APK
+name: ALICE V12R64 Adaptive Memory + MGLRU/LMKD Diagnostics APK
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r63-alice-ai-process-supervisor
+      - agent/v12r64-alice-adaptive-memory-control
     paths:
       - 'alice/android-app/**'
       - 'alice/ai_offline/**'
@@ -37,6 +37,17 @@ jobs:
           grep -q 'ALICE_FOREGROUND_OR_SERVICE_PROTECTED' alice/android-app/app/src/main/assets/alice_process.sh
           grep -q 'restore-all' alice/android-app/app/src/main/assets/alice_process.sh
           ! grep -Eq '^[[:space:]]*(kill|pkill|killall|stop|setprop|echo .* > /proc/)' alice/android-app/app/src/main/assets/alice_process.sh
+      - name: Validate ALICE memory controller
+        run: |
+          set -eu
+          sh -n alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "ALICE_MGLRU_TRIAL_ACTIVE" alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "ALICE_LMKD_DYNAMIC_UNSUPPORTED" alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "restore_mglru" alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "restore_lmkd" alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "on property:persist.device_config.lmkd_native.thrashing_limit=" alice/android-app/app/src/main/assets/alice_memory.sh
+          grep -q "mglru-trial" alice/android-app/app/src/main/java/com/halot455/alice/MainActivity.java
+          grep -q "AliceResourceEngine" alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
       - name: Compile llama.cpp Android ARM64
         shell: bash
         run: |
@@ -71,7 +82,7 @@ jobs:
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R63-Qwen3-Process-AI-APK-${{ github.sha }}
+          name: ALICE-V12R64-Adaptive-Memory-AI-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS
