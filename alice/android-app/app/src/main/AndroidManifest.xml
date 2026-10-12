@@ -6,6 +6,11 @@
  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
  <application android:label="ALICE System" android:allowBackup="false" android:usesCleartextTraffic="false" android:extractNativeLibs="true"
    android:theme="@android:style/Theme.Material.Light.NoActionBar">
+  <service android:name=".AliceResourceService"
+    android:exported="false" android:foregroundServiceType="specialUse">
+   <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+     android:value="User-started memory pressure and swappiness resource supervisor, no background MGLRU or LMKD writes"/>
+  </service>
   <service android:name=".AliceProcessService"
     android:exported="false" android:foregroundServiceType="specialUse">
    <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
