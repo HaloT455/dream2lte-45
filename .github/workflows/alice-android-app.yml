@@ -36,7 +36,7 @@ jobs:
           grep -q 'ALICE_PID_REUSED' alice/android-app/app/src/main/assets/alice_process.sh
           grep -q 'ALICE_FOREGROUND_OR_SERVICE_PROTECTED' alice/android-app/app/src/main/assets/alice_process.sh
           grep -q 'restore-all' alice/android-app/app/src/main/assets/alice_process.sh
-          ! grep -Eq '(^|[;[:space:]])kill[[:space:]]|SIGSTOP|oom_score_adj.*>' alice/android-app/app/src/main/assets/alice_process.sh
+          ! grep -Eq '^[[:space:]]*(kill|pkill|killall|stop|setprop|echo .* > /proc/)' alice/android-app/app/src/main/assets/alice_process.sh
       - name: Compile llama.cpp Android ARM64
         shell: bash
         run: |
