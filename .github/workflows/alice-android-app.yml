@@ -25,9 +25,10 @@ jobs:
       - name: Install Android SDK 35
         run: |
           echo "ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" >> "$GITHUB_ENV"
-          command -v sdkmanager || ls /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          SDKMGR="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" "platforms;android-35" "build-tools;35.0.0"
       - name: Build Alice debug APK
         run: gradle -p alice/android-app :app:assembleDebug --no-daemon --stacktrace
       - name: Validate APK
