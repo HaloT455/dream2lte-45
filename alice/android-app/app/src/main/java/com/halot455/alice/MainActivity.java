@@ -89,7 +89,10 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         button(root, "Dừng tối ưu tài nguyên, khôi phục VM", v -> stopResource());
         button(root, "Xem khả năng điều khiển LMKD/MGLRU", v -> runResourceAction("status",0));
         button(root, "Thử LMKD ngắn hạn (chỉ ROM hỗ trợ)", v -> confirmLmkdTrial());
-        button(root, "Thử MGLRU 12 giây (nguy cơ treo)", v -> confirmMglruTrial());
+        button(root, "ALICE kiểm tra MGLRU Guard", v -> runMglruAction("status"));
+        button(root, "ALICE tự điều khiển MGLRU (thử nghiệm)", v -> confirmMglruAuto());
+        button(root, "Thử MGLRU 8 giây có kiểm tra nhiệt", v -> confirmMglruTrial());
+        button(root, "TẮT MGLRU khẩn cấp", v -> runMglruAction("restore"));
         button(root, "Khôi phục MGLRU / LMKD thử nghiệm", v -> runResourceAction("restore",0));
         root.addView(text("ALICE AI quản lý tiến trình (quyền root)", 18, true));
         processesPanel = text("Chưa quét. ALICE chỉ điều chỉnh ứng dụng nền, không kill tiến trình.", 13, false);
@@ -222,7 +225,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
              + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\n"
              + "• Resource Intelligence: đo PSI, zRAM, refault; chọn mode cân bằng có hysteresis\n"
              + "• LMKD: giám sát và thử đổi thrashing_limit 20 giây khi ROM cho phép\n"
-             + "• MGLRU: theo dõi, thử nghiệm 12 giây có hoàn nguyên; không bật mặc định\n"
+             + "• MGLRU: ALICE Guard 8 giây, 2 mẫu PSI, nhiệt độ, giới hạn 1 thử/phiên\n"
              + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\n"
              + "• VPU: driver được giữ; chưa chạy graph inference\n"
              + "• Nhiệt/pin/mạng/I-O: chỉ đọc chỉ số Android cho phép\n"
@@ -337,6 +340,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         Intent i=new Intent(this,AliceResourceService.class);
         stopService(i);
         runResourceAction("policy-off",0);
+        runMglruAction("restore");
     }
     private void runResourceAction(String cmd,int value) {
         processesPanel.setText("Đang kiểm tra "+cmd+"...");
@@ -359,20 +363,61 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
           .setPositiveButton("Thử LMKD", (d,w)->runResourceAction("lmkd-trial",60))
           .show();
     }
+    private void runMglruAction(String operation) {
+        processesPanel.setText("ALICE MGLRU: "+operation+"...");
+        new Thread(() -> {
+            String result;
+            try { result = AliceMglruGuard.root(this,operation); }
+            catch (Exception e) { result="ALICE MGLRU từ chối: "+e.getMessage(); }
+            final String output=result;
+            runOnUiThread(() -> processesPanel.setText(output));
+        }, "alice-mglru-"+operation).start();
+    }
+
+    private void confirmMglruAuto() {
+        new AlertDialog.Builder(this)
+          .setTitle("ALICE MGLRU Adaptive Guard (THỬ NGHIỆM)")
+          .setMessage("S8+ từng reboot sau khi bật MGLRU lâu. "
+             +"Chỉ khi bạn đồng ý, ALICE mới được thử bật MGLRU 8 giây "
+             +"tối đa MỘT lần trong phiên giám sát, sau ít nhất hai lần đo "
+             +"RAM thiếu và PSI cao. Kernel phải đủ mát (<53°C), pin <39°C. "
+             +"Nếu reclaim có no_progress/backoff, ALICE sẽ khóa các lần thử sau. "
+             +"Không tự thay LMKD hoặc tăng CPU. Nếu kernel deadlock, không thể "
+             +"bảo đảm tự tắt và bạn có thể phải reboot.")
+          .setNegativeButton("Không bật",null)
+          .setPositiveButton("Tôi đồng ý thử có giới hạn",(d,w) ->
+              new AlertDialog.Builder(this)
+              .setTitle("Xác nhận cuối: vẫn có nguy cơ treo kernel")
+              .setMessage("Bạn đã sao lưu boot và dữ liệu quan trọng? "
+                  +"Chế độ thường ngày vẫn khuyến nghị MGLRU OFF.")
+              .setNegativeButton("Hủy",null)
+              .setPositiveButton("Bật ALICE Guard",(x,y)->{
+                  Intent intent=new Intent(this,AliceResourceService.class);
+                  intent.setAction(AliceResourceService.START);
+                  intent.putExtra(AliceResourceService.EXTRA_MGLRU_OPT_IN,true);
+                  try{
+                      if(android.os.Build.VERSION.SDK_INT>=26)
+                          startForegroundService(intent);
+                      else startService(intent);
+                      toast("Đã yêu cầu ALICE Guard; chưa bật MGLRU ngay");
+                  }catch(Exception e){toast("Không khởi động được: "+e.getMessage());}
+              }).show()).show();
+    }
+
     private void confirmMglruTrial() {
         new AlertDialog.Builder(this)
-          .setTitle("MGLRU đã từng làm S8+ treo")
-          .setMessage("ALICE chỉ có thể tạm bật MGLRU trong 12 giây rồi "
-              +"cố gắng trả về OFF. Nếu kernel bị deadlock, cả watchdog "
-              +"cũng có thể không chạy; có nguy cơ phải khởi động lại. "
-              +"Không chạy khi chưa sao lưu boot và dữ liệu.")
+          .setTitle("Thử MGLRU 8 giây (nguy cơ treo)")
+          .setMessage("Chỉ thử khi kernel có nhiệt độ CPU/GPU <53°C, pin <39°C. "
+             +"Sau 8 giây ALICE cố gắng trả MGLRU về OFF. "
+             +"Nếu kernel deadlock, tiến trình khôi phục không thể chạy; "
+             +"có thể phải reboot. Không khuyến nghị khi máy đang nóng.")
           .setNegativeButton("Hủy",null)
-          .setPositiveButton("Tôi hiểu nguy cơ", (d,w)->new AlertDialog.Builder(this)
-              .setTitle("Xác nhận lần cuối")
-              .setMessage("Không bảo đảm tự khôi phục nếu MGLRU làm kernel treo.")
-              .setNegativeButton("Hủy",null)
-              .setPositiveButton("Thử MGLRU", (x,y)->runResourceAction("mglru-trial",0))
-              .show()).show();
+          .setPositiveButton("Tôi hiểu nguy cơ",(d,w)->new AlertDialog.Builder(this)
+             .setTitle("Xác nhận cuối")
+             .setMessage("Bạn chủ động yêu cầu thử MGLRU. Không đảm bảo chống treo.")
+             .setNegativeButton("Hủy",null)
+             .setPositiveButton("Thử 8 giây",(x,y)->runMglruAction("manual"))
+             .show()).show();
     }
 
     private void scanProcesses() {
