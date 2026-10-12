@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0
- * ALICE V12R67 research boot: built-in telemetry, bounded VM policy.
+ * ALICE V12R68 research boot: built-in telemetry, bounded VM policy.
  * MGLRU defaults ON through CONFIG_LRU_GEN_ENABLED=y; sysfs still allows OFF.
  * No model weights/inference in kernel, no GPU/VPU reclaim offload.
  */
@@ -70,7 +70,7 @@ static int alice_apply_locked(void)
 static ssize_t version_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "V12R67 ALICE boot-kernel bridge v4 ONEUI-BOOT-COMPAT MGLRU-ON RESEARCH\n");
+	return scnprintf(buf, PAGE_SIZE, "V12R68 ALICE boot-kernel bridge v5 ENERGY-STEP-COMPAT MGLRU-ON RESEARCH\n");
 }
 
 static ssize_t safety_show(struct kobject *kobj,
