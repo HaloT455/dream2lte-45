@@ -1,9 +1,9 @@
-name: ALICE V12R64 Adaptive Memory + MGLRU/LMKD Diagnostics APK
+name: ALICE V12R65 Guarded Adaptive MGLRU + Qwen3 APK
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r64-alice-adaptive-memory-control
+      - agent/v12r65-alice-mglru-guarded-controller
     paths:
       - 'alice/android-app/**'
       - 'alice/ai_offline/**'
@@ -48,6 +48,22 @@ jobs:
           grep -q "on property:persist.device_config.lmkd_native.thrashing_limit=" alice/android-app/app/src/main/assets/alice_memory.sh
           grep -q "mglru-trial" alice/android-app/app/src/main/java/com/halot455/alice/MainActivity.java
           grep -q "AliceResourceEngine" alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
+      - name: Validate ALICE MGLRU Guard safety
+        run: |
+          set -eu
+          F=alice/android-app/app/src/main/assets/alice_mglru_guard.sh
+          sh -n "$F"
+          grep -q 'ALICE_MGLRU_ON_TRIAL_8S' "$F"
+          grep -q 'ALICE_MGLRU_FINISHED_OFF' "$F"
+          grep -q 'ALICE_GATE_PSI_NOT_ELIGIBLE' "$F"
+          grep -q 'ALICE_GATE_SOC_HOT' "$F"
+          grep -q 'ALICE_GATE_BATTERY_HOT' "$F"
+          grep -q 'ALICE_MGLRU_AUTO_PAUSED_AFTER_STALL' "$F"
+          grep -q 'restore; release' "$F"
+          ! grep -Eq '^[[:space:]]*(kill|pkill|killall|stop|setprop)' "$F"
+          grep -q 'EXTRA_MGLRU_OPT_IN' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
+          grep -q 'mglruEligibleSamples >= 2' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
+          grep -q 'mglruAttempted = true' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
       - name: Compile llama.cpp Android ARM64
         shell: bash
         run: |
@@ -82,7 +98,7 @@ jobs:
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R64-Adaptive-Memory-AI-APK-${{ github.sha }}
+          name: ALICE-V12R65-MGLRU-Guard-AI-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS
