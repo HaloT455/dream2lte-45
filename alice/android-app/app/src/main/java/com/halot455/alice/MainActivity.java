@@ -149,7 +149,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
                                     StandardCharsets.UTF_8))) {
                         String line;
                         while ((line = br.readLine()) != null && out.length() < 6000)
-                            out.append(line).append('\\n');
+                            out.append(line).append('\n');
                     }
                     result = out.toString();
                 }
