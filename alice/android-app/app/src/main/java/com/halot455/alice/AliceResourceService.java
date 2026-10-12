@@ -106,6 +106,8 @@ public final class AliceResourceService extends Service {
             notifyStatus("ALICE không áp dụng tối ưu: "+e.getMessage());
         }finally{
             enabled.set(false);
+            // Clear interrupt before awaiting the root rollback helper.
+            Thread.interrupted();
             if(enrolled){
                 try{AliceResourceEngine.root(this,"policy-off",0);}
                 catch(Exception ignored){}
