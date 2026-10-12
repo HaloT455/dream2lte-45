@@ -1,4 +1,4 @@
-name: Build V12R5W S8+ GPU Boot Isolation (MGLRU OFF)
+name: Build V12R5X G71 15+5 Compute Profile (MGLRU OFF)
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -35,6 +35,7 @@ on:
       - agent/v12r5u-mglru-runtime-safety
       - agent/v12r5v-mglru-lowram-reclaim-safety
       - agent/v12r5w-boot-gpu-partition-isolation
+      - agent/v12r5x-gpu15-compute5-vpu
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -87,7 +88,7 @@ jobs:
           python3 scripts/test_v12r5t_mglru_aging_lmkd.py
           python3 scripts/test_v12r5u_mglru_live_generation.py
           python3 scripts/test_v12r5v_mglru_reclaim_guard.py
-          python3 scripts/test_v12r5w_gpu_boot_isolation.py
+          python3 scripts/test_v12r5x_gpu_compute_profile.py
           python3 scripts/test_v12r5p_ion_cma_diag.py
           python3 scripts/test_v12r5q_page_isolation_diag.py
           python3 scripts/test_v12r5r_zsmalloc_cma_migration.py
@@ -103,12 +104,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5W-ISO-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5X-GPU15C5-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5W-ISO-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5X-GPU15C5-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -140,7 +141,7 @@ jobs:
           grep -q '^# CONFIG_LRU_GEN_STATS is not set$' "$OUT/.config"
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$OUT/.config"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$OUT/.config"
-          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set$' "$OUT/.config"
+          grep -q '^CONFIG_MALI_HALO_NPU_PARTITION=y$' "$OUT/.config"
           grep -q 'static ssize_t lru_gen_enabled_store' mm/vmscan.c
           grep -q '__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store)' mm/vmscan.c
           grep -q 'sysfs_create_group(mm_kobj, &lru_gen_attr_group)' mm/vmscan.c
@@ -214,7 +215,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5w-iso-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5x-gpu15c5-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -256,7 +257,7 @@ jobs:
           # kbase_halo_npu_init_partition() is static and may be inlined by GCC.
           # The config check plus this embedded log string proves the partition
           # code was compiled into the final Image without relying on a static symbol.
-          ! grep -a -q 'HALO NPU: Mali partition active' "$OUT/arch/arm64/boot/Image"
+          check_image_string 'HALO compute partition: graphics=%u compute=%u'
           if strings -a "$OUT/arch/arm64/boot/Image" | grep -q 'simple_lmk:'; then
             echo "::error::SimpleLMK must not be linked in LMKD+PSI builds"
             exit 1
@@ -274,9 +275,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5W-ISO-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5X-GPU15C5-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5W-ISO-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5X-GPU15C5-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -293,6 +294,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5w-iso-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5x-gpu15c5-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
