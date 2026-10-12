@@ -70,13 +70,15 @@ config MALI_SEC_CL_BOOST
       Enables open cl dvfs booster.
 
 config MALI_HALO_NPU_PARTITION
-    bool "Reserve five Mali shader cores for HALO NPU compute"
+    bool "Experimental: reserve five Mali cores for dedicated compute JS2"
     depends on MALI_MIDGARD
     default n
     help
-      Partition physical Mali shader cores by job slot. JS0/JS1 use the
-      graphics mask while JS2, used by ONLY_COMPUTE device_nr=1 workloads,
-      uses a dedicated five-core mask. No shader core is globally disabled.
+      On validated dual-coherent-group Mali-G71 MP20 hardware, JS0/JS1
+      use 15 graphics shader cores and JS2 may use five compute shaders
+      for ONLY_COMPUTE device_nr=1 jobs. Unsupported hardware falls back
+      to the full original shader mask. This is NOT a real NPU and does
+      NOT run Linux MGLRU page reclamation on GPU or Samsung VPU.
 
 config MALI_PM_QOS
     bool "Enable DVFS with QoS"
