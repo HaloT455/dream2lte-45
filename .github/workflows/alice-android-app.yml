@@ -46,7 +46,7 @@ jobs:
           grep -q "restore_mglru" alice/android-app/app/src/main/assets/alice_memory.sh
           grep -q "restore_lmkd" alice/android-app/app/src/main/assets/alice_memory.sh
           grep -q "on property:persist.device_config.lmkd_native.thrashing_limit=" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "mglru-trial" alice/android-app/app/src/main/java/com/halot455/alice/MainActivity.java
+          grep -q "runMglruAction" alice/android-app/app/src/main/java/com/halot455/alice/MainActivity.java
           grep -q "AliceResourceEngine" alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
       - name: Validate ALICE MGLRU Guard safety
         run: |
