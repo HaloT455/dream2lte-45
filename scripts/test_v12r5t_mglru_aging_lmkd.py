@@ -7,7 +7,7 @@ w = Path("mm/workingset.c").read_text()
 cfg = Path("arch/arm64/configs/exynos8895-dream2lte_defconfig").read_text()
 
 assert "CONFIG_LRU_GEN=y" in cfg
-assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg, "experimental MGLRU must default OFF"
+assert "CONFIG_LRU_GEN_ENABLED=y" in cfg, "V12R66 deliberately tests MGLRU default ON"
 assert "CONFIG_ZSWAP_MIGRATION_SUPPORT=y" in cfg
 assert "static bool lru_gen_ptwalk_runtime;" in v, "page-table aging must be opt-in"
 assert "__ATTR(ptwalk, 0644, lru_gen_ptwalk_show, lru_gen_ptwalk_store)" in v
@@ -30,5 +30,5 @@ assert (refault.index("inc_zone_state(zone, WORKINGSET_REFAULT);") <
 assert "atomic_long_add(hpage_nr_pages(page)," in refault
 print("PASS: MGLRU opt-in PTE aging is kswapd-only, bounded and rate-limited")
 print("PASS: MGLRU refault vmstat precedes generation-token filtering")
-print("PASS: default MGLRU OFF; ZRAM CMA migration retained")
+print("PASS: experimental MGLRU default ON; ZRAM CMA migration retained")
 print("NOTE: Static checks cannot establish target runtime stability.")
