@@ -229,20 +229,20 @@ static ssize_t policy_enabled_store(struct kobject *kobj,
 static ssize_t vm_policy_show(struct kobject *kobj,
 			      struct kobj_attribute *attr, char *buf)
 {
-	int saved, applied, enabled, mode, current;
+	int saved, applied, enabled, mode, current_swappiness;
 
 	mutex_lock(&alice_policy_lock);
 	saved = alice_saved_swappiness;
 	applied = alice_applied_swappiness;
 	mode = alice_mode;
 	enabled = alice_policy_enabled;
-	current = READ_ONCE(vm_swappiness);
+	current_swappiness = READ_ONCE(vm_swappiness);
 	mutex_unlock(&alice_policy_lock);
 	return scnprintf(buf, PAGE_SIZE,
 		"mode=%d enabled=%d current_swappiness=%d "
 		"saved_swappiness=%d last_applied=%d "
 		"mglru_automatic_enable=0\n",
-		mode, enabled, current, saved, applied);
+		mode, enabled, current_swappiness, saved, applied);
 }
 
 static struct kobj_attribute version_attr = __ATTR_RO(version);
