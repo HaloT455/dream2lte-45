@@ -63,7 +63,7 @@ assert "(unsigned long)SWAP_CLUSTER_MAX * 4" in v
 
 # Keep the experimental 4.4 backport opt-in; preserve zRAM + reclaim ABI.
 assert "CONFIG_LRU_GEN=y" in cfg
-assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg
+assert "CONFIG_LRU_GEN_ENABLED=y" in cfg
 assert "CONFIG_ZRAM=y" in cfg
 assert "CONFIG_ZSWAP_MIGRATION_SUPPORT=y" in cfg
 assert "static bool lru_gen_ptwalk_runtime;" in v
@@ -72,5 +72,5 @@ assert "static bool lru_gen_scan_around_runtime;" in v
 print("PASS: per-zone MGLRU page selection and oldest budget lock snapshots")
 print("PASS: runtime OFF transition cannot recycle generation during aging")
 print("PASS: kswapd no-progress retry guard while direct reclaim remains responsive")
-print("PASS: MGLRU remains default OFF with bounded opt-in aging")
+print("PASS: MGLRU remains default ON (V12R66 research only) with bounded opt-in aging")
 print("NOTE: compile + device stress + pstore/PSI/LMKD evidence required")
