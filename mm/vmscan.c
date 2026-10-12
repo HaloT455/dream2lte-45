@@ -2272,6 +2272,16 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 		return -EINVAL;
 
 	enable = mode == 1;
+	/*
+	 * V12R69: log every state-change request, including repeated OFF
+	 * writes.  The One UI 8 policy can apply after the early boot guard;
+	 * recording pid/ppid/comm provides attribution without preventing a
+	 * legitimate emergency MGLRU disable or overriding an operator.
+	 */
+	pr_info_ratelimited("lru_gen: sysfs request %s by pid=%d ppid=%d comm=%s state=%d\n",
+			    enable ? "ON" : "OFF",
+			    task_pid_nr(current), task_ppid_nr(current),
+			    current->comm, lru_gen_enabled() ? 1 : 0);
 	if (enable == lru_gen_enabled())
 		return count;
 
