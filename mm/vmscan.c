@@ -49,6 +49,7 @@
 #include <linux/printk.h>
 #include <linux/memory.h>
 #include <linux/psi.h>
+#include <linux/sched.h> /* task_ppid_nr(): identify One UI early-init shell */
 
 /*
  * kernel/cgroup/cgroup.c exports cgroup_mutex unconditionally, while the
@@ -2216,6 +2217,19 @@ static struct attribute_group vmscan_attr_group = {
 #ifdef CONFIG_LRU_GEN
 void lru_gen_set_state(bool enable, bool main, bool swap);
 
+/*
+ * V12R67: One UI 8 /system/bin/init.mglru.sh executes in early-init as
+ * PID 1's /system/bin/sh child. It unconditionally writes 0 on 4-GB S8+
+ * devices (integer GB rounds 3.6 GiB down to 3).  On this research-only
+ * default-ON kernel, ignore exactly the first such EARLY userspace disable.
+ * Normal Android init property actions and root sysfs OFF remain effective.
+ *
+ * This is NOT a thermal safety mechanism or an MGLRU algorithm fix.
+ */
+#ifdef CONFIG_LRU_GEN_ENABLED
+static atomic_t lru_gen_early_shell_off_ignored = ATOMIC_INIT(0);
+#endif
+
 static bool lru_gen_scan_around_runtime;
 /* Experimental: explicit opt-in; never page-table walk in direct reclaim. */
 static bool lru_gen_ptwalk_runtime;
@@ -2261,8 +2275,24 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 	if (enable == lru_gen_enabled())
 		return count;
 
-	pr_info("lru_gen: runtime switch %s begin\n",
-		enable ? "ON" : "OFF");
+#ifdef CONFIG_LRU_GEN_ENABLED
+	/*
+	 * Match the known One UI early-init write, not all shell/root writes.
+	 * The boot guard is one-shot and limited to the first 60 seconds.
+	 * Android's init (PID 1) property=none writes must always turn OFF.
+	 */
+	if (!enable &&
+	    time_before(jiffies, msecs_to_jiffies(60000)) &&
+	    !strcmp(current->comm, "sh") &&
+	    task_ppid_nr(current) == 1 &&
+	    atomic_cmpxchg(&lru_gen_early_shell_off_ignored, 0, 1) == 0) {
+		pr_warn("lru_gen: V12R67 ignored OneUI early-init shell OFF; "
+			"MGLRU stays ON; runtime OFF remains available\n");
+		return count;
+	}
+#endif
+	pr_info("lru_gen: runtime switch %s by pid=%d comm=%s begin\n",
+		enable ? "ON" : "OFF", task_pid_nr(current), current->comm);
 	lru_gen_set_state(enable, true, false);
 	pr_info("lru_gen: runtime switch %s complete\n",
 		enable ? "ON" : "OFF");
@@ -2272,6 +2302,25 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 
 static struct kobj_attribute lru_gen_enabled_attr =
 	__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store);
+
+static ssize_t lru_gen_boot_compat_show(struct kobject *kobj,
+					struct kobj_attribute *attr, char *buf)
+{
+#ifdef CONFIG_LRU_GEN_ENABLED
+	return scnprintf(buf, PAGE_SIZE,
+		"v12r67_oneui_early_shell_off_ignored=%d mglru=%d "
+		"runtime_off_allowed=1 boot_guard_window_sec=60\n",
+		atomic_read(&lru_gen_early_shell_off_ignored),
+		lru_gen_enabled() ? 1 : 0);
+#else
+	return scnprintf(buf, PAGE_SIZE,
+		"v12r67_oneui_early_shell_off_ignored=0 mglru=%d "
+		"runtime_off_allowed=1 boot_guard_window_sec=0\n",
+		lru_gen_enabled() ? 1 : 0);
+#endif
+}
+static struct kobj_attribute lru_gen_boot_compat_attr =
+	__ATTR_RO(lru_gen_boot_compat);
 
 static ssize_t lru_gen_scan_around_show(struct kobject *kobj,
 				       struct kobj_attribute *attr, char *buf)
@@ -2404,6 +2453,7 @@ static struct kobj_attribute lru_gen_stats_attr =
 
 static struct attribute *lru_gen_attrs[] = {
 	&lru_gen_enabled_attr.attr,
+	&lru_gen_boot_compat_attr.attr,
 	&lru_gen_scan_around_attr.attr,
 	&lru_gen_ptwalk_attr.attr,
 	&lru_gen_diag_attr.attr,
