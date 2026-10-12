@@ -146,7 +146,7 @@ public final class AliceResourceEngine {
         f.setWritable(true,true);
         return f;
     }
-    public static String root(Context ctx,String operation,int number) throws Exception {
+    public static synchronized String root(Context ctx,String operation,int number) throws Exception {
         switch(operation) {
             case "status":case "capability":case "policy-on":case "policy-off":
             case "restore":case "mglru-trial":break;
