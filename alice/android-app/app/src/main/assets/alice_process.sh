@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ALICE V12R63 root process helper. Never kill, stop, freeze or change oom_score_adj.
-set -f
+# Keep /proc/[0-9]* glob expansion enabled for process discovery.
 umask 077
 STATE_DIR=/data/adb/alice
 STATE_FILE=$STATE_DIR/process-policy.state
