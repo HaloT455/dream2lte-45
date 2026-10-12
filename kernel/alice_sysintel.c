@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0
- * ALICE V12R61: built-in kernel telemetry and bounded, opt-in VM policies.
- * No neural model, VPU/GPU MM offload, kernel worker or write to MGLRU.
+ * ALICE V12R66 research boot: built-in telemetry, bounded VM policy.
+ * MGLRU defaults ON through CONFIG_LRU_GEN_ENABLED=y; sysfs still allows OFF.
+ * No model weights/inference in kernel, no GPU/VPU reclaim offload.
  */
 #include <linux/init.h>
 #include <linux/kobject.h>
@@ -69,7 +70,7 @@ static int alice_apply_locked(void)
 static ssize_t version_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "V12R61 ALICE boot-kernel bridge v2\n");
+	return scnprintf(buf, PAGE_SIZE, "V12R66 ALICE boot-kernel bridge v3 MGLRU-DEFAULT-ON RESEARCH\n");
 }
 
 static ssize_t safety_show(struct kobject *kobj,
@@ -77,7 +78,8 @@ static ssize_t safety_show(struct kobject *kobj,
 {
 	return scnprintf(buf, PAGE_SIZE,
 		"mglru_offload=0 mglru_auto_enable=0 gpu_vpu_inference=0 "
-		"policy_requires_root=1 default_stability=1 cpu_clocks_unchanged=1\n");
+		"policy_requires_root=1 default_stability=1 cpu_clocks_unchanged=1 "
+		"mglru_boot_default=1 mglru_auto_rollback=0\n");
 }
 
 static ssize_t capabilities_show(struct kobject *kobj,
@@ -241,7 +243,7 @@ static ssize_t vm_policy_show(struct kobject *kobj,
 	return scnprintf(buf, PAGE_SIZE,
 		"mode=%d enabled=%d current_swappiness=%d "
 		"saved_swappiness=%d last_applied=%d "
-		"mglru_automatic_enable=0\n",
+		"mglru_automatic_enable=0 mglru_boot_default=1\n",
 		mode, enabled, current_swappiness, saved, applied);
 }
 
