@@ -12,7 +12,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Exynos8895 MGLRU process guard. The Qwen3 model cannot send raw shell commands.
  * Root can only call the checked, packaged script with an allowlisted subcommand.
- * WARNING: no userspace watchdog can recover a kernel deadlock.
+ * Root transactions are serialized by the shell lock, but RESTORE must not wait
+ * for an ongoing 8-second trial in Java. WARNING: no userspace watchdog can
+ * recover a kernel deadlock.
  */
 public final class AliceMglruGuard {
     private AliceMglruGuard() {}
@@ -34,7 +36,7 @@ public final class AliceMglruGuard {
         return file;
     }
 
-    public static synchronized String root(Context context, String command) throws Exception {
+    public static String root(Context context, String command) throws Exception {
         if (!"status".equals(command) && !"probe".equals(command)
                 && !"manual".equals(command) && !"auto".equals(command)
                 && !"restore".equals(command))
