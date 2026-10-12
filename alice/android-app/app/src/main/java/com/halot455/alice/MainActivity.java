@@ -29,7 +29,8 @@ import java.util.Locale;
 
 public final class MainActivity extends Activity implements TextToSpeech.OnInitListener {
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private TextView dashboard, reply;
+    private TextView dashboard, reply, processesPanel;
+    private volatile AliceProcessEngine.Snapshot lastProcessSnapshot;
     private TextToSpeech tts;
     private boolean active;
     private static final int SPEECH_REQUEST = 801;
@@ -81,6 +82,16 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
                 "printf 1 > /sys/kernel/alice/policy_enabled"));
         button(root, "Tắt tối ưu và phục hồi VM", v -> confirmRoot("Tắt chính sách VM và phục hồi",
                 "printf 0 > /sys/kernel/alice/policy_enabled"));
+        root.addView(text("ALICE AI quản lý tiến trình (quyền root)", 18, true));
+        processesPanel = text("Chưa quét. ALICE chỉ điều chỉnh ứng dụng nền, không kill tiến trình.", 13, false);
+        processesPanel.setTextIsSelectable(true);
+        root.addView(processesPanel);
+        button(root, "Quét RAM / CPU / tiến trình theo PID", v -> scanProcesses());
+        button(root, "Để Qwen3 phân tích tiến trình thật", v -> analyzeProcesses());
+        button(root, "Chọn ứng dụng nền để giảm ưu tiên CPU", v -> chooseProcessToLimit());
+        button(root, "Bật quản lý tiến trình nền tự động", v -> confirmAutoProcess());
+        button(root, "Dừng quản lý tự động và khôi phục", v -> stopAutoProcess());
+        button(root, "Khôi phục toàn bộ mức ưu tiên", v -> restoreProcesses());
         root.addView(text("Các chức năng thực sự qua ALICE", 18, true));
         root.addView(text(featureMatrix(), 13, false));
         root.addView(text("Qwen3 0.6B - Mô hình AI thật, chạy offline", 18, true));
@@ -196,6 +207,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         return "KERNEL / HOẠT ĐỘNG THẬT\n"
              + "• CPU: theo dõi xung; giữ DVFS V12R5T, không tự ép xung\n"
              + "• RAM + zRAM + PSI: giám sát và phân loại áp lực bằng quy tắc\n"
+             + "• Tiến trình: quét PID/RSS/CPU ticks/oom_adj, AI chẩn đoán, root renice an toàn và rollback\n"
              + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\n"
              + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\n"
              + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\n"
@@ -254,6 +266,124 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         reply.setText("Bạn: "+q+"\nALICE: "+result);
         if(tts!=null) tts.speak(result,TextToSpeech.QUEUE_FLUSH,null,"alice_answer");
     }
+
+    private void scanProcesses() {
+        processesPanel.setText("Đang quét tiến trình qua KernelSU…");
+        new Thread(() -> {
+            AliceProcessEngine.Snapshot snap = AliceProcessEngine.scan(this);
+            lastProcessSnapshot = snap;
+            StringBuilder summary = new StringBuilder();
+            if (snap.error != null) {
+                summary.append("Lỗi root: ").append(snap.error);
+            } else {
+                summary.append("Số ứng dụng/tiến trình đã nhận diện: ")
+                       .append(snap.processes.size()).append("\n");
+                int count = 0;
+                for (AliceProcessEngine.Entry e : snap.processes) {
+                    if (count++ >= 18) break;
+                    summary.append(e.eligible() ? "● " : "○ ")
+                           .append(e.line()).append("\n");
+                }
+                summary.append("● = nền đủ điều kiện; ○ = chỉ giám sát.");
+            }
+            String output = summary.toString();
+            runOnUiThread(() -> processesPanel.setText(output));
+        }, "alice-manual-process-scan").start();
+    }
+
+    private void analyzeProcesses() {
+        processesPanel.setText("Qwen3 đang nhận số liệu tiến trình; không cấp quyền chạy lệnh…");
+        new Thread(() -> {
+            AliceProcessEngine.Snapshot snap = AliceProcessEngine.scan(this);
+            lastProcessSnapshot = snap;
+            String info = AliceProcessEngine.forModel(snap);
+            String telemetry = buildReport() + "\n" + info;
+            runOnUiThread(() -> {
+                if (snap.error != null) {
+                    processesPanel.setText("Không thể quét: " + snap.error);
+                    return;
+                }
+                reply.setText("Đang phân tích tiến trình bằng Qwen3 (không thực thi khuyến nghị)...");
+                AliceOfflineModel.infer(this,
+                    "Phân tích tiến trình RAM/CPU, cảnh báo app chạy nền bất thường. "
+                    + "Ưu tiên ổn định S8+, không đề xuất kill các dịch vụ hệ thống. "
+                    + "Chỉ dựa vào số liệu, nêu bất định.",
+                    telemetry, msg -> runOnUiThread(() -> reply.setText(msg)));
+            });
+        }, "alice-process-inference").start();
+    }
+
+    private void chooseProcessToLimit() {
+        AliceProcessEngine.Snapshot snap = lastProcessSnapshot;
+        if (snap == null || snap.error != null || snap.processes.isEmpty()) {
+            toast("Quét danh sách tiến trình trước");
+            return;
+        }
+        java.util.ArrayList<AliceProcessEngine.Entry> eligible = new java.util.ArrayList<>();
+        for (AliceProcessEngine.Entry e : snap.processes)
+            if (e.eligible()) eligible.add(e);
+        if (eligible.isEmpty()) { toast("Không có app nền đủ điều kiện"); return; }
+        String[] labels = new String[Math.min(eligible.size(), 20)];
+        for (int i = 0; i < labels.length; i++) labels[i] = eligible.get(i).line();
+        new AlertDialog.Builder(this)
+          .setTitle("Chọn app nền cần giảm ưu tiên CPU")
+          .setItems(labels, (dialog, index) -> {
+              AliceProcessEngine.Entry selected = eligible.get(index);
+              new AlertDialog.Builder(this)
+                .setTitle("Áp dụng nice +10 cho PID " + selected.pid + "?")
+                .setMessage(selected.line()
+                    + "\nChỉ thực hiện nếu app vẫn đang cache (oom_adj ≥ 900). "
+                    + "Không kill, không thay MGLRU. Có thể khôi phục.")
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Giảm ưu tiên", (d, w) -> new Thread(() -> {
+                    String result;
+                    try { result = AliceProcessEngine.limit(this, selected); }
+                    catch (Exception ex) { result = ex.getMessage(); }
+                    String msg=result;
+                    runOnUiThread(() -> processesPanel.setText(msg));
+                }, "alice-manual-renice").start()).show();
+          }).show();
+    }
+
+    private void confirmAutoProcess() {
+        new AlertDialog.Builder(this)
+          .setTitle("Bật ALICE Process AI tự động?")
+          .setMessage("ALICE đọc tiến trình mỗi 30 giây. Chỉ khi app bên thứ ba "
+            + "đã nằm trong cache, dùng CPU nhiều và RAM trên 96 MB, "
+            + "ALICE mới giới hạn nice=+10; tối đa 1 app mỗi 2 phút. "
+            + "Không kill ứng dụng, không can thiệp zygote/system_server. "
+            + "Có thông báo chạy nền và nút khôi phục.")
+          .setNegativeButton("Hủy", null)
+          .setPositiveButton("Bật", (d,w) -> {
+              Intent intent = new Intent(this, AliceProcessService.class);
+              intent.setAction(AliceProcessService.START);
+              try {
+                  if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
+                  else startService(intent);
+                  toast("Đã yêu cầu bật ALICE Process AI");
+              } catch (Exception e) { toast("Không thể bật giám sát: " + e.getMessage()); }
+          }).show();
+    }
+
+    private void stopAutoProcess() {
+        Intent intent = new Intent(this, AliceProcessService.class);
+        try {
+            stopService(intent);
+            toast("Đã yêu cầu dừng; ALICE sẽ khôi phục nice");
+        } catch (Exception e) { toast("Không dừng được: " + e.getMessage()); }
+        restoreProcesses();
+    }
+
+    private void restoreProcesses() {
+        new Thread(() -> {
+            String result;
+            try { result = AliceProcessEngine.restoreAll(this); }
+            catch (Exception e) { result = "Lỗi phục hồi: " + e.getMessage(); }
+            String text=result;
+            runOnUiThread(() -> processesPanel.setText(text));
+        }, "alice-restore-processes").start();
+    }
+
     private void askQwenDialog() {
         EditText input = new EditText(this);
         input.setHint("Hỏi Qwen3 offline về RAM, CPU, GPU, MGLRU…");
