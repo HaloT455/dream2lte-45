@@ -132,6 +132,8 @@ struct psi_group {
 	u64 avg_last_update;
 	u64 avg_next_update;
 	unsigned long avg[NR_PSI_STATES - 1][3];
+	/* Activity sampled by readers, pending processing by the clock worker. */
+	u32 pending_states;
 
 	/* Configured polling triggers */
 	struct list_head triggers;

@@ -69,7 +69,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         root.setBackgroundColor(Color.WHITE);
         sc.addView(root); setContentView(sc);
         root.addView(text("ALICE • System Intelligence + Qwen3", 24, true));
-        root.addView(text("Exynos 8895 | V12R61 boot kernel + Qwen3 AI offline", 13, false));
+        root.addView(text("Exynos 8895 | Thông số kernel hiện tại + Qwen3 AI offline", 13, false));
         dashboard = text("Reading telemetry…", 14, false);
         dashboard.setTextIsSelectable(true);
         root.addView(dashboard);
@@ -89,6 +89,9 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         button(root, "Dừng tối ưu tài nguyên, khôi phục VM", v -> stopResource());
         button(root, "Xem khả năng điều khiển LMKD/MGLRU", v -> runResourceAction("status",0));
         button(root, "Thử LMKD ngắn hạn (chỉ ROM hỗ trợ)", v -> confirmLmkdTrial());
+        button(root, "Xem ngưỡng low-swap Samsung", v -> runResourceAction("low-swap-status",0));
+        button(root, "Sửa mốc swap Samsung theo zRAM thực tế", v -> runResourceAction("low-swap-apply",0));
+        button(root, "Khôi phục cấu hình low-swap ban đầu", v -> runResourceAction("low-swap-restore",0));
         button(root, "ALICE kiểm tra MGLRU Guard", v -> runMglruAction("status"));
         button(root, "ALICE tự điều khiển MGLRU (thử nghiệm)", v -> confirmMglruAuto());
         button(root, "Thử MGLRU 8 giây có kiểm tra nhiệt", v -> confirmMglruTrial());
@@ -128,7 +131,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
             i.putExtra(Intent.EXTRA_TEXT, buildReport());
             startActivity(Intent.createChooser(i,"Chia sẻ báo cáo ALICE"));
         });
-        root.addView(text("An toàn: MGLRU mặc định OFF. Ứng dụng không tự bật MGLRU, ép xung, "
+        root.addView(text("Trạng thái MGLRU được đọc từ kernel. Ứng dụng không tự bật MGLRU, ép xung, "
                 + "tắt thermal/SELinux hoặc thay DTB. GPU/VPU không thể thu hồi trang RAM thay kernel CPU.",12,false));
         tts = new TextToSpeech(this, this);
     }
@@ -221,7 +224,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
              + "• CPU: theo dõi xung; giữ DVFS V12R5T, không tự ép xung\n"
              + "• RAM + zRAM + PSI: giám sát và phân loại áp lực bằng quy tắc\n"
              + "• Tiến trình: quét PID/RSS/CPU ticks/oom_adj, AI chẩn đoán, root renice an toàn và rollback\n"
-             + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\n"
+             + "• MGLRU: theo dõi trạng thái thực và reclaim/no_progress của kernel\n"
              + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\n"
              + "• Resource Intelligence: đo PSI, zRAM, refault; chọn mode cân bằng có hysteresis\n"
              + "• LMKD: giám sát và thử đổi thrashing_limit 20 giây khi ROM cho phép\n"

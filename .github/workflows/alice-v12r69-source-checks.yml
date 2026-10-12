@@ -1,0 +1,40 @@
+name: V12R69 source and host regression checks
+
+on:
+  push:
+    branches:
+      - agent/v12r69-systemui-mglru-lmkd-stability
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scheduler, MGLRU and memory-helper regression checks
+        run: |
+          set -eu
+          python3 scripts/test_v12r69_energy_step_worker.py
+          python3 scripts/test_v12r69_energy_step_runtime.py
+          python3 scripts/test_v12r69_energy_step_tunables.py
+          python3 scripts/test_v12r69_mglru_audit.py
+          python3 scripts/test_v12r69_mglru_switch_runtime.py
+          python3 scripts/test_v12r69_mglru_reclaim_runtime.py
+          python3 scripts/test_v12r69_mglru_pte_runtime.py
+          python3 scripts/test_v12r69_memory_helper.py
+          python3 scripts/test_v12r69_psi_runtime.py
+          python3 scripts/test_v12r69_low_swap.py
+          python3 scripts/test_mglru_transition.py
+          python3 scripts/test_mglru_accounting_audit.py
+          python3 scripts/test_mglru_reclaim_stability.py
+          python3 scripts/test_v12r5t_mglru_aging_lmkd.py
+          python3 scripts/test_v12r5u_mglru_live_generation.py
+          python3 scripts/test_v12r5v_mglru_reclaim_guard.py
+          python3 scripts/test_v12r67_oneui_boot_compat.py
+          python3 scripts/test_v12r68_energy_step.py
+          python3 scripts/test_v12r69_postboot_guard.py
+          sh -n alice/android-app/app/src/main/assets/alice_memory.sh
+          sh -n scripts/alice-v12r69-snapshot.sh
+          sh -n scripts/alice-v12r69-mglru-postboot.sh
+          sh -n scripts/alice-v12r69-low-swap.sh
+          git diff --check

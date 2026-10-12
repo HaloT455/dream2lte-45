@@ -58,6 +58,7 @@ struct esgov_policy {
 	struct kthread_worker worker;
 	struct task_struct *thread;
 	bool work_in_progress;
+	bool stopping;
 
 	bool need_freq_update;
 };
@@ -123,6 +124,9 @@ static void esgov_update_commit(struct esgov_policy *sg_policy, u64 time,
 				unsigned int next_freq)
 {
 	struct cpufreq_policy *policy = sg_policy->policy;
+
+	if (unlikely(sg_policy->stopping))
+		return;
 
 	if (esgov_up_down_rate_limit(sg_policy, time, next_freq)) {
 		/* Reset cached freq as next_freq isn't changed */
@@ -339,8 +343,10 @@ static void esgov_update_single(struct update_util_data *hook, u64 time,
 	esgov_set_iowait_boost(sg_cpu, time, flags);
 	sg_cpu->last_update = time;
 
+	/* Protect the complete policy snapshot, not just the final commit. */
+	raw_spin_lock(&sg_policy->update_lock);
 	if (!esgov_should_update_freq(sg_policy, time))
-		return;
+		goto unlock;
 
 	busy = esgov_cpu_is_busy(sg_cpu);
 
@@ -361,14 +367,9 @@ static void esgov_update_single(struct update_util_data *hook, u64 time,
 			sg_policy->cached_raw_freq = 0;
 		}
 	}
-	/* Serialize single-CPU slow-path updates with the worker too. */
-	if (policy->fast_switch_enabled) {
-		esgov_update_commit(sg_policy, time, next_f);
-	} else {
-		raw_spin_lock(&sg_policy->update_lock);
-		esgov_update_commit(sg_policy, time, next_f);
-		raw_spin_unlock(&sg_policy->update_lock);
-	}
+	esgov_update_commit(sg_policy, time, next_f);
+unlock:
+	raw_spin_unlock(&sg_policy->update_lock);
 }
 
 static unsigned int esgov_next_freq_shared(struct esgov_cpu *sg_cpu, u64 time)
@@ -449,6 +450,7 @@ static void esgov_work(struct kthread_work *work)
 	unsigned int freq;
 	unsigned long flags;
 	int attempt;
+	int ret;
 
 	/*
 	 * Keep work_in_progress set until the current target completes.
@@ -459,25 +461,43 @@ static void esgov_work(struct kthread_work *work)
 	mutex_lock(&sg_policy->work_lock);
 	for (attempt = 0; attempt < 2; attempt++) {
 		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		if (sg_policy->stopping) {
+			sg_policy->work_in_progress = false;
+			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+			break;
+		}
 		freq = sg_policy->next_freq;
 		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
-		__cpufreq_driver_target(sg_policy->policy, freq,
+		ret = __cpufreq_driver_target(sg_policy->policy, freq,
 					CPUFREQ_RELATION_L);
 
 		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		if (sg_policy->next_freq == freq) {
+		if (ret) {
+			/* A rejected target was not applied. Invalidate the cache
+			 * so a later scheduler update can retry even at identical
+			 * utilization. Do not spin on a failing driver here.
+			 */
+			sg_policy->next_freq = 0;
+			sg_policy->cached_raw_freq = 0;
+			sg_policy->need_freq_update = true;
+			sg_policy->work_in_progress = false;
+			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+			break;
+		}
+		if (sg_policy->stopping || sg_policy->next_freq == freq) {
 			sg_policy->work_in_progress = false;
 			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 			break;
 		}
 		if (attempt == 1) {
 			/*
-			 * The currently executing kthread_work has already
-			 * left its queue.  The IRQ work will enqueue it again
-			 * when another frequency target is pending.
+			 * Requeue directly on this worker. Its executing work is
+			 * off the pending list, and queue_kthread_work() serializes
+			 * cancellation. An IRQ queued here could otherwise outlive
+			 * esgov_stop()'s irq_work_sync() and access a freed policy.
 			 */
-			irq_work_queue(&sg_policy->irq_work);
+			queue_kthread_work(&sg_policy->worker, &sg_policy->work);
 		}
 		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
@@ -487,10 +507,14 @@ static void esgov_work(struct kthread_work *work)
 static void esgov_irq_work(struct irq_work *irq_work)
 {
 	struct esgov_policy *sg_policy;
+	unsigned long flags;
 
 	sg_policy = container_of(irq_work, struct esgov_policy, irq_work);
 
-	queue_kthread_work(&sg_policy->worker, &sg_policy->work);
+	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+	if (!sg_policy->stopping)
+		queue_kthread_work(&sg_policy->worker, &sg_policy->work);
+	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 }
 
 /************************** sysfs interface ************************/
@@ -503,14 +527,11 @@ static inline struct esgov_tunables *to_esgov_tunables(struct gov_attr_set *attr
 	return container_of(attr_set, struct esgov_tunables, attr_set);
 }
 
-static DEFINE_MUTEX(min_rate_lock);
-
 static void update_min_rate_limit_us(struct esgov_policy *sg_policy)
 {
-	mutex_lock(&min_rate_lock);
+	/* Caller holds update_lock, or is starting before hooks are installed. */
 	sg_policy->min_rate_limit_ns = min(sg_policy->up_rate_delay_ns,
 					   sg_policy->down_rate_delay_ns);
-	mutex_unlock(&min_rate_lock);
 }
 
 static ssize_t up_rate_limit_us_show(struct gov_attr_set *attr_set, char *buf)
@@ -533,6 +554,7 @@ static ssize_t up_rate_limit_us_store(struct gov_attr_set *attr_set,
 	struct esgov_tunables *tunables = to_esgov_tunables(attr_set);
 	struct esgov_policy *sg_policy;
 	unsigned int rate_limit_us;
+	unsigned long flags;
 
 	if (kstrtouint(buf, 10, &rate_limit_us))
 		return -EINVAL;
@@ -540,8 +562,10 @@ static ssize_t up_rate_limit_us_store(struct gov_attr_set *attr_set,
 	tunables->up_rate_limit_us = rate_limit_us;
 
 	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
-		sg_policy->up_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		sg_policy->up_rate_delay_ns = (u64)rate_limit_us * NSEC_PER_USEC;
 		update_min_rate_limit_us(sg_policy);
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
 
 	return count;
@@ -553,6 +577,7 @@ static ssize_t down_rate_limit_us_store(struct gov_attr_set *attr_set,
 	struct esgov_tunables *tunables = to_esgov_tunables(attr_set);
 	struct esgov_policy *sg_policy;
 	unsigned int rate_limit_us;
+	unsigned long flags;
 
 	if (kstrtouint(buf, 10, &rate_limit_us))
 		return -EINVAL;
@@ -560,8 +585,10 @@ static ssize_t down_rate_limit_us_store(struct gov_attr_set *attr_set,
 	tunables->down_rate_limit_us = rate_limit_us;
 
 	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
-		sg_policy->down_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		sg_policy->down_rate_delay_ns = (u64)rate_limit_us * NSEC_PER_USEC;
 		update_min_rate_limit_us(sg_policy);
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 	}
 
 	return count;
@@ -767,8 +794,8 @@ static int esgov_init(struct cpufreq_policy *policy)
 		 * Exynos8895 does not publish separate transition delays.  Scaling
 		 * the hardware latency by 1000 delayed both directions by about
 		 * 100 ms, which is visible as launch and scrolling stutter.  Use a
-		 * short 2.5 ms response window, then release a stale high OPP after
-		 * 8 ms.  This keeps UI bursts responsive without pinning the Exynos M2
+		 * short 3 ms response window, then release a stale high OPP after
+		 * 12 ms. This keeps UI bursts responsive without pinning the Exynos M2
 		 * cluster at an overclocked OPP between frames.
 		 */
 		tunables->up_rate_limit_us = ESGOV_DEFAULT_UP_RATE_LIMIT_US;
@@ -796,11 +823,10 @@ fail:
 	esgov_tunables_free(tunables);
 
 stop_kthread:
+	mutex_unlock(&global_tunables_lock);
 	esgov_kthread_stop(sg_policy);
 
 free_sg_policy:
-	mutex_unlock(&global_tunables_lock);
-
 	esgov_policy_free(sg_policy);
 
 disable_fast_switch:
@@ -840,13 +866,14 @@ static int esgov_start(struct cpufreq_policy *policy)
 	unsigned int cpu;
 
 	sg_policy->up_rate_delay_ns =
-		sg_policy->tunables->up_rate_limit_us * NSEC_PER_USEC;
+		(u64)sg_policy->tunables->up_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->down_rate_delay_ns =
-		sg_policy->tunables->down_rate_limit_us * NSEC_PER_USEC;
+		(u64)sg_policy->tunables->down_rate_limit_us * NSEC_PER_USEC;
 	update_min_rate_limit_us(sg_policy);
 	sg_policy->last_freq_update_time = 0;
 	sg_policy->next_freq = 0;
 	sg_policy->work_in_progress = false;
+	sg_policy->stopping = false;
 	sg_policy->need_freq_update = false;
 	sg_policy->cached_raw_freq = 0;
 
@@ -874,11 +901,17 @@ static int esgov_stop(struct cpufreq_policy *policy)
 {
 	struct esgov_policy *sg_policy = policy->governor_data;
 	unsigned int cpu;
+	unsigned long flags;
 
 	for_each_cpu(cpu, policy->cpus)
 		cpufreq_remove_update_util_hook(cpu);
 
 	synchronize_sched();
+
+	/* Block worker replay before draining IRQ work and cancelling work. */
+	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+	sg_policy->stopping = true;
+	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
 	if (!policy->fast_switch_enabled) {
 		irq_work_sync(&sg_policy->irq_work);
@@ -890,6 +923,7 @@ static int esgov_stop(struct cpufreq_policy *policy)
 static int esgov_limits(struct cpufreq_policy *policy)
 {
 	struct esgov_policy *sg_policy = policy->governor_data;
+	unsigned long flags;
 
 	if (!policy->fast_switch_enabled) {
 		mutex_lock(&sg_policy->work_lock);
@@ -897,7 +931,10 @@ static int esgov_limits(struct cpufreq_policy *policy)
 		mutex_unlock(&sg_policy->work_lock);
 	}
 
+	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
 	sg_policy->need_freq_update = true;
+	sg_policy->cached_raw_freq = 0;
+	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
 	return 0;
 }

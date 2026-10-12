@@ -2282,8 +2282,11 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 			    enable ? "ON" : "OFF",
 			    task_pid_nr(current), task_ppid_nr(current),
 			    current->comm, lru_gen_enabled() ? 1 : 0);
-	if (enable == lru_gen_enabled())
-		return count;
+	/*
+	 * Do not skip a request based on the unlocked static key. During list
+	 * conversion it still reports the previous state, so an opposite write
+	 * could be lost. lru_gen_set_state() checks under lru_gen_state_mutex.
+	 */
 
 #ifdef CONFIG_LRU_GEN_ENABLED
 	/*
@@ -2291,7 +2294,7 @@ static ssize_t lru_gen_enabled_store(struct kobject *kobj,
 	 * The boot guard is one-shot and limited to the first 60 seconds.
 	 * Android's init (PID 1) property=none writes must always turn OFF.
 	 */
-	if (!enable &&
+	if (!enable && lru_gen_enabled() &&
 	    time_before(jiffies, msecs_to_jiffies(60000)) &&
 	    !strcmp(current->comm, "sh") &&
 	    task_ppid_nr(current) == 1 &&
@@ -3291,7 +3294,13 @@ static int lru_gen_pte_entry(pte_t *ptep, unsigned long addr,
 		return 0;
 	}
 
-	page = compound_head(pfn_to_page(pfn));
+	/* Reject zero/special mappings before treating their PFN as an LRU page. */
+	page = vm_normal_page(walk->vma, addr, pte);
+	if (!page) {
+		args->mm_stats[MM_LEAF_HOLE]++;
+		return 0;
+	}
+	page = compound_head(page);
 	zone = page_zone(page);
 	if (zone != lruvec_zone(lruvec)) {
 		args->mm_stats[MM_LEAF_OTHER_NODE]++;
@@ -3303,30 +3312,58 @@ static int lru_gen_pte_entry(pte_t *ptep, unsigned long addr,
 		return 0;
 	}
 
-	if (!ptep_test_and_clear_young(walk->vma, addr, ptep)) {
-		put_page(page);
-		return 0;
-	}
-
 	if (pte_dirty(pte) && !PageDirty(page)) {
 		set_page_dirty(page);
 		args->mm_stats[MM_LEAF_DIRTY]++;
 	}
 
 	spin_lock_irqsave(&zone->lru_lock, flags);
+	/* OFF migration can finish while the walker waits for this lock.
+	 * Preserve the PTE access bit for classic LRU or another memcg.
+	 */
+	if (!lru_gen_enabled() ||
+	    !lruvec->evictable.enabled[page_is_file_cache(page)] ||
+	    !PageLRU(page) || PageUnevictable(page) || page_lru_gen(page) < 0 ||
+	    !lru_gen_page_memcg_matches(page, args->memcg))
+		goto unlock_pte;
+	if (!ptep_test_and_clear_young(walk->vma, addr, ptep))
+		goto unlock_pte;
+
 	/* V12R5U: max_seq may advance while the mmap walk sleeps.  Pick the
 	 * youngest generation under the same zone lock that protects lists,
 	 * so a sampled page cannot enter an already-reused generation slot.
 	 */
 	new_gen = lru_gen_from_seq(READ_ONCE(lruvec->evictable.max_seq));
-	if (lru_gen_page_memcg_matches(page, args->memcg) &&
-	    lru_gen_promote_accessed_locked(page, lruvec, new_gen))
+	if (lru_gen_promote_accessed_locked(page, lruvec, new_gen))
 		args->mm_stats[MM_LEAF_YOUNG]++;
 	else
 		args->mm_stats[MM_LEAF_OTHER_MEMCG]++;
+unlock_pte:
 	spin_unlock_irqrestore(&zone->lru_lock, flags);
 
 	put_page(page);
+	return 0;
+}
+
+static int lru_gen_pmd_entry(pmd_t *pmd, unsigned long addr,
+			     unsigned long end, struct mm_walk *walk)
+{
+	spinlock_t *ptl;
+	pte_t *ptep, *first;
+
+	/* Sampling does not split huge mappings; rmap supplies their feedback. */
+	if (pmd_trans_unstable(pmd))
+		return 0;
+
+	/* This tree's generic ->pte_entry walk does not hold the PTE lock.
+	 * Lock the table so PFN lookup, page pinning and young clearing refer
+	 * to the same mapping while faults/reclaim modify other PTEs.
+	 */
+	first = ptep = pte_offset_map_lock(walk->mm, pmd, addr, &ptl);
+	for (; addr < end; ptep++, addr += PAGE_SIZE)
+		lru_gen_pte_entry(ptep, addr, addr + PAGE_SIZE, walk);
+	pte_unmap_unlock(first, ptl);
+
 	return 0;
 }
 
@@ -3334,7 +3371,7 @@ static void lru_gen_walk_mm_legacy(struct mm_walk_args *args,
 				   struct mm_struct *mm)
 {
 	struct mm_walk walk = {
-		.pte_entry = lru_gen_pte_entry,
+		.pmd_entry = lru_gen_pmd_entry,
 		.test_walk = lru_gen_test_walk,
 		.mm = mm,
 		.private = args,
@@ -3501,10 +3538,16 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 		if (!pfn_valid(pfn))
 			continue;
 
-		page = compound_head(pfn_to_page(pfn));
+		page = vm_normal_page(pvmw->vma, addr, entry);
+		if (!page)
+			continue;
+		page = compound_head(page);
 		if (page_zone(page) != zone)
 			continue;
 		if (!lru_gen_page_memcg_matches(page, memcg))
+			continue;
+		if (!lruvec->evictable.enabled[page_is_file_cache(page)] ||
+		    !PageLRU(page) || PageUnevictable(page) || page_lru_gen(page) < 0)
 			continue;
 
 		if (!ptep_test_and_clear_young(pvmw->vma, addr, pte + i))
@@ -3513,7 +3556,8 @@ void lru_gen_scan_around(struct page_vma_mapped_walk *pvmw)
 		/*
 		 * Never call set_page_dirty() while holding the PTE lock and
 		 * zone->lru_lock.  Record the dirty PTE and propagate it only
-		 * after all spinlocks are dropped, matching the donor ordering.
+		 * after zone->lru_lock is dropped. The caller's PTE lock still
+		 * protects the mapping used by the deferred dirty update.
 		 */
 		if (pte_dirty(entry) && !PageDirty(page) &&
 		    i < SWAP_CLUSTER_MAX * 2)
@@ -3917,6 +3961,10 @@ static bool lru_gen_advance_min_locked(struct lruvec *lruvec, int type)
 	unsigned long seq = lrugen->min_seq[type];
 
 	lockdep_assert_held(&lruvec_zone(lruvec)->lru_lock);
+
+	/* OFF conversion drains lists before flipping the global static key. */
+	if (!lrugen->enabled[type])
+		return false;
 
 	/*
 	 * Samsung 4.4 still has legacy VM/LMKD consumers of Active/Inactive
@@ -4476,7 +4524,10 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 * Returning 0 eligible pages lets the caller retry other memcgs/zones
 	 * and avoids starving Samsung's userspace watchdog.
 	 */
-	if (time_before(jiffies,
+	/* A background retry delay must not block an allocating task from
+	 * reclaiming pages that have become eligible since the failed scan.
+	 */
+	if (current_is_kswapd() && time_before(jiffies,
 			READ_ONCE(lruvec->evictable.reclaim_backoff_until))) {
 		*lru_pages = 0;
 		return;
@@ -4534,7 +4585,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 	 * reclaim once an earlier call had reached the target, even with the
 	 * zone still below its low watermark.  Use the delta from entry instead.
 	 */
-	while (budget - consumed >= SWAP_CLUSTER_MAX &&
+	while (consumed < budget && budget - consumed >= SWAP_CLUSTER_MAX &&
 	       sc->nr_reclaimed - start_reclaimed < sc->nr_to_reclaim) {
 		unsigned long before_reclaimed = sc->nr_reclaimed;
 		unsigned long before_scanned = sc->nr_scanned;
@@ -4556,8 +4607,13 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 					      batch_budget);
 		}
 
-		consumed += max(sc->nr_scanned - before_scanned,
-				(unsigned long)SWAP_CLUSTER_MAX);
+		/* Isolation counts skipped pages and can overshoot a batch with
+		 * a compound page. Saturate before the next unsigned subtraction;
+		 * wrapping budget - consumed otherwise defeats the work bound.
+		 */
+		consumed += min(budget - consumed,
+				max(sc->nr_scanned - before_scanned,
+				    (unsigned long)SWAP_CLUSTER_MAX));
 
 		/*
 		 * If both types rejected a full batch, do not spin in direct
@@ -4578,7 +4634,7 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 		spin_unlock_irq(&zone->lru_lock);
 
 		if (lru_gen_needs_new_generation(lruvec))
-		lru_gen_inc_max_seq_legacy(lruvec);
+			lru_gen_inc_max_seq_legacy(lruvec);
 
 		cond_resched();
 	}

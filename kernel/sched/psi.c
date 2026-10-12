@@ -239,7 +239,9 @@ static void group_init(struct psi_group *group)
 
 	for_each_possible_cpu(cpu)
 		seqcount_init(&per_cpu_ptr(group->pcpu, cpu)->seq);
-	group->avg_next_update = sched_clock() + psi_period;
+	group->avg_last_update = sched_clock();
+	group->avg_next_update = group->avg_last_update + psi_period;
+	group->pending_states = 0;
 	atomic_set(&group->polling, 0);
 	INIT_DELAYED_WORK(&group->clock_work, psi_update_work);
 	mutex_init(&group->update_lock);
@@ -392,6 +394,9 @@ static void collect_percpu_times(struct psi_group *group, u32 *pchanged_states)
 		changed_states |= cpu_changed_states;
 
 		nonidle = nsecs_to_jiffies(times[PSI_NONIDLE]);
+		/* Frequent readers must not discard an entire sub-jiffy sample. */
+		if (times[PSI_NONIDLE] && !nonidle)
+			nonidle = 1;
 		nonidle_total += nonidle;
 
 		for (s = 0; s < PSI_NONIDLE; s++)
@@ -414,8 +419,17 @@ static void collect_percpu_times(struct psi_group *group, u32 *pchanged_states)
 	for (s = 0; s < NR_PSI_STATES - 1; s++)
 		group->total[s] += div_u64(deltas[s], max(nonidle_total, 1UL));
 
-	if (pchanged_states)
-		*pchanged_states = changed_states;
+	/* Readers share these buckets with the worker in this 4.4 backport.
+	 * Preserve sampled activity until the worker has processed it, rather
+	 * than allowing a /proc/pressure read to consume its notification.
+	 * Both collection paths hold group->update_lock.
+	 */
+	if (pchanged_states) {
+		*pchanged_states = changed_states | group->pending_states;
+		group->pending_states = 0;
+	} else {
+		group->pending_states |= changed_states;
+	}
 }
 
 static u64 update_averages(struct psi_group *group, u64 now)
@@ -427,6 +441,8 @@ static u64 update_averages(struct psi_group *group, u64 now)
 
 	/* avgX= */
 	expires = group->avg_next_update;
+	if (now < expires)
+		return expires;
 	if (now - expires > psi_period)
 		missed_periods = div_u64(now - expires, psi_period);
 
@@ -442,7 +458,7 @@ static u64 update_averages(struct psi_group *group, u64 now)
 	group->avg_last_update = now;
 
 	for (s = 0; s < NR_PSI_STATES - 1; s++) {
-		u32 sample;
+		u64 sample;
 
 		sample = group->total[s] - group->avg_total[s];
 		/*
@@ -722,8 +738,9 @@ retry:
 		/* Calculate closest update time */
 		next_update = min(group->polling_next_update,
 					group->avg_next_update);
-		mod_delayed_work(system_wq, dwork, nsecs_to_jiffies(
-				next_update - now) + 1);
+		/* An overdue deadline must run next tick, not wrap to a huge delay. */
+		mod_delayed_work(system_wq, dwork, next_update > now ?
+				nsecs_to_jiffies(next_update - now) + 1 : 1);
 		if (!polling) {
 			/*
 			 * We might have overwritten an immediate update
@@ -986,15 +1003,17 @@ void psi_memstall_leave(unsigned long *flags)
 int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 {
 	int full;
+	u64 now;
 
 	if (static_branch_likely(&psi_disabled))
 		return -EOPNOTSUPP;
 
 	/* Update averages before reporting them */
 	mutex_lock(&group->update_lock);
+	now = sched_clock();
 	collect_percpu_times(group, NULL);
-	update_averages(group, sched_clock());
-	mutex_unlock(&group->update_lock);
+	if (now >= group->avg_next_update)
+		group->avg_next_update = update_averages(group, now);
 
 	for (full = 0; full < 2 - (res == PSI_CPU); full++) {
 		unsigned long avg[3];
@@ -1012,6 +1031,7 @@ int psi_show(struct seq_file *m, struct psi_group *group, enum psi_res res)
 			   LOAD_INT(avg[2]), LOAD_FRAC(avg[2]),
 			   total);
 	}
+	mutex_unlock(&group->update_lock);
 
 	return 0;
 }
@@ -1083,13 +1103,15 @@ struct psi_trigger *psi_trigger_create(struct psi_group *group,
 	t->state = state;
 	t->threshold = threshold_us * NSEC_PER_USEC;
 	t->win.size = window_us * NSEC_PER_USEC;
-	window_reset(&t->win, 0, 0, 0);
 
 	t->event = 0;
 	t->last_event_time = 0;
 	init_waitqueue_head(&t->event_wait);
 
 	mutex_lock(&group->update_lock);
+	/* A new monitor must not inherit all pressure accumulated since boot. */
+	collect_percpu_times(group, NULL);
+	window_reset(&t->win, sched_clock(), group->total[state], 0);
 
 	list_add(&t->node, &group->triggers);
 	group->trigger_min_period = min(group->trigger_min_period,
@@ -1163,11 +1185,14 @@ static ssize_t psi_write(struct file *file, const char __user *user_buf,
 	if (static_branch_likely(&psi_disabled))
 		return -EOPNOTSUPP;
 
-	buf_size = min(nbytes, (sizeof(buf) - 1));
+	/* Leave space for our terminator; do not overwrite a payload digit. */
+	if (!nbytes || nbytes >= sizeof(buf))
+		return -EINVAL;
+	buf_size = nbytes;
 	if (copy_from_user(buf, user_buf, buf_size))
 		return -EFAULT;
 
-	buf[buf_size - 1] = '\0';
+	buf[buf_size] = '\0';
 
 	new = psi_trigger_create(&psi_system, buf, nbytes, res);
 	if (IS_ERR(new))

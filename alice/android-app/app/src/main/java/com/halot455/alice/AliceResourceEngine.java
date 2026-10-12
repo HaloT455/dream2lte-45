@@ -130,10 +130,10 @@ public final class AliceResourceEngine {
             "áp lực thấp: giữ governor/thermal và LMKD Android",false);
     }
 
-    private static synchronized File helper(Context ctx) throws Exception {
-        File f = new File(ctx.getFilesDir(),"alice_memory.sh");
-        File tmp = new File(ctx.getFilesDir(),"alice_memory.tmp");
-        try(InputStream input=ctx.getAssets().open("alice_memory.sh");
+    private static synchronized File helper(Context ctx,String asset) throws Exception {
+        File f = new File(ctx.getFilesDir(),asset);
+        File tmp = new File(ctx.getFilesDir(),asset+".tmp");
+        try(InputStream input=ctx.getAssets().open(asset);
             FileOutputStream out=new FileOutputStream(tmp,false)){
             byte[] buf=new byte[8192];int n;
             while((n=input.read(buf))!=-1)out.write(buf,0,n);
@@ -150,6 +150,7 @@ public final class AliceResourceEngine {
         switch(operation) {
             case "status":case "capability":case "policy-on":case "policy-off":
             case "restore":case "mglru-trial":break;
+            case "low-swap-status":case "low-swap-apply":case "low-swap-restore":break;
             case "mode":
                 if(number<0||number>5) throw new Exception("Profile không hợp lệ");
                 break;
@@ -158,14 +159,17 @@ public final class AliceResourceEngine {
                 break;
             default: throw new Exception("ALICE từ chối lệnh ngoài danh sách");
         }
-        String path=helper(ctx).getAbsolutePath();
+        boolean lowSwap=operation.startsWith("low-swap-");
+        String asset=lowSwap?"alice_low_swap.sh":"alice_memory.sh";
+        String action=lowSwap?operation.substring("low-swap-".length()):operation;
+        String path=helper(ctx,asset).getAbsolutePath();
         if(!path.matches("/data/user(/[0-9]+)?/.*|/data/data/.*"))
             throw new SecurityException("Helper path invalid");
-        String cmd="/system/bin/sh "+path+" "+operation;
+        String cmd="/system/bin/sh "+path+" "+action;
         if(operation.equals("mode")||operation.equals("lmkd-trial"))
             cmd+=" "+number;
         Process p = new ProcessBuilder("su","-c",cmd).redirectErrorStream(true).start();
-        int seconds=operation.equals("lmkd-trial")?38:
+        int seconds=lowSwap?40:operation.equals("lmkd-trial")?38:
             (operation.equals("mglru-trial")?27:15);
         if(!p.waitFor(seconds,TimeUnit.SECONDS)){
             p.destroyForcibly();
