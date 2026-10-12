@@ -68,16 +68,20 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         root.setBackgroundColor(Color.WHITE);
         sc.addView(root); setContentView(sc);
         root.addView(text("ALICE  •  System Intelligence", 24, true));
-        root.addView(text("Exynos 8895  |  V12R60 Kernel Bridge", 13, false));
+        root.addView(text("Exynos 8895  |  V12R61 ALICE trong boot.img", 13, false));
         dashboard = text("Reading telemetry…", 14, false);
         dashboard.setTextIsSelectable(true);
         root.addView(dashboard);
         button(root, "Làm mới thông số", v -> dashboard.setText(buildReport()));
-        root.addView(text("Chế độ hệ thống (cần module KernelSU)", 18, true));
+        root.addView(text("Chế độ trực tiếp trong kernel (root KernelSU)", 18, true));
         final String[] modes = {"balanced","performance","gaming","battery","stability","research"};
         for (String mode : modes) button(root, "Chọn " + mode, v -> confirmMode(mode));
-        button(root, "Tắt chính sách ghi hệ thống", v -> confirmRoot("Tắt policy và khôi phục",
-                "printf 0 > /data/adb/alice/state/policy_enabled"));
+        button(root, "Bật tối ưu VM có giới hạn (thủ công)", v -> confirmRoot("Bật vm.swappiness",
+                "printf 1 > /sys/kernel/alice/policy_enabled"));
+        button(root, "Tắt tối ưu và phục hồi VM", v -> confirmRoot("Tắt chính sách VM và phục hồi",
+                "printf 0 > /sys/kernel/alice/policy_enabled"));
+        root.addView(text("Các chức năng thực sự qua ALICE", 18, true));
+        root.addView(text(featureMatrix(), 13, false));
         root.addView(text("ALICE Trợ lý chẩn đoán", 18, true));
         reply = text("ALICE offline phân tích theo quy tắc, không phải LLM.",14,false);
         root.addView(reply);
@@ -93,7 +97,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
             i.putExtra(Intent.EXTRA_TEXT, buildReport());
             startActivity(Intent.createChooser(i,"Chia sẻ báo cáo ALICE"));
         });
-        root.addView(text("An toàn: MGLRU mặc định OFF. Ứng dụng không tự bật MGLRU, ép xung, "
+        root.addView(text("An toàn: MGLRU mặc định OFF. Ứng dụng không tự bật MGLRU, ép xung, 
                 + "tắt thermal/SELinux hoặc thay DTB. GPU/VPU không thể thu hồi trang RAM thay kernel CPU.",12,false));
         tts = new TextToSpeech(this, this);
     }
@@ -128,6 +132,9 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         if (bridge) {
             s.append(read("/sys/kernel/alice/version",150)).append('\n');
             s.append("Reclaim: ").append(read("/sys/kernel/alice/mm_reclaim",700)).append('\n');
+            s.append("Phân tích: ").append(read("/sys/kernel/alice/assessment",400)).append('\n');
+            s.append("Năng lực: ").append(read("/sys/kernel/alice/capabilities",500)).append('\n');
+            s.append("Cấu hình: ").append(read("/sys/kernel/alice/vm_policy",350)).append('\n');
             s.append("Safe: ").append(read("/sys/kernel/alice/safety",200)).append('\n');
         }
         s.append("MGLRU: ").append(read("/sys/kernel/mm/lru_gen/enabled",60)).append('\n');
@@ -140,15 +147,35 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         s.append("Kernel: ").append(read("/proc/sys/kernel/osrelease",140));
         return s.toString();
     }
+
+    private String featureMatrix() {
+        return "KERNEL / HOẠT ĐỘNG THẬT\\n"
+             + "• CPU: theo dõi xung; giữ DVFS V12R5T, không tự ép xung\\n"
+             + "• RAM + zRAM + PSI: giám sát và phân loại áp lực bằng quy tắc\\n"
+             + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\\n"
+             + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\\n"
+             + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\\n"
+             + "• VPU: driver được giữ; chưa chạy graph inference\\n"
+             + "• Nhiệt/pin/mạng/I-O: chỉ đọc chỉ số Android cho phép\\n"
+             + "• Log và chẩn đoán: phân tích theo quy tắc, xuất báo cáo\\n"
+             + "• Giọng nói: dùng dịch vụ Android khi có\\n\\n"
+             + "CHƯA CÓ MÔ HÌNH AI / CHƯA XÁC MINH\\n"
+             + "• LLM offline, trợ lý dự đoán đã huấn luyện\\n"
+             + "• GPU+VPU inference hợp nhất / NPU thật\\n"
+             + "• Offload MGLRU sang GPU/VPU (không hỗ trợ)\\n"
+             + "• Chứng nhận boot và độ ổn định khi bật MGLRU";
+    }
+
     private void confirmMode(String mode) {
-        String cmd = "mkdir -p /data/adb/alice/state; printf '"+mode+
-                "' > /data/adb/alice/state/mode";
+        int chosen = java.util.Arrays.asList("balanced","performance","gaming","battery","stability","research").indexOf(mode);
+        if (chosen < 0) return;
+        String cmd = "printf '"+chosen+"' > /sys/kernel/alice/mode";
         confirmRoot("Chọn chế độ "+mode,
                 cmd);
     }
     private void confirmRoot(String title, String command) {
         new AlertDialog.Builder(this).setTitle(title)
-          .setMessage("Thao tác cần quyền root KernelSU. Không bật MGLRU hay đổi xung/điện áp. Tiếp tục?")
+          .setMessage("Thao tác chỉ ghi vào giao diện ALICE của kernel, cần root. MGLRU và xung/điện áp giữ nguyên. Tiếp tục?")
           .setNegativeButton("Hủy", null)
           .setPositiveButton("Đồng ý", (d,which) -> new Thread(() -> {
               int status = -1;
@@ -159,7 +186,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
               } catch (Exception ignored) {}
               final int code = status;
               runOnUiThread(() -> toast(code == 0 ? "Đã gửi cấu hình" :
-                      "Không thể thao tác root / chưa cài module ALICE"));
+                      "Không thể thao tác: kiểm tra quyền root hoặc kernel V12R61"));
           }).start()).show();
     }
     private String offline(String question) {
