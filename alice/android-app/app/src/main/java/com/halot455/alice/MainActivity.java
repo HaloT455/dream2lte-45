@@ -88,6 +88,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         root.addView(processesPanel);
         button(root, "Quét RAM / CPU / tiến trình theo PID", v -> scanProcesses());
         button(root, "Để Qwen3 phân tích tiến trình thật", v -> analyzeProcesses());
+        button(root, "Để Qwen3 đề xuất PID (bạn duyệt trước)", v -> proposeWithQwen());
         button(root, "Chọn ứng dụng nền để giảm ưu tiên CPU", v -> chooseProcessToLimit());
         button(root, "Bật quản lý tiến trình nền tự động", v -> confirmAutoProcess());
         button(root, "Dừng quản lý tự động và khôi phục", v -> stopAutoProcess());
@@ -311,6 +312,67 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
                     telemetry, msg -> runOnUiThread(() -> reply.setText(msg)));
             });
         }, "alice-process-inference").start();
+    }
+
+    private void proposeWithQwen() {
+        processesPanel.setText("Đang đọc tiến trình để Qwen3 lập đề xuất...");
+        new Thread(() -> {
+            AliceProcessEngine.Snapshot snap = AliceProcessEngine.scan(this);
+            lastProcessSnapshot = snap;
+            runOnUiThread(() -> {
+                if (snap.error != null) {
+                    processesPanel.setText("Không quét được: " + snap.error);
+                    return;
+                }
+                reply.setText("Qwen3 đang phân tích, không có quyền tự thi hành lệnh root...");
+                String instruction =
+                    "Dựa vào danh sách tiến trình đính kèm, chỉ chọn MỘT PID ứng dụng "
+                    + "bên thứ ba đang cache (oom_adj>=900, nice<10, RSS lớn), "
+                    + "hoặc không chọn nếu thiếu bằng chứng. CPU ticks là số tích lũy, "
+                    + "không phải CPU%. Chỉ gợi ý giảm ưu tiên, TUYỆT ĐỐI không kill. "
+                    + "Cuối câu trả lời, ghi chính xác một dòng riêng: "
+                    + "ALICE_RECOMMEND_PID=12345 hoặc ALICE_RECOMMEND_PID=NONE.";
+                AliceOfflineModel.infer(this, instruction,
+                    buildReport() + "\n" + AliceProcessEngine.forModel(snap),
+                    response -> runOnUiThread(() -> {
+                        reply.setText(response);
+                        java.util.regex.Matcher found = java.util.regex.Pattern.compile(
+                            "(?m)^ALICE_RECOMMEND_PID=([0-9]{3,8})\\s*$")
+                            .matcher(response);
+                        if (!found.find()) return;
+                        int pid;
+                        try { pid = Integer.parseInt(found.group(1)); }
+                        catch (Exception e) { return; }
+                        AliceProcessEngine.Entry chosen = null;
+                        for (AliceProcessEngine.Entry entry : snap.processes) {
+                            if (entry.pid == pid && entry.eligible()) {
+                                chosen = entry;
+                                break;
+                            }
+                        }
+                        if (chosen == null) {
+                            processesPanel.setText("Đề xuất AI bị từ chối: PID không "
+                                + "nằm trong danh sách đủ điều kiện.");
+                            return;
+                        }
+                        final AliceProcessEngine.Entry selected = chosen;
+                        new AlertDialog.Builder(this)
+                          .setTitle("ALICE AI đề xuất giảm ưu tiên CPU")
+                          .setMessage(selected.line()
+                              + "\nĐây chỉ là gợi ý từ LLM, không phải lệnh. "
+                              + "KernelSU sẽ kiểm tra lại PID, starttime, "
+                              + "UID và oom_score_adj trước khi chỉnh.")
+                          .setNegativeButton("Không", null)
+                          .setPositiveButton("Đồng ý nice +10", (d,w) -> new Thread(() -> {
+                              String result;
+                              try { result = AliceProcessEngine.limit(this, selected); }
+                              catch (Exception e) { result = e.getMessage(); }
+                              final String message = result;
+                              runOnUiThread(() -> processesPanel.setText(message));
+                          }, "alice-llm-approved-process").start()).show();
+                    }));
+            });
+        }, "alice-llm-process-recommendation").start();
     }
 
     private void chooseProcessToLimit() {
