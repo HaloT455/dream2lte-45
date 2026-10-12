@@ -387,7 +387,14 @@ void kbase_pm_wait_for_poweroff_complete(struct kbase_device *kbdev)
 }
 
 #ifdef CONFIG_MALI_HALO_NPU_PARTITION
+/*
+ * This is a GPU compute job-slot reservation, NOT an NPU: Mali compute
+ * shaders and Exynos VPU have independent driver/firmware and address spaces.
+ * Kernel page reclaim and MGLRU must stay on the CPU.
+ */
 #define HALO_NPU_GPU_CORE_COUNT 5
+#define HALO_GRAPHICS_GPU_CORE_COUNT 15
+#define HALO_EXPECTED_SHADER_CORES 20
 
 static unsigned int halo_npu_mask_weight(u64 mask)
 {
@@ -421,53 +428,60 @@ static u64 halo_npu_take_high_cores(u64 available, unsigned int count)
 static void kbase_halo_npu_init_partition(struct kbase_device *kbdev)
 {
 	u64 shader_present = kbdev->gpu_props.props.raw_props.shader_present;
-	u64 npu_candidates = shader_present;
-	u64 npu_mask;
-	u64 graphics_mask;
-	unsigned int wanted = HALO_NPU_GPU_CORE_COUNT;
-	unsigned int have;
+	u64 group1_mask = 0;
+	u64 compute_mask = 0;
+	u64 graphics_mask = 0;
 
 	/*
-	 * JS2 targets coherent group 1 on dual-group GPUs. Prefer those cores
-	 * so ONLY_COMPUTE device_nr=1 atoms stay inside the NPU partition.
+	 * JS2 only routes ONLY_COMPUTE device_nr=1 jobs when exactly two
+	 * coherency groups exist (see mali_kbase_js_get_slot). Do not pull
+	 * extra cores from an unrelated group or assume a one-group device
+	 * can reach the compute partition: such masks risk a job stall.
+	 *
+	 * A damaged shader layout likewise must use the normal all-core path.
 	 */
-	if (kbdev->gpu_props.num_core_groups > 1)
-		npu_candidates &=
+	if (halo_npu_mask_weight(shader_present) !=
+					HALO_EXPECTED_SHADER_CORES ||
+	    kbdev->gpu_props.num_core_groups != 2)
+		goto fallback;
+
+	group1_mask = shader_present &
 			kbdev->gpu_props.props.coherency_info.group[1].core_mask;
+	if (halo_npu_mask_weight(group1_mask) < HALO_NPU_GPU_CORE_COUNT)
+		goto fallback;
 
-	npu_mask = halo_npu_take_high_cores(npu_candidates, wanted);
-	have = halo_npu_mask_weight(npu_mask);
+	compute_mask = halo_npu_take_high_cores(group1_mask,
+						HALO_NPU_GPU_CORE_COUNT);
+	graphics_mask = shader_present & ~compute_mask;
 
-	if (have < wanted)
-		npu_mask |= halo_npu_take_high_cores(
-			shader_present & ~npu_mask, wanted - have);
-
-	graphics_mask = shader_present & ~npu_mask;
-
-	/* Never strand the GPU if a future/odd topology is detected. */
-	if (!npu_mask || !graphics_mask) {
-		kbdev->pm.debug_core_mask[0] = shader_present;
-		kbdev->pm.debug_core_mask[1] = shader_present;
-		kbdev->pm.debug_core_mask[2] = shader_present;
-		kbdev->pm.debug_core_mask_all = shader_present;
-		dev_warn(kbdev->dev,
-			"HALO NPU: invalid GPU topology, partition disabled (shader=0x%llx)\n",
-			(unsigned long long)shader_present);
-		return;
-	}
+	if (halo_npu_mask_weight(compute_mask) != HALO_NPU_GPU_CORE_COUNT ||
+	    halo_npu_mask_weight(graphics_mask) !=
+					HALO_GRAPHICS_GPU_CORE_COUNT)
+		goto fallback;
 
 	kbdev->pm.debug_core_mask[0] = graphics_mask;
 	kbdev->pm.debug_core_mask[1] = graphics_mask;
-	kbdev->pm.debug_core_mask[2] = npu_mask;
+	kbdev->pm.debug_core_mask[2] = compute_mask;
 	kbdev->pm.debug_core_mask_all = shader_present;
 
 	dev_info(kbdev->dev,
-		"HALO NPU: Mali partition active graphics=%u npu=%u shader=0x%llx graphics_mask=0x%llx npu_mask=0x%llx\n",
-		halo_npu_mask_weight(graphics_mask),
-		halo_npu_mask_weight(npu_mask),
-		(unsigned long long)shader_present,
-		(unsigned long long)graphics_mask,
-		(unsigned long long)npu_mask);
+		 "HALO compute partition: graphics=%u compute=%u shader=0x%llx graphics_mask=0x%llx compute_mask=0x%llx (no MGLRU offload)\n",
+		 halo_npu_mask_weight(graphics_mask),
+		 halo_npu_mask_weight(compute_mask),
+		 (unsigned long long)shader_present,
+		 (unsigned long long)graphics_mask,
+		 (unsigned long long)compute_mask);
+	return;
+
+fallback:
+	kbdev->pm.debug_core_mask[0] = shader_present;
+	kbdev->pm.debug_core_mask[1] = shader_present;
+	kbdev->pm.debug_core_mask[2] = shader_present;
+	kbdev->pm.debug_core_mask_all = shader_present;
+	dev_warn(kbdev->dev,
+		 "HALO compute partition: unsupported core topology, use all GPU cores (shader=0x%llx groups=%u)\n",
+		 (unsigned long long)shader_present,
+		 kbdev->gpu_props.num_core_groups);
 }
 #endif
 
