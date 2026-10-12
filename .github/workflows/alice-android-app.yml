@@ -1,9 +1,9 @@
-name: ALICE V12R60 Android APK
+name: ALICE V12R61 Android APK
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r60-alice-kernel-telemetry
+      - agent/v12r61-alice-boot-apk-control
     paths:
       - 'alice/android-app/**'
       - '.github/workflows/alice-android-app.yml'
@@ -36,7 +36,7 @@ jobs:
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R60-Android-APK-${{ github.sha }}
+          name: ALICE-V12R61-Android-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS
