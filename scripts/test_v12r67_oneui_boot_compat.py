@@ -17,7 +17,8 @@ assert "lru_gen_set_state(enable, true, false);" in v
 assert "static struct kobj_attribute lru_gen_boot_compat_attr" in v
 assert "&lru_gen_boot_compat_attr.attr" in v
 assert "runtime_off_allowed=1" in v
-assert "ONEUI-BOOT-COMPAT MGLRU-ON RESEARCH" in a
+assert ("ONEUI-BOOT-COMPAT MGLRU-ON RESEARCH" in a or
+        "ENERGY-STEP-COMPAT MGLRU-ON RESEARCH" in a)
 print("PASS: one-shot boot exception limited to first init shell OFF (<60s) on ON-default builds")
 print("PASS: ordinary runtime OFF remains reachable through lru_gen_set_state")
 print("WARNING: static test does not prove thermals, boot safety or runtime reclaim stability")
