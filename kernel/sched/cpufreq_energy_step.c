@@ -448,21 +448,39 @@ static void esgov_work(struct kthread_work *work)
 	struct esgov_policy *sg_policy = container_of(work, struct esgov_policy, work);
 	unsigned int freq;
 	unsigned long flags;
+	int attempt;
 
 	/*
-	 * Keep the slow-path worker bounded: a continuous stream of UI
-	 * frequency requests must not trap a high-priority kthread in an
-	 * unbounded target loop.  Snapshot the latest request, apply it once,
-	 * and release the worker.  New requests can then be queued normally.
+	 * Keep work_in_progress set until the current target completes.
+	 * Drain at most two requests so an endless UI utilization stream
+	 * cannot monopolize the cpufreq kthread.  If more updates arrive,
+	 * schedule a fresh work item instead of losing the latest target.
 	 */
 	mutex_lock(&sg_policy->work_lock);
-	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-	freq = sg_policy->next_freq;
-	sg_policy->work_in_progress = false;
-	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	for (attempt = 0; attempt < 2; attempt++) {
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		freq = sg_policy->next_freq;
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
-	__cpufreq_driver_target(sg_policy->policy, freq,
-				CPUFREQ_RELATION_L);
+		__cpufreq_driver_target(sg_policy->policy, freq,
+					CPUFREQ_RELATION_L);
+
+		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+		if (sg_policy->next_freq == freq) {
+			sg_policy->work_in_progress = false;
+			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+			break;
+		}
+		if (attempt == 1) {
+			/*
+			 * The currently executing kthread_work has already
+			 * left its queue.  The IRQ work will enqueue it again
+			 * when another frequency target is pending.
+			 */
+			irq_work_queue(&sg_policy->irq_work);
+		}
+		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	}
 	mutex_unlock(&sg_policy->work_lock);
 }
 
