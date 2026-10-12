@@ -5,7 +5,7 @@ umask 077
 STATE_DIR=/data/adb/alice
 STATE_FILE=$STATE_DIR/process-policy.state
 case "${1:-}" in
- scan|limit|restore|restore-all|status) OP=$1 ;;
+ scan|limit|restore|restore-foreground|restore-all|status) OP=$1 ;;
  *) echo ALICE_BAD_COMMAND >&2; exit 2 ;;
 esac
 [ "$(id -u)" = 0 ] || { echo ALICE_ROOT_REQUIRED >&2; exit 3; }
@@ -99,6 +99,25 @@ restore)
  awk -v p="$pid" -v s="$start" '!($1==p && $2==s)' "$STATE_FILE" > "$tmp"
  mv -f "$tmp" "$STATE_FILE"
  echo "ALICE_RESTORED $pid"
+ ;;
+restore-foreground)
+ [ -f "$STATE_FILE" ] || exit 0
+ tmp="$STATE_FILE.$"
+ : > "$tmp"
+ while read -r pid start original; do
+  digits "$pid" && digits "$start" || continue
+  case "$original" in ''|*[!0-9-]*) continue;; esac
+  if stat_fields "$pid" && [ "$START_TICKS" = "$start" ]; then
+   current_adj=$(cat "/proc/$pid/oom_score_adj" 2>/dev/null || echo 0)
+   if digits "$current_adj" && [ "$current_adj" -ge 900 ]; then
+    printf '%s %s %s\n' "$pid" "$start" "$original" >> "$tmp"
+   else
+    renice "$original" -p "$pid" >/dev/null 2>&1 || :
+   fi
+  fi
+ done < "$STATE_FILE"
+ mv -f "$tmp" "$STATE_FILE"
+ echo ALICE_FOREGROUND_RESTORED
  ;;
 restore-all)
  [ -f "$STATE_FILE" ] || exit 0
