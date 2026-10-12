@@ -97,7 +97,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
             i.putExtra(Intent.EXTRA_TEXT, buildReport());
             startActivity(Intent.createChooser(i,"Chia sẻ báo cáo ALICE"));
         });
-        root.addView(text("An toàn: MGLRU mặc định OFF. Ứng dụng không tự bật MGLRU, ép xung, 
+        root.addView(text("An toàn: MGLRU mặc định OFF. Ứng dụng không tự bật MGLRU, ép xung, "
                 + "tắt thermal/SELinux hoặc thay DTB. GPU/VPU không thể thu hồi trang RAM thay kernel CPU.",12,false));
         tts = new TextToSpeech(this, this);
     }
