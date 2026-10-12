@@ -32,6 +32,8 @@ KASAN_SANITIZE_kcov.o := n
 # cond_syscall is currently not LTO compatible
 CFLAGS_sys_ni.o = $(DISABLE_LTO)
 
+obj-$(CONFIG_ALICE_SYSINTEL) += alice_sysintel.o
+
 obj-y += sched/
 obj-y += locking/
 obj-y += power/
