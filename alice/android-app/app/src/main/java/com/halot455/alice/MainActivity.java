@@ -67,8 +67,8 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         root.setPadding(20, 24, 20, 24);
         root.setBackgroundColor(Color.WHITE);
         sc.addView(root); setContentView(sc);
-        root.addView(text("ALICE  •  System Intelligence", 24, true));
-        root.addView(text("Exynos 8895  |  V12R61 ALICE trong boot.img", 13, false));
+        root.addView(text("ALICE • System Intelligence + Qwen3", 24, true));
+        root.addView(text("Exynos 8895 | V12R61 boot kernel + Qwen3 AI offline", 13, false));
         dashboard = text("Reading telemetry…", 14, false);
         dashboard.setTextIsSelectable(true);
         root.addView(dashboard);
@@ -83,6 +83,12 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
                 "printf 0 > /sys/kernel/alice/policy_enabled"));
         root.addView(text("Các chức năng thực sự qua ALICE", 18, true));
         root.addView(text(featureMatrix(), 13, false));
+        root.addView(text("Qwen3 0.6B - Mô hình AI thật, chạy offline", 18, true));
+        button(root, "Tải Qwen3 ~397 MB và xác thực SHA-256", v -> {
+            reply.setText("Đang chuẩn bị tải mô hình vào bộ nhớ ứng dụng...");
+            AliceOfflineModel.download(this, msg -> runOnUiThread(() -> reply.setText(msg)));
+        });
+        button(root, "Chat trực tiếp với ALICE Qwen3 offline", v -> askQwenDialog());
         root.addView(text("ALICE Trợ lý chẩn đoán", 18, true));
         reply = text("ALICE offline phân tích theo quy tắc, không phải LLM.",14,false);
         root.addView(reply);
@@ -198,8 +204,8 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
              + "• Log và chẩn đoán: phân tích theo quy tắc, xuất báo cáo\n"
              + "• Giọng nói: dùng dịch vụ Android khi có\n\n"
              + "CHƯA CÓ MÔ HÌNH AI / CHƯA XÁC MINH\n"
-             + "• LLM offline, trợ lý dự đoán đã huấn luyện\n"
-             + "• GPU+VPU inference hợp nhất / NPU thật\n"
+             + "• Qwen3 thật: có thể dùng sau khi tải model và cài engine ARM64\n"
+             + "• GPU+VPU inference hợp nhất / NPU thật (chưa có)\n"
              + "• Offload MGLRU sang GPU/VPU (không hỗ trợ)\n"
              + "• Chứng nhận boot và độ ổn định khi bật MGLRU";
     }
@@ -248,6 +254,21 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         reply.setText("Bạn: "+q+"\nALICE: "+result);
         if(tts!=null) tts.speak(result,TextToSpeech.QUEUE_FLUSH,null,"alice_answer");
     }
+    private void askQwenDialog() {
+        EditText input = new EditText(this);
+        input.setHint("Hỏi Qwen3 offline về RAM, CPU, GPU, MGLRU…");
+        new AlertDialog.Builder(this)
+            .setTitle("ALICE Qwen3 offline - chỉ chạy khi hỏi")
+            .setView(input)
+            .setNegativeButton("Hủy", null)
+            .setPositiveButton("Chạy AI", (d, w) -> {
+                reply.setText("Qwen3 đang suy luận trên CPU ARM64 (giới hạn 3 luồng)...");
+                String telemetry = buildReport();
+                AliceOfflineModel.infer(this, input.getText().toString(),
+                    telemetry, msg -> runOnUiThread(() -> reply.setText(msg)));
+            }).show();
+    }
+
     private void askDialog() {
         EditText input=new EditText(this);
         input.setHint("Hỏi Alice về RAM, GPU, MGLRU…");
