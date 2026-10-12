@@ -32,10 +32,10 @@ for value in (
 ):
     assert value in a, value
 assert 'CONFIG_ALICE_SYSINTEL=y' in cfg
-assert '# CONFIG_LRU_GEN_ENABLED is not set' in cfg
+assert 'CONFIG_LRU_GEN_ENABLED=y' in cfg, 'V12R66 boot experiment must start MGLRU ON'
 assert 'CONFIG_EXYNOS_VPU_HARDWARE=y' in cfg
 assert 'CONFIG_MALI_HALO_NPU_PARTITION=y' in cfg
 assert 'new ProcessBuilder("su", "-c", command)' in a
 assert 'echo 1 > /sys/kernel/mm/lru_gen/enabled' not in a
 print("PASS: ALICE V12R61 system bridge/profile, bounded opt-in rollback and Android UI")
-print("PASS: MGLRU default OFF, no model/VPU offload claim")
+print("PASS: V12R66 MGLRU boot ON research configuration, no model/VPU offload claim")
