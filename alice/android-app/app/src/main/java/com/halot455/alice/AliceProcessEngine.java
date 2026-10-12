@@ -75,9 +75,10 @@ public final class AliceProcessEngine {
         return file;
     }
 
-    private static String root(Context ctx, String operation, Entry entry) throws Exception {
+    private static synchronized String root(Context ctx, String operation, Entry entry) throws Exception {
         if (!operation.equals("scan") && !operation.equals("limit")
-                && !operation.equals("restore") && !operation.equals("restore-all")
+                && !operation.equals("restore") && !operation.equals("restore-foreground")
+                && !operation.equals("restore-all")
                 && !operation.equals("status")) {
             throw new IllegalArgumentException("Lệnh ngoài danh sách");
         }
@@ -144,6 +145,9 @@ public final class AliceProcessEngine {
     }
     public static String restore(Context ctx, Entry e) throws Exception {
         return root(ctx, "restore", e);
+    }
+    public static String restoreForeground(Context ctx) throws Exception {
+        return root(ctx, "restore-foreground", null);
     }
     public static String restoreAll(Context ctx) throws Exception {
         return root(ctx, "restore-all", null);
