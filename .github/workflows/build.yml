@@ -1,4 +1,4 @@
-name: Build V12R60 ALICE Kernel MM Bridge (MGLRU OFF)
+name: Build V12R61 ALICE Built-in Boot Controller (MGLRU OFF)
 # V12R3 LMKD PSI scheduler-order CI trigger
 
 on:
@@ -37,6 +37,7 @@ on:
       - agent/v12r5w-boot-gpu-partition-isolation
       - agent/v12r5x-gpu15-compute5-vpu
       - agent/v12r60-alice-kernel-telemetry
+      - agent/v12r61-alice-boot-apk-control
 
 concurrency:
   group: v12-${{ github.ref }}
@@ -91,6 +92,7 @@ jobs:
           python3 scripts/test_v12r5v_mglru_reclaim_guard.py
           python3 scripts/test_v12r5x_gpu_compute_profile.py
           python3 scripts/test_v12r60_alice_kernel.py
+          python3 scripts/test_v12r61_alice_boot_control.py
           python3 scripts/test_v12r5p_ion_cma_diag.py
           python3 scripts/test_v12r5q_page_isolation_diag.py
           python3 scripts/test_v12r5r_zsmalloc_cma_migration.py
@@ -106,12 +108,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R60-AI-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R61-CTRL-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R60-AI-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R61-CTRL-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -218,7 +220,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r60-alice-ai-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r61-alice-control-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -257,7 +259,9 @@ jobs:
           check_map_symbol psi_trigger_create
           check_map_symbol alice_sysintel_reclaim
           check_map_symbol alice_sysintel_no_progress
-          check_image_string 'observe_only=1 mglru_offload=0'
+          check_image_string 'mglru_offload=0 mglru_auto_enable=0'
+          check_image_string 'V12R61 ALICE boot-kernel bridge v2'
+          check_map_symbol alice_sysintel_init
           check_map_symbol vpu_device_init
           check_map_symbol vpu_system_resume
           # kbase_halo_npu_init_partition() is static and may be inlined by GCC.
@@ -281,9 +285,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R60-AI-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R61-CTRL-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R60-AI-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R61-CTRL-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -300,6 +304,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r60-alice-ai-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r61-alice-control-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
