@@ -82,6 +82,15 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
                 "printf 1 > /sys/kernel/alice/policy_enabled"));
         button(root, "Tắt tối ưu và phục hồi VM", v -> confirmRoot("Tắt chính sách VM và phục hồi",
                 "printf 0 > /sys/kernel/alice/policy_enabled"));
+        root.addView(text("ALICE Resource Intelligence - RAM / zRAM / MGLRU / LMKD", 18, true));
+        button(root, "Đo PSI, RAM, zRAM và phân bổ tài nguyên", v -> showResourceAssessment());
+        button(root, "Để Qwen3 phân tích RAM/LMKD/MGLRU", v -> analyzeResourceWithQwen());
+        button(root, "Bật ALICE tự phân bổ tài nguyên", v -> confirmStartResource());
+        button(root, "Dừng tối ưu tài nguyên, khôi phục VM", v -> stopResource());
+        button(root, "Xem khả năng điều khiển LMKD/MGLRU", v -> runResourceAction("status",0));
+        button(root, "Thử LMKD ngắn hạn (chỉ ROM hỗ trợ)", v -> confirmLmkdTrial());
+        button(root, "Thử MGLRU 12 giây (nguy cơ treo)", v -> confirmMglruTrial());
+        button(root, "Khôi phục MGLRU / LMKD thử nghiệm", v -> runResourceAction("restore",0));
         root.addView(text("ALICE AI quản lý tiến trình (quyền root)", 18, true));
         processesPanel = text("Chưa quét. ALICE chỉ điều chỉnh ứng dụng nền, không kill tiến trình.", 13, false);
         processesPanel.setTextIsSelectable(true);
@@ -211,6 +220,9 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
              + "• Tiến trình: quét PID/RSS/CPU ticks/oom_adj, AI chẩn đoán, root renice an toàn và rollback\n"
              + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\n"
              + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\n"
+             + "• Resource Intelligence: đo PSI, zRAM, refault; chọn mode cân bằng có hysteresis\n"
+             + "• LMKD: giám sát và thử đổi thrashing_limit 20 giây khi ROM cho phép\n"
+             + "• MGLRU: theo dõi, thử nghiệm 12 giây có hoàn nguyên; không bật mặc định\n"
              + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\n"
              + "• VPU: driver được giữ; chưa chạy graph inference\n"
              + "• Nhiệt/pin/mạng/I-O: chỉ đọc chỉ số Android cho phép\n"
@@ -266,6 +278,101 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         String result=offline(q);
         reply.setText("Bạn: "+q+"\nALICE: "+result);
         if(tts!=null) tts.speak(result,TextToSpeech.QUEUE_FLUSH,null,"alice_answer");
+    }
+
+    private void showResourceAssessment() {
+        AliceResourceEngine.Sample sample=AliceResourceEngine.sample();
+        AliceResourceEngine.Decision decision=AliceResourceEngine.choose(sample,null);
+        final String summary="ALICE Memory Assessment:\n"+sample.summary()
+            +"\n"+decision.explain()
+            +"\nLMKD Android vẫn quyết định dừng ứng dụng cache khi thiếu RAM."
+            +"\nKhông bật MGLRU vì máy từng bị treo.";
+        processesPanel.setText(summary);
+        new Thread(()->{
+            try {
+                String status=AliceResourceEngine.root(this,"status",0);
+                runOnUiThread(()->processesPanel.setText(summary+"\n"+status));
+            }catch(Exception e) {
+                runOnUiThread(()->processesPanel.setText(summary+
+                    "\nRoot/ALICE unavailable: "+e.getMessage()));
+            }
+        },"alice-resource-assessment").start();
+    }
+    private void analyzeResourceWithQwen() {
+        AliceResourceEngine.Sample sample=AliceResourceEngine.sample();
+        if(!sample.valid){toast("Thiếu số liệu PSI/RAM; không đưa vào AI");return;}
+        reply.setText("Đang cho Qwen3 phân tích áp lực RAM...");
+        new Thread(()->{
+            String kern;
+            try{kern=AliceResourceEngine.root(this,"status",0);}
+            catch(Exception e){kern="Kernel info unavailable: "+e.getMessage();}
+            final String telemetry=sample.summary()+"\n"+kern;
+            AliceOfflineModel.infer(this,
+                "Phân tích hiệu suất Galaxy S8+ RAM 4GB, zRAM và LMKD, "
+                +"đưa ra lời khuyên cụ thể dựa vào PSI/refault; phân biệt "
+                +"số liệu và suy đoán. MGLRU đã từng gây treo, KHÔNG tự bật. "
+                +"Không tạo lệnh root.",telemetry,
+                result->runOnUiThread(()->reply.setText(result)));
+        },"alice-resource-qwen").start();
+    }
+    private void confirmStartResource() {
+        new AlertDialog.Builder(this).setTitle("Bật ALICE tự phân bổ tài nguyên?")
+            .setMessage("Dịch vụ đọc PSI, RAM, zRAM mỗi 45 giây, "
+                +"chọn Balanced/Stability khi áp lực bộ nhớ thay đổi. "
+                +"Chỉ sửa vm.swappiness qua kernel V12R61 trong phạm vi cho phép, "
+                +"hoàn nguyên khi dừng. KHÔNG tự chỉnh LMKD, MGLRU, thermal, xung CPU. "
+                +"Có thông báo chạy nền.")
+            .setNegativeButton("Hủy",null)
+            .setPositiveButton("Bật giám sát và VM", (d,w)->{
+                Intent i=new Intent(this,AliceResourceService.class);
+                i.setAction(AliceResourceService.START);
+                try{
+                    if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(i);
+                    else startService(i);
+                    toast("ALICE Resource Intelligence đã được yêu cầu chạy");
+                }catch(Exception e){toast("Không bật được: "+e.getMessage());}
+            }).show();
+    }
+    private void stopResource() {
+        Intent i=new Intent(this,AliceResourceService.class);
+        stopService(i);
+        runResourceAction("policy-off",0);
+    }
+    private void runResourceAction(String cmd,int value) {
+        processesPanel.setText("Đang kiểm tra "+cmd+"...");
+        new Thread(()->{
+            String out;
+            try{out=AliceResourceEngine.root(this,cmd,value);}
+            catch(Exception e){out="ALICE: "+e.getMessage();}
+            final String result=out;
+            runOnUiThread(()->processesPanel.setText(result));
+        },"alice-root-memory-"+cmd).start();
+    }
+    private void confirmLmkdTrial() {
+        new AlertDialog.Builder(this)
+          .setTitle("Thử điều khiển LMKD trong 20 giây")
+          .setMessage("Chỉ thực hiện khi lmkd.rc trên máy có trigger cập nhật "
+              +"thrashing_limit. Thay ngưỡng thử nghiệm 60 rồi phục hồi giá trị ban đầu. "
+              +"Có thể làm LMKD dừng ứng dụng nền sớm hơn; không khuyến nghị "
+              +"khi đang làm việc quan trọng. Không tắt LMKD.")
+          .setNegativeButton("Hủy",null)
+          .setPositiveButton("Thử LMKD", (d,w)->runResourceAction("lmkd-trial",60))
+          .show();
+    }
+    private void confirmMglruTrial() {
+        new AlertDialog.Builder(this)
+          .setTitle("MGLRU đã từng làm S8+ treo")
+          .setMessage("ALICE chỉ có thể tạm bật MGLRU trong 12 giây rồi "
+              +"cố gắng trả về OFF. Nếu kernel bị deadlock, cả watchdog "
+              +"cũng có thể không chạy; có nguy cơ phải khởi động lại. "
+              +"Không chạy khi chưa sao lưu boot và dữ liệu.")
+          .setNegativeButton("Hủy",null)
+          .setPositiveButton("Tôi hiểu nguy cơ", (d,w)->new AlertDialog.Builder(this)
+              .setTitle("Xác nhận lần cuối")
+              .setMessage("Không bảo đảm tự khôi phục nếu MGLRU làm kernel treo.")
+              .setNegativeButton("Hủy",null)
+              .setPositiveButton("Thử MGLRU", (x,y)->runResourceAction("mglru-trial",0))
+              .show()).show();
     }
 
     private void scanProcesses() {
