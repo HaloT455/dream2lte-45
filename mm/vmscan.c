@@ -14,6 +14,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/mm.h>
+#include <linux/alice_sysintel.h>
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <linux/kernel_stat.h>
@@ -4554,7 +4555,10 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 			WRITE_ONCE(lruvec->evictable.reclaim_backoff_until,
 				   jiffies + max_t(unsigned long, 1, msecs_to_jiffies(50)));
 			atomic64_inc(&lru_gen_diag_backoffs);
+			alice_sysintel_no_progress(true);
 			*lru_pages = 0;
+		} else {
+			alice_sysintel_no_progress(false);
 		}
 		if (READ_ONCE(lru_gen_diag_runtime))
 			pr_info_ratelimited(
@@ -4575,6 +4579,8 @@ static void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
 				sc->nr_scanned - start_scanned);
 		cond_resched();
 	}
+	alice_sysintel_reclaim(sc->nr_scanned - start_scanned,
+			      sc->nr_reclaimed - start_reclaimed);
 }
 #else
 static inline void lru_gen_shrink_lruvec_full(struct lruvec *lruvec,
