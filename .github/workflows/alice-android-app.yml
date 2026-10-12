@@ -43,7 +43,7 @@ jobs:
             -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON \
             -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
-            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF \
             -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_EXAMPLES=ON
           cmake --build /tmp/llama-arm64 --target llama-cli -j 3
           CLI=$(find /tmp/llama-arm64 -type f -name llama-cli -print -quit)
