@@ -58,6 +58,7 @@ jobs:
           python3 scripts/test_v12r5t_mglru_aging_lmkd.py
           python3 scripts/test_v12r67_oneui_boot_compat.py
           python3 scripts/test_v12r69_mglru_audit.py
+          python3 scripts/test_v12r69_energy_step_worker.py
           python3 scripts/test_v12r69_postboot_guard.py
           sh -n scripts/alice-v12r69-mglru-postboot.sh
           python3 scripts/test_v12r68_energy_step.py
