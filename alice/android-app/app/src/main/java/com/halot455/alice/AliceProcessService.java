@@ -75,6 +75,9 @@ public final class AliceProcessService extends Service {
         long lastAction = 0;
         try {
             while (enabled.get()) {
+                // Restore normal priority when a previously cached app returns to foreground.
+                try { AliceProcessEngine.restoreForeground(this); }
+                catch (Exception ignored) {}
                 AliceProcessEngine.Snapshot now = AliceProcessEngine.scan(this);
                 if (now.error != null) {
                     lastDecision = "Không có root/telemetry: " + now.error;
