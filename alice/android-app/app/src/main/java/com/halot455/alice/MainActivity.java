@@ -73,6 +73,7 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         dashboard.setTextIsSelectable(true);
         root.addView(dashboard);
         button(root, "Làm mới thông số", v -> dashboard.setText(buildReport()));
+        button(root, "Đọc ALICE qua KernelSU (nếu bị chặn)", v -> refreshWithRoot());
         root.addView(text("Chế độ trực tiếp trong kernel (root KernelSU)", 18, true));
         final String[] modes = {"balanced","performance","gaming","battery","stability","research"};
         for (String mode : modes) button(root, "Chọn " + mode, v -> confirmMode(mode));
@@ -125,6 +126,43 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         String val=read("/sys/class/power_supply/battery/temp",30);
         try { return (Long.parseLong(val)/10f)+"°C"; } catch (Exception ignored) {return "?";}
     }
+    private void refreshWithRoot() {
+        dashboard.setText("Đang đọc từ kernel qua quyền root…");
+        new Thread(() -> {
+            /* Fixed, read-only path list: no user input reaches the shell. */
+            String command = "for n in version safety capabilities assessment "
+                    + "mm_reclaim memory mode vm_policy policy_enabled; do "
+                    + "echo ===$n===; cat /sys/kernel/alice/$n 2>/dev/null; done";
+            String result;
+            try {
+                Process p = new ProcessBuilder("su", "-c", command)
+                        .redirectErrorStream(true).start();
+                if (!p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    result = "KernelSU chưa cấp quyền hoặc đọc quá thời gian.";
+                } else if (p.exitValue() != 0) {
+                    result = "Không thể đọc ALICE. Kiểm tra kernel V12R61 và cấp root.";
+                } else {
+                    StringBuilder out = new StringBuilder();
+                    try (BufferedReader br = new BufferedReader(
+                            new java.io.InputStreamReader(p.getInputStream(),
+                                    StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = br.readLine()) != null && out.length() < 6000)
+                            out.append(line).append('\\n');
+                    }
+                    result = out.toString();
+                }
+            } catch (Exception e) {
+                result = "Không thể dùng su: " + e.getClass().getSimpleName();
+            }
+            final String shown = result;
+            runOnUiThread(() -> {
+                if (dashboard != null) dashboard.setText(shown);
+            });
+        }, "alice-root-reader").start();
+    }
+
     private String buildReport() {
         boolean bridge = new File("/sys/kernel/alice/version").exists();
         StringBuilder s=new StringBuilder();
