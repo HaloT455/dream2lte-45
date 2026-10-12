@@ -27,8 +27,8 @@ unsigned long boosted_cpu_util(int cpu);
 #define cpufreq_driver_fast_switch(x, y) 0
 #define cpufreq_enable_fast_switch(x)
 #define cpufreq_disable_fast_switch(x)
-#define ESGOV_DEFAULT_UP_RATE_LIMIT_US		(2500)
-#define ESGOV_DEFAULT_DOWN_RATE_LIMIT_US	(8000)
+#define ESGOV_DEFAULT_UP_RATE_LIMIT_US		(3000)
+#define ESGOV_DEFAULT_DOWN_RATE_LIMIT_US	(12000)
 #define ESGOV_KTHREAD_PRIORITY	50
 
 struct esgov_tunables {
@@ -216,7 +216,7 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 		return policy->min;
 
 	/* Conservative headroom (112.5%, instead of schedutil's 125%). */
-	raw = (base + (base >> 3)) * util / max;
+	raw = div64_u64((u64)(base + (base >> 3)) * util, max);
 
 	if (raw == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
 		return sg_policy->next_freq;
