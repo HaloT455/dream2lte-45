@@ -1,0 +1,6 @@
+id=alice_ai_offline
+name=ALICE Offline AI - Qwen3 0.6B Q4
+version=V12R62
+versionCode=12620
+author=HALOT455 / ALICE
+description=Real quantized offline LLM run on demand through native llama.cpp; no MGLRU or kernel modification.
