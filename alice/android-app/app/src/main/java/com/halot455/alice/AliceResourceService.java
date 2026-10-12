@@ -13,7 +13,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Safe opt-in resource supervisor. Evaluates PSI/available/swap/refault once
  * per 45 seconds and changes only V12R61 kernel mode/swappiness policy.
- * NEVER enables MGLRU or changes LMKD thresholds automatically.
+ * MGLRU is OFF by default. A separate user opt-in can permit ONE
+ * guarded 8-second trial, never permanent ON; LMKD thresholds stay untouched.
  */
 public final class AliceResourceService extends Service {
     public static final String START="com.halot455.alice.START_RESOURCE_AI";
