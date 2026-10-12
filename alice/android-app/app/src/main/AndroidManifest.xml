@@ -9,7 +9,7 @@
   <service android:name=".AliceResourceService"
     android:exported="false" android:foregroundServiceType="specialUse">
    <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-     android:value="User-started memory pressure and swappiness resource supervisor, no background MGLRU or LMKD writes"/>
+     android:value="User-started PSI-based resource controller with separately confirmed bounded MGLRU trials; LMKD untouched"/>
   </service>
   <service android:name=".AliceProcessService"
     android:exported="false" android:foregroundServiceType="specialUse">
