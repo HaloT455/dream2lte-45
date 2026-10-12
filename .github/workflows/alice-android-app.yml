@@ -1,11 +1,12 @@
-name: ALICE V12R61 Android APK
+name: ALICE V12R62 Real Qwen3 Offline Android APK
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r61-alice-boot-apk-control
+      - agent/v12r62-alice-real-qwen3-offline
     paths:
       - 'alice/android-app/**'
+      - 'alice/ai_offline/**'
       - '.github/workflows/alice-android-app.yml'
 jobs:
   build-apk:
@@ -29,6 +30,29 @@ jobs:
           sdkmanager --list_installed | head -35
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Compile llama.cpp Android ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
+          git clone -q https://github.com/ggml-org/llama.cpp.git /tmp/llama-cpp
+          git -C /tmp/llama-cpp checkout -q e937b17a2df081e9c7ae380f0dab4341c1585bce
+          cmake -S /tmp/llama-cpp -B /tmp/llama-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON \
+            -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build /tmp/llama-arm64 --target llama-cli -j 3
+          CLI=$(find /tmp/llama-arm64 -type f -name llama-cli -print -quit)
+          test -n "$CLI"
+          file "$CLI"
+          file "$CLI" | grep 'aarch64\|ARM aarch64\|ARM64'
+          mkdir -p alice/android-app/app/src/main/jniLibs/arm64-v8a
+          cp "$CLI" alice/android-app/app/src/main/jniLibs/arm64-v8a/libalice_llama_cli.so
+          chmod 0755 alice/android-app/app/src/main/jniLibs/arm64-v8a/libalice_llama_cli.so
       - name: Build Alice debug APK
         run: gradle -p alice/android-app :app:assembleDebug --no-daemon --stacktrace
       - name: Validate APK
@@ -40,7 +64,7 @@ jobs:
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R61-Android-APK-${{ github.sha }}
+          name: ALICE-V12R62-Qwen3-Real-Offline-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS
