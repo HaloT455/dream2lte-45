@@ -450,29 +450,19 @@ static void esgov_work(struct kthread_work *work)
 	unsigned long flags;
 
 	/*
-	 * Keep work_in_progress set while the slow cpufreq driver runs.
-	 * Clearing it before the driver completes can queue another update
-	 * against a still-running work item and lose the latest request.
-	 * Drain changes under the same work item, releasing the spinlock
-	 * before calling the sleeping cpufreq target path.
+	 * Keep the slow-path worker bounded: a continuous stream of UI
+	 * frequency requests must not trap a high-priority kthread in an
+	 * unbounded target loop.  Snapshot the latest request, apply it once,
+	 * and release the worker.  New requests can then be queued normally.
 	 */
 	mutex_lock(&sg_policy->work_lock);
-	for (;;) {
-		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		freq = sg_policy->next_freq;
-		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
+	freq = sg_policy->next_freq;
+	sg_policy->work_in_progress = false;
+	raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
 
-		__cpufreq_driver_target(sg_policy->policy, freq,
-					CPUFREQ_RELATION_L);
-
-		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		if (sg_policy->next_freq == freq) {
-			sg_policy->work_in_progress = false;
-			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
-			break;
-		}
-		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
-	}
+	__cpufreq_driver_target(sg_policy->policy, freq,
+				CPUFREQ_RELATION_L);
 	mutex_unlock(&sg_policy->work_lock);
 }
 
