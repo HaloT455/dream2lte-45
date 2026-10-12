@@ -149,20 +149,20 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
     }
 
     private String featureMatrix() {
-        return "KERNEL / HOẠT ĐỘNG THẬT\\n"
-             + "• CPU: theo dõi xung; giữ DVFS V12R5T, không tự ép xung\\n"
-             + "• RAM + zRAM + PSI: giám sát và phân loại áp lực bằng quy tắc\\n"
-             + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\\n"
-             + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\\n"
-             + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\\n"
-             + "• VPU: driver được giữ; chưa chạy graph inference\\n"
-             + "• Nhiệt/pin/mạng/I-O: chỉ đọc chỉ số Android cho phép\\n"
-             + "• Log và chẩn đoán: phân tích theo quy tắc, xuất báo cáo\\n"
-             + "• Giọng nói: dùng dịch vụ Android khi có\\n\\n"
-             + "CHƯA CÓ MÔ HÌNH AI / CHƯA XÁC MINH\\n"
-             + "• LLM offline, trợ lý dự đoán đã huấn luyện\\n"
-             + "• GPU+VPU inference hợp nhất / NPU thật\\n"
-             + "• Offload MGLRU sang GPU/VPU (không hỗ trợ)\\n"
+        return "KERNEL / HOẠT ĐỘNG THẬT\n"
+             + "• CPU: theo dõi xung; giữ DVFS V12R5T, không tự ép xung\n"
+             + "• RAM + zRAM + PSI: giám sát và phân loại áp lực bằng quy tắc\n"
+             + "• MGLRU: theo dõi reclaim/no_progress; mặc định OFF\n"
+             + "• VM swappiness: 6 chế độ, áp dụng riêng khi bạn xác nhận root\n"
+             + "• GPU: driver có chế độ 15/5 nếu topology hỗ trợ; chưa đo thực tế\n"
+             + "• VPU: driver được giữ; chưa chạy graph inference\n"
+             + "• Nhiệt/pin/mạng/I-O: chỉ đọc chỉ số Android cho phép\n"
+             + "• Log và chẩn đoán: phân tích theo quy tắc, xuất báo cáo\n"
+             + "• Giọng nói: dùng dịch vụ Android khi có\n\n"
+             + "CHƯA CÓ MÔ HÌNH AI / CHƯA XÁC MINH\n"
+             + "• LLM offline, trợ lý dự đoán đã huấn luyện\n"
+             + "• GPU+VPU inference hợp nhất / NPU thật\n"
+             + "• Offload MGLRU sang GPU/VPU (không hỗ trợ)\n"
              + "• Chứng nhận boot và độ ổn định khi bật MGLRU";
     }
 
