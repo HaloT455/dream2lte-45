@@ -1,5 +1,5 @@
 plugins { id 'com.android.application' }
 android { namespace 'com.halot455.alice'; compileSdk 35
-  defaultConfig { applicationId 'com.halot455.alice'; minSdk 28; targetSdk 35; versionCode 12600; versionName 'V12R60' }
+  defaultConfig { applicationId 'com.halot455.alice'; minSdk 28; targetSdk 35; versionCode 12610; versionName 'V12R61' }
   compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
