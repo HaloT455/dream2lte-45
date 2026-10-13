@@ -20,7 +20,7 @@ while [ "$count" -lt 25 ]; do
     for node in /proc/uptime /proc/stat /proc/meminfo /proc/vmstat \
         /proc/pressure/memory /proc/pressure/cpu /proc/pressure/io \
         /sys/kernel/mm/lru_gen/enabled /sys/kernel/mm/lru_gen/diag \
-        /sys/kernel/mm/alice_sysintel/counters \
+        /sys/kernel/mm/lru_gen/stats /sys/kernel/alice/mm_reclaim \
         /sys/devices/system/cpu/online /sys/class/power_supply/battery/temp \
         /sys/class/thermal/thermal_zone*/temp /sys/block/zram0/mm_stat; do
         read_node "$node"
