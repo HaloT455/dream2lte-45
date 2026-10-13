@@ -169,43 +169,42 @@ static void esgov_update_commit(struct esgov_policy *sg_policy, u64 time,
  *
  * next_freq = C * curr_freq * util_raw / max
  *
- * Take C = 1.25 for the frequency tipping point at (util / max) = 0.8.
+ * Take C = 1.125 for the frequency tipping point at (util / max) = 8/9.
  *
  * The lowest driver-supported frequency which is equal or greater than the raw
  * next_freq (as calculated above) is returned, subject to policy min/max and
  * cpufreq driver limitations.
  */
 /*
- * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R68).
+ * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R69 R5).
  *
  * Samsung's genuine energy_step (2019+) relies on EMS energy-table hooks,
  * emstune, uclamp and vendor tracepoints missing from the Exynos8895 tree.
  * We preserve this tree's proven WALT/PELT, IOWAIT and cpufreq workqueue,
- * but select frequency in discrete policy-relative energy steps instead
- * of proportional schedutil targets. This is NOT Samsung EMS energy_step.
+ * with 112.5% headroom and the driver's discrete frequency steps.
+ * This is NOT Samsung EMS energy_step.
  *
- * The step count is fixed, never exceeds policy->max and does not write
- * thermal/QoS constraints. The up/down rate limits retain hysteresis.
+ * Resolve only once: eight synthetic linear buckets followed by driver
+ * rounding could skip a sufficient hardware step and raise voltage needlessly.
+ * Driver resolution respects policy min/max and thermal/QoS constraints.
+ * The up/down rate limits retain hysteresis.
  */
-#define ALICE_ESGOV_STEPS	8U
-
 static unsigned int esgov_step_target(struct cpufreq_policy *policy,
 				     unsigned int requested)
 {
-	unsigned int floor = policy->min;
-	unsigned int ceiling = policy->max;
-	unsigned int stride, offset, target;
+	unsigned int index;
 
-	if (unlikely(ceiling <= floor))
-		return cpufreq_driver_resolve_freq(policy, ceiling);
+	requested = clamp(requested, policy->min, policy->max);
+	/* Exynos uses legacy .target: resolve_freq() alone returns the raw
+	 * request for that driver. Quantize against its real table before
+	 * committing, so requests in one hardware step don't wake the worker.
+	 */
+	if (policy->freq_table &&
+	    !cpufreq_frequency_table_target(policy, policy->freq_table,
+			requested, CPUFREQ_RELATION_L, &index))
+		return policy->freq_table[index].frequency;
 
-	requested = clamp(requested, floor, ceiling);
-	stride = max(1U, DIV_ROUND_UP(ceiling - floor, ALICE_ESGOV_STEPS));
-	offset = requested - floor;
-	target = floor + min(ceiling - floor,
-			     DIV_ROUND_UP(offset, stride) * stride);
-
-	return cpufreq_driver_resolve_freq(policy, min(ceiling, target));
+	return cpufreq_driver_resolve_freq(policy, requested);
 }
 
 static unsigned int get_next_freq(struct esgov_policy *sg_policy,
@@ -351,7 +350,7 @@ static void esgov_update_single(struct update_util_data *hook, u64 time,
 	busy = esgov_cpu_is_busy(sg_cpu);
 
 	if (flags & SCHED_CPUFREQ_DL) {
-		next_f = policy->cpuinfo.max_freq;
+		next_f = esgov_step_target(policy, policy->max);
 	} else {
 		esgov_get_util(&util, &max, time);
 		esgov_iowait_boost(sg_cpu, &util, &max);
@@ -384,6 +383,10 @@ static unsigned int esgov_next_freq_shared(struct esgov_cpu *sg_cpu, u64 time)
 		unsigned long j_util, j_max;
 		s64 delta_ns;
 
+		/* Hotplug/start leaves capacity zero until the first real sample. */
+		if (!j_sg_cpu->max)
+			continue;
+
 		/*
 		 * If the CPU utilization was last updated before the previous
 		 * frequency update and the time elapsed between the last update
@@ -398,7 +401,7 @@ static unsigned int esgov_next_freq_shared(struct esgov_cpu *sg_cpu, u64 time)
 			continue;
 		}
 		if (j_sg_cpu->flags & SCHED_CPUFREQ_DL)
-			return policy->cpuinfo.max_freq;
+			return esgov_step_target(policy, policy->max);
 
 		j_util = j_sg_cpu->util;
 		j_max = j_sg_cpu->max;
@@ -434,7 +437,7 @@ static void esgov_update_shared(struct update_util_data *hook, u64 time,
 
 	if (esgov_should_update_freq(sg_policy, time)) {
 		if (flags & SCHED_CPUFREQ_DL)
-			next_f = sg_policy->policy->cpuinfo.max_freq;
+			next_f = esgov_step_target(sg_policy->policy, sg_policy->policy->max);
 		else
 			next_f = esgov_next_freq_shared(sg_cpu, time);
 
@@ -751,9 +754,9 @@ static void esgov_tunables_restore(struct cpufreq_policy *policy)
 	tunables->up_rate_limit_us = cached->up_rate_limit_us;
 	tunables->down_rate_limit_us = cached->down_rate_limit_us;
 	sg_policy->up_rate_delay_ns =
-		tunables->up_rate_limit_us * NSEC_PER_USEC;
+		(u64)tunables->up_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->down_rate_delay_ns =
-		tunables->down_rate_limit_us * NSEC_PER_USEC;
+		(u64)tunables->down_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->min_rate_limit_ns = min(sg_policy->up_rate_delay_ns,
 					   sg_policy->down_rate_delay_ns);
 }
@@ -896,7 +899,8 @@ static int esgov_start(struct cpufreq_policy *policy)
 
 		memset(sg_cpu, 0, sizeof(*sg_cpu));
 		sg_cpu->sg_policy = sg_policy;
-		sg_cpu->flags = SCHED_CPUFREQ_DL;
+		/* No synthetic deadline load on CPUs with no scheduler sample. */
+		sg_cpu->flags = 0;
 		sg_cpu->iowait_boost_max = policy->cpuinfo.max_freq;
 	}
 

@@ -25,9 +25,9 @@ assert "CONFIG_CPU_FREQ_GOV_ENERGYSTEP) += cpufreq_energy_step.o" in m
 assert 'name = "energy_step"' in es
 assert 'name = "schedutil"' in su
 assert "static unsigned int esgov_step_target" in es
-assert "#define ALICE_ESGOV_STEPS\t8U" in es
-assert "DIV_ROUND_UP(offset, stride)" in es
-assert "cpufreq_driver_resolve_freq(policy, min(ceiling, target))" in es
+assert "ALICE_ESGOV_STEPS" not in es
+assert "cpufreq_frequency_table_target(policy, policy->freq_table," in es
+assert "clamp(requested, policy->min, policy->max)" in es
 assert "raw = div64_u64((u64)(base + (base >> 3)) * util, max);" in es
 for code in ("cpufreq_add_update_util_hook", "cpufreq_remove_update_util_hook",
              "cpufreq_register_governor", "esgov_get_util",
@@ -36,6 +36,6 @@ for code in ("cpufreq_add_update_util_hook", "cpufreq_remove_update_util_hook",
     assert code in es, code
 assert "emstune" not in es or "NOT Samsung EMS" in es
 print("PASS: EnergyStep-compat registered independently and default configured")
-print("PASS: Eight discrete steps clamp to cpufreq policy min/max; WALT, thermal limits preserved")
+print("PASS: Driver hardware steps clamp to cpufreq policy min/max; WALT, thermal limits preserved")
 print("PASS: schedutil fallback remains compiled and selectable")
 print("NOTE: static tests do not prove Samsung EMS parity, power savings or device stability")

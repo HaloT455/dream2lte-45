@@ -10,8 +10,7 @@ import subprocess
 import tempfile
 
 source = Path("scripts/alice-v12r69-low-swap.sh").read_text()
-asset = Path("alice/android-app/app/src/main/assets/alice_low_swap.sh")
-assert asset.read_text() == source, "APK must carry the repair script exercised by this test"
+# This optional standalone repair is deliberately excluded from the LRU-only APK.
 
 def samsung_effective(nominal, reference_kb, actual_swap_kb):
     used_limit = int((100-nominal)/100 * reference_kb)

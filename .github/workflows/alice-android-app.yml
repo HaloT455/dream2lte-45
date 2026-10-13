@@ -1,17 +1,19 @@
-name: ALICE V12R65 Guarded Adaptive MGLRU + Qwen3 APK
+name: ALICE V12R69 R5 LRU-only APK
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r65-alice-mglru-guarded-controller
+      - agent/v12r69-r3-ci-kernel
     paths:
       - 'alice/android-app/**'
-      - 'alice/ai_offline/**'
+      - 'scripts/test_v12r69_r5_lru_only.py'
       - '.github/workflows/alice-android-app.yml'
+permissions:
+  contents: read
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -24,82 +26,33 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Restore debug signing key for future updates
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: alice-lru-debug-key-r5
       - name: Install Android SDK 35
-        run: |
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
-          sdkmanager --list_installed | head -35
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - name: Validate safe ALICE process helper
-        run: |
-          sh -n alice/android-app/app/src/main/assets/alice_process.sh
-          grep -q 'ALICE_PID_REUSED' alice/android-app/app/src/main/assets/alice_process.sh
-          grep -q 'ALICE_FOREGROUND_OR_SERVICE_PROTECTED' alice/android-app/app/src/main/assets/alice_process.sh
-          grep -q 'restore-all' alice/android-app/app/src/main/assets/alice_process.sh
-          ! grep -Eq '^[[:space:]]*(kill|pkill|killall|stop|setprop|echo .* > /proc/)' alice/android-app/app/src/main/assets/alice_process.sh
-      - name: Validate ALICE memory controller
-        run: |
-          set -eu
-          sh -n alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "ALICE_MGLRU_TRIAL_ACTIVE" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "ALICE_LMKD_DYNAMIC_UNSUPPORTED" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "restore_mglru" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "restore_lmkd" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "on property:persist.device_config.lmkd_native.thrashing_limit=" alice/android-app/app/src/main/assets/alice_memory.sh
-          grep -q "runMglruAction" alice/android-app/app/src/main/java/com/halot455/alice/MainActivity.java
-          grep -q "AliceResourceEngine" alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
-      - name: Validate ALICE MGLRU Guard safety
-        run: |
-          set -eu
-          F=alice/android-app/app/src/main/assets/alice_mglru_guard.sh
-          sh -n "$F"
-          grep -q 'ALICE_MGLRU_ON_TRIAL_8S' "$F"
-          grep -q 'ALICE_MGLRU_FINISHED_OFF' "$F"
-          grep -q 'ALICE_GATE_PSI_NOT_ELIGIBLE' "$F"
-          grep -q 'ALICE_GATE_SOC_HOT' "$F"
-          grep -q 'ALICE_GATE_BATTERY_HOT' "$F"
-          grep -q 'ALICE_MGLRU_AUTO_PAUSED_AFTER_STALL' "$F"
-          grep -q 'restore; release' "$F"
-          ! grep -Eq '^[[:space:]]*(kill|pkill|killall|stop|setprop)' "$F"
-          grep -q 'EXTRA_MGLRU_OPT_IN' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
-          grep -q 'mglruEligibleSamples >= 2' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
-          grep -q 'mglruAttempted = true' alice/android-app/app/src/main/java/com/halot455/alice/AliceResourceService.java
-      - name: Compile llama.cpp Android ARM64
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"
-          git clone -q https://github.com/ggml-org/llama.cpp.git /tmp/llama-cpp
-          git -C /tmp/llama-cpp checkout -q e937b17a2df081e9c7ae380f0dab4341c1585bce
-          cmake -S /tmp/llama-cpp -B /tmp/llama-arm64 \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 \
-            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON \
-            -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
-            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF \
-            -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_EXAMPLES=ON
-          cmake --build /tmp/llama-arm64 --target llama-cli -j 3
-          CLI=$(find /tmp/llama-arm64 -type f -name llama-cli -print -quit)
-          test -n "$CLI"
-          file "$CLI"
-          file "$CLI" | grep 'aarch64\|ARM aarch64\|ARM64'
-          mkdir -p alice/android-app/app/src/main/jniLibs/arm64-v8a
-          cp "$CLI" alice/android-app/app/src/main/jniLibs/arm64-v8a/libalice_llama_cli.so
-          chmod 0755 alice/android-app/app/src/main/jniLibs/arm64-v8a/libalice_llama_cli.so
-      - name: Build Alice debug APK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Check lean LRU-only package
+        run: python3 scripts/test_v12r69_r5_lru_only.py
+      - name: Build APK
         run: gradle -p alice/android-app :app:assembleDebug --no-daemon --stacktrace
-      - name: Validate APK
+      - name: Verify signature and package contents
         run: |
           set -eu
           FILE=alice/android-app/app/build/outputs/apk/debug/app-debug.apk
-          test -s "$FILE"
-          unzip -t "$FILE" | grep 'No errors detected'
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools/35.0.0"
+          "$SDK/apksigner" verify --verbose --print-certs "$FILE"
+          "$SDK/aapt" dump badging "$FILE" | tee alice/android-app/APK_INFO.txt
+          ! unzip -Z1 "$FILE" | grep -E '(^lib/|gguf|llama|qwen|alice_memory|alice_process|alice_low_swap)'
+          ! "$SDK/aapt" dump permissions "$FILE" | grep -E 'INTERNET|FOREGROUND_SERVICE|ACCESS_NETWORK_STATE'
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R65-MGLRU-Guard-AI-APK-${{ github.sha }}
+          name: ALICE-V12R69-R5-LRU-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS
+            alice/android-app/APK_INFO.txt
           if-no-files-found: error
+          retention-days: 30

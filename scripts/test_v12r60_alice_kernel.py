@@ -7,8 +7,8 @@ mm = Path("mm/vmscan.c").read_text()
 core = Path("kernel/alice_sysintel.c").read_text()
 hdr = Path("include/linux/alice_sysintel.h").read_text()
 assert "CONFIG_ALICE_SYSINTEL=y" in cfg
-assert "CONFIG_MALI_HALO_NPU_PARTITION=y" in cfg
-assert "CONFIG_LRU_GEN_ENABLED=y" in cfg
+assert "# CONFIG_MALI_HALO_NPU_PARTITION is not set" in cfg
+assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg
 assert 'source "kernel/Kconfig.alice"' in kc
 assert "obj-$(CONFIG_ALICE_SYSINTEL) += alice_sysintel.o" in mk
 assert "alice_sysintel_no_progress" in mm
