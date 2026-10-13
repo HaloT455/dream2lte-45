@@ -1,5 +1,14 @@
 plugins { id 'com.android.application' }
 android { namespace 'com.halot455.alice'; compileSdk 35
   defaultConfig { applicationId 'com.halot455.alice'; minSdk 28; targetSdk 35; versionCode 12695; versionName 'V12R69-R5-LRU' }
+  signingConfigs {
+    lruDebug {
+      storeFile file("${System.getProperty('user.home')}/.android/alice-lru-r5.keystore")
+      storePassword 'android'
+      keyAlias 'androiddebugkey'
+      keyPassword 'android'
+    }
+  }
+  buildTypes { debug { signingConfig signingConfigs.lruDebug } }
   compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

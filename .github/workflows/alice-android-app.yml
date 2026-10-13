@@ -29,8 +29,18 @@ jobs:
       - name: Restore debug signing key for future updates
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: alice-lru-debug-key-r5
+          path: ~/.android/alice-lru-r5.keystore
+          key: alice-lru-debug-key-r5-stable
+      - name: Create persistent debug signing key if missing
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -s "$HOME/.android/alice-lru-r5.keystore" ]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$HOME/.android/alice-lru-r5.keystore" \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Install Android SDK 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Check lean LRU-only package
@@ -40,6 +50,7 @@ jobs:
       - name: Verify signature and package contents
         run: |
           set -eu
+          test -s "$HOME/.android/alice-lru-r5.keystore"
           FILE=alice/android-app/app/build/outputs/apk/debug/app-debug.apk
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools/35.0.0"
           "$SDK/apksigner" verify --verbose --print-certs "$FILE"
