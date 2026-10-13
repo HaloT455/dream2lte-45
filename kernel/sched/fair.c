@@ -128,10 +128,9 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
 #endif
 
 /*
- * Use the standard EAS capacity headroom.  Keeping this aligned with
- * schedutil's 1.25 tipping factor lets EAS select a suitable cluster and
- * schedutil select its frequency from the same utilization signal, without
- * an A53-first 85% spill gate.
+ * Keep the established EAS placement headroom. EnergyStep consumes the
+ * scheduler utilization independently and applies its own frequency headroom.
+ * Placement margin is not a governor dependency or a frequency multiplier.
  */
 unsigned int capacity_margin = 1280;
 

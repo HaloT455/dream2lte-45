@@ -24,7 +24,6 @@ obj-$(CONFIG_SCHED_CPU_UI_HINTS) += cpu_ui.o
 obj-$(CONFIG_CGROUP_CPUACCT) += cpuacct.o
 obj-$(CONFIG_CPU_FREQ) += cpufreq.o
 obj-$(CONFIG_CPU_FREQ_GOV_SCHED) += cpufreq_sched.o
-obj-$(CONFIG_CPU_FREQ_GOV_SCHEDUTIL) += cpufreq_schedutil.o
 obj-$(CONFIG_CPU_FREQ_GOV_ENERGYSTEP) += cpufreq_energy_step.o
 
 obj-$(CONFIG_PSI) += psi.o

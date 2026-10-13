@@ -9,21 +9,25 @@ Build and runtime tests remain mandatory.
 """
 from pathlib import Path
 es = Path("kernel/sched/cpufreq_energy_step.c").read_text()
-su = Path("kernel/sched/cpufreq_schedutil.c").read_text()
 cfg = Path("arch/arm64/configs/exynos8895-dream2lte_defconfig").read_text()
 k = Path("drivers/cpufreq/Kconfig").read_text()
 h = Path("include/linux/cpufreq.h").read_text()
 m = Path("kernel/sched/Makefile").read_text()
 assert "CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y" in cfg
-assert "# CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL is not set" in cfg
 assert "CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y" in cfg
-assert "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" in cfg, "Schedutil required for manual rollback"
+assert "SCHEDUTIL" not in cfg, "Schedutil must not be present in the S8+ configuration"
+assert not Path("kernel/sched/cpufreq_schedutil.c").exists()
+assert "SCHEDUTIL" not in k and "SCHEDUTIL" not in h and "SCHEDUTIL" not in m
+init = Path("init/Kconfig").read_text()
+assert "CPU_FREQ_GOV_SCHEDUTIL" not in init
+assert "depends on CPU_FREQ_GOV_ENERGYSTEP" in k
+assert "CONFIG_SCHED_TUNE=y" in cfg and "CONFIG_FREQVAR_SCHEDTUNE=y" in cfg
 assert "config CPU_FREQ_DEFAULT_GOV_ENERGYSTEP" in k
 assert "config CPU_FREQ_GOV_ENERGYSTEP" in k
 assert "(&cpufreq_gov_energy_step)" in h
 assert "CONFIG_CPU_FREQ_GOV_ENERGYSTEP) += cpufreq_energy_step.o" in m
 assert 'name = "energy_step"' in es
-assert 'name = "schedutil"' in su
+assert "sugov_" not in es and 'name = "schedutil"' not in es
 assert "static unsigned int esgov_step_target" in es
 assert "ALICE_ESGOV_STEPS" not in es
 assert "cpufreq_frequency_table_target(policy, policy->freq_table," in es
@@ -37,5 +41,6 @@ for code in ("cpufreq_add_update_util_hook", "cpufreq_remove_update_util_hook",
 assert "emstune" not in es or "NOT Samsung EMS" in es
 print("PASS: EnergyStep-compat registered independently and default configured")
 print("PASS: Driver hardware steps clamp to cpufreq policy min/max; WALT, thermal limits preserved")
-print("PASS: schedutil fallback remains compiled and selectable")
+print("PASS: schedutil implementation, build/default selection and Kconfig dependencies removed")
+print("PASS: EnergyStep directly registers scheduler hooks; SchedTune and frequency boost preserved")
 print("NOTE: static tests do not prove Samsung EMS parity, power savings or device stability")

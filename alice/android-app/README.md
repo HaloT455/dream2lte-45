@@ -27,3 +27,7 @@ that app's downloaded model/settings. Stop the old app before testing R5.
 Old manually installed `service.d` scripts are outside an APK or boot update.
 If an ALICE auto-enable script was installed there, disable that exact script
 before testing manual LRU. Do not remove unrelated KernelSU modules or scripts.
+
+R6 removes the schedutil governor/source/build hooks. EnergyStep drives CPU
+DVFS directly, and MGLRU remains default ON. The unchanged R5 APK continues
+to control LRU and export logs.

@@ -905,7 +905,7 @@ ktime_t tick_nohz_get_sleep_length(void)
 /**
  * tick_nohz_get_idle_calls - return the current idle calls counter value
  *
- * Called from the schedutil frequency scaling governor in scheduler context.
+ * Called from scheduler-driven frequency governors in scheduler context.
  */
 unsigned long tick_nohz_get_idle_calls(void)
 {

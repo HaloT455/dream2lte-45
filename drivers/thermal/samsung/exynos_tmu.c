@@ -152,7 +152,7 @@
 /*
  * APOLLO throttling starts at 65C.  Release a stale A53 cooling state as
  * soon as the sensor is one full degree below that trip.  This keeps the
- * complete 455MHz..2.002GHz schedutil range available while cool, including
+ * complete 455MHz..2.002GHz EnergyStep range available while cool, including
  * after suspend and charger transitions, without bypassing hot protection.
  */
 #define APOLLO_COOLING_RELEASE_TEMP	64000

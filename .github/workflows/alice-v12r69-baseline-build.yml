@@ -1,4 +1,4 @@
-name: Build V12R69 R5ON LRU-only EnergyStep kernel
+name: Build V12R69 R6 LRU-only EnergyStep kernel
 # MGLRU ON at boot by user request; EnergyStep retained, AI workers disabled.
 
 on:
@@ -72,7 +72,6 @@ jobs:
 
       - name: Host scheduler regression checks
         run: |
-          python3 scripts/test_schedutil_work.py
           python3 scripts/test_cpu_ui_hints.py
           python3 scripts/test_ui_trace.py
           python3 scripts/test_mglru_reclaim_stability.py
@@ -117,12 +116,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-R5ON-ENERGYSTEP-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R69-R6-ENERGYSTEP-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-R5ON-ENERGYSTEP-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R69-R6-ENERGYSTEP-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -192,8 +191,9 @@ jobs:
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y$' "$OUT/.config"
           grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$OUT/.config"
-          grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$OUT/.config"
-          grep -q '^# CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL is not set$' "$OUT/.config"
+          ! grep -q 'CONFIG_.*SCHEDUTIL' "$OUT/.config"
+          grep -q '^CONFIG_SCHED_TUNE=y$' "$OUT/.config"
+          grep -q '^CONFIG_FREQVAR_SCHEDTUNE=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_WALT_DEFAULT=y$' "$OUT/.config"
           grep -q '^CONFIG_SCHED_CPU_UI_HINTS=y$' "$OUT/.config"
           grep -q '^CONFIG_CGROUP_SCHEDTUNE=y$' "$OUT/.config"
@@ -205,12 +205,12 @@ jobs:
           grep -q -- '-DKSU_VERSION=32590' drivers/kernelsu/Makefile
           grep -q 'KSU_EXPECTED_SIZE := 0x0363' drivers/kernelsu/Makefile
           grep -q '^unsigned int capacity_margin = 1280;$' kernel/sched/fair.c
-          grep -q 'SUGOV_DEFAULT_UP_RATE_LIMIT_US.*(2500)' kernel/sched/cpufreq_schedutil.c
-          grep -q 'SUGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(8000)' kernel/sched/cpufreq_schedutil.c
+          grep -q 'ESGOV_DEFAULT_UP_RATE_LIMIT_US.*(3000)' kernel/sched/cpufreq_energy_step.c
+          grep -q 'ESGOV_DEFAULT_DOWN_RATE_LIMIT_US.*(12000)' kernel/sched/cpufreq_energy_step.c
           grep -q 'register_syscore_ops(&s3c2410wdt_syscore_ops)' drivers/watchdog/s3c2410_wdt.c
           ! grep -q 'SIMPLE_DEV_PM_OPS(s3c2410wdt_pm_ops' drivers/watchdog/s3c2410_wdt.c
-          grep -q 'kthread_bind_mask(thread, policy->related_cpus)' kernel/sched/cpufreq_schedutil.c
-          ! grep -q 'SUGOV_WORKER_CPU' kernel/sched/cpufreq_schedutil.c
+          grep -q 'kthread_bind_mask(thread, policy->related_cpus)' kernel/sched/cpufreq_energy_step.c
+          ! grep -q 'SUGOV_WORKER_CPU' kernel/sched/cpufreq_energy_step.c
           grep -q 'APOLLO_COOLING_RELEASE_TEMP.*64000' drivers/thermal/samsung/exynos_tmu.c
           grep -A2 'mngs_alert0: mngs-alert0' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '65000'
           grep -A2 'mngs_alert1: mngs-alert1' arch/arm64/boot/dts/exynos/exynos8895.dtsi | grep -q '70000'
@@ -236,7 +236,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R5ON-build-log-${{ github.sha }}
+          name: ALICE-V12R69-R6-build-log-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -270,6 +270,14 @@ jobs:
           check_image_string 'cma_busy_retries_region=%llu'
           check_image_string 'energy_step'
           check_map_symbol cpufreq_gov_energy_step
+          if grep -Eq ' (cpufreq_gov_schedutil|sugov_[[:alnum:]_]+)$' "$OUT/System.map"; then
+            echo "::error::Schedutil symbols must not be linked"
+            exit 1
+          fi
+          if grep -a -q 'schedutil' "$OUT/arch/arm64/boot/Image"; then
+            echo "::error::Schedutil must be absent from the Image"
+            exit 1
+          fi
           check_map_symbol lru_gen_set_state
           check_map_symbol lru_gen_init_lruvec
           check_map_symbol psi_init
@@ -279,7 +287,7 @@ jobs:
           check_map_symbol alice_sysintel_no_progress
           check_image_string 'mglru_offload=0 mglru_auto_enable=0'
           check_image_string 'manual_vm_policy=0 mglru_boot_default=%d'
-          check_image_string 'V12R69 R5ON ALICE LRU-ONLY ENERGY-STEP-COMPAT'
+          check_image_string 'V12R69 R6 ALICE LRU-ONLY ENERGY-STEP-COMPAT'
           check_map_symbol alice_sysintel_init
           check_map_symbol vpu_device_init
           check_map_symbol vpu_system_resume
@@ -304,9 +312,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R5ON-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R6-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R5ON-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R6-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package verified kernel
@@ -322,10 +330,10 @@ jobs:
           sha256sum Image dtb.img System.map kernel.config > SHA256SUMS
           sha256sum -c SHA256SUMS
 
-      - name: Upload verified R5ON kernel
+      - name: Upload verified R6 kernel
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R5ON-kernel-${{ github.sha }}
+          name: ALICE-V12R69-R6-kernel-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
           compression-level: 9

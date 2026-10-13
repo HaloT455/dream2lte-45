@@ -1334,7 +1334,7 @@ config SCHED_AUTOGROUP
 
 config SCHED_TUNE
 	bool "Boosting for CFS tasks (EXPERIMENTAL)"
-	depends on CPU_FREQ_GOV_SCHEDUTIL
+	depends on CPU_FREQ && SMP
 	help
 	  This option enables the system-wide support for task boosting.
 	  When this support is enabled a new sysctl interface is exposed to
@@ -1364,7 +1364,7 @@ config SCHED_CPU_UI_HINTS
 	depends on SMP && FAIR_GROUP_SCHED && CGROUP_SCHEDTUNE
 	help
 	  Use the existing top-app, foreground and foreground_window CPU
-	  cgroups as modest EAS/Schedutil hints on Android ROMs which no
+	  cgroups as modest EAS/EnergyStep hints on Android ROMs which no
 	  longer mount SchedTune. No userspace configuration is required.
 	  A mounted SchedTune controller always takes precedence. Disable
 	  this fallback at runtime with kernel.sched_cpu_ui_hints=0.

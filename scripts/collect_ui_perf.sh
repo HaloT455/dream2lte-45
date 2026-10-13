@@ -45,7 +45,7 @@ snapshot() {
         policy=/sys/devices/system/cpu/cpu$cpu/cpufreq
         for name in scaling_governor scaling_cur_freq scaling_min_freq \
             scaling_max_freq cpuinfo_min_freq cpuinfo_max_freq \
-            schedutil/up_rate_limit_us schedutil/down_rate_limit_us \
+            energy_step/up_rate_limit_us energy_step/down_rate_limit_us \
             stats/time_in_state; do
             read_node "$policy/$name"
         done

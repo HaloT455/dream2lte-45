@@ -6,7 +6,6 @@ mm = Path("mm/page_isolation.c").read_text()
 hdr = Path("include/linux/page-isolation.h").read_text()
 ion = Path("drivers/staging/android/ion/ion_cma_heap.c").read_text()
 sysfs = Path("drivers/staging/android/ion/exynos/exynos_ion.c").read_text()
-workflow = Path(".github/workflows/build.yml").read_text()
 
 assert "struct page_isolation_diag_stats" in hdr
 assert "void page_isolation_get_diag" in hdr and "void page_isolation_get_diag" in mm
