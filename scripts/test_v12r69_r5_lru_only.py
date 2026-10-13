@@ -21,7 +21,7 @@ assert 'IS_ENABLED(CONFIG_LRU_GEN_ENABLED)' in core
 assert 'alice_sysintel_reclaim' in core and 'alice_sysintel_no_progress' in core
 cfg = Path('arch/arm64/configs/exynos8895-dream2lte_defconfig').read_text()
 for setting in ('CONFIG_ALICE_SYSINTEL=y', 'CONFIG_LRU_GEN=y',
-                '# CONFIG_LRU_GEN_ENABLED is not set', '# CONFIG_MALI_HALO_NPU_PARTITION is not set',
+                'CONFIG_LRU_GEN_ENABLED=y', '# CONFIG_MALI_HALO_NPU_PARTITION is not set',
                 'CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y', 'CONFIG_EXYNOS_VPU_HARDWARE=y'):
     assert setting in cfg, setting
 source = (app/'assets/alice_lru.sh').read_text()

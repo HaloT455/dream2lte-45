@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0
- * ALICE V12R69 R5: read-only MGLRU diagnostics. No policy or inference worker.
+ * ALICE V12R69 R5-ON: read-only MGLRU diagnostics. No policy or inference worker.
  * MGLRU control remains /sys/kernel/mm/lru_gen/enabled.
  */
 #include <linux/init.h>
@@ -36,7 +36,7 @@ static ssize_t version_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE,
-		"V12R69 R5 ALICE LRU-ONLY ENERGY-STEP-COMPAT\n");
+		"V12R69 R5ON ALICE LRU-ONLY ENERGY-STEP-COMPAT\n");
 }
 
 static ssize_t safety_show(struct kobject *kobj,

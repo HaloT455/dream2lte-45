@@ -11,8 +11,9 @@ thermal values and `dumpsys cpuinfo`. They are captured only on a user request.
 Root output is drained concurrently so large snapshots cannot fill the pipe
 while Java waits for the shell. OFF can run while a trial is pending.
 
-R5 defaults MGLRU OFF after the reported two-app freeze; manual ON is still an
-experimental device test. The existing heat gate blocks ON at SoC >=53 C or
+The R5-ON kernel now defaults MGLRU ON at the user request. The previous R5
+kernel defaulted OFF after the reported two-app freeze. Runtime OFF remains
+available in this same APK; the two-app freeze is not verified fixed. The existing heat gate blocks ON at SoC >=53 C or
 battery >=39 C. OFF has no heat or boot-completion gate. A userspace cleanup
 cannot recover a deadlocked kernel.
 
