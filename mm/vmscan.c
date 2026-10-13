@@ -1653,6 +1653,74 @@ static int current_may_throttle(void)
 
 static inline bool need_memory_boosting(struct zone *zone);
 
+/* Shared pageout feedback for classic LRU and the generation bridge. */
+static void reclaim_writeback_throttle(struct zone *zone,
+				      struct scan_control *sc,
+				      unsigned long nr_taken,
+				      unsigned long nr_dirty,
+				      unsigned long nr_congested,
+				      unsigned long nr_unqueued_dirty,
+				      unsigned long nr_writeback,
+				      unsigned long nr_immediate)
+{
+	/*
+	 * If reclaim is isolating dirty pages under writeback, it implies
+	 * that the long-lived page allocation rate is exceeding the page
+	 * laundering rate. Either the global limits are not being effective
+	 * at throttling processes due to the page distribution throughout
+	 * zones or there is heavy usage of a slow backing device. The
+	 * only option is to throttle from reclaim context which is not ideal
+	 * as there is no guarantee the dirtying process is throttled in the
+	 * same way balance_dirty_pages() manages.
+	 *
+	 * Once a zone is flagged ZONE_WRITEBACK, kswapd will count the number
+	 * of pages under pages flagged for immediate reclaim and stall if any
+	 * are encountered in the nr_immediate check below.
+	 */
+	if (nr_writeback && nr_writeback == nr_taken)
+		set_bit(ZONE_WRITEBACK, &zone->flags);
+
+	/*
+	 * Legacy memcg will stall in page writeback so avoid forcibly
+	 * stalling here.
+	 */
+	if (sane_reclaim(sc)) {
+		/*
+		 * Tag a zone as congested if all the dirty pages scanned were
+		 * backed by a congested BDI and wait_iff_congested will stall.
+		 */
+		if (nr_dirty && nr_dirty == nr_congested)
+			set_bit(ZONE_CONGESTED, &zone->flags);
+
+		/*
+		 * If dirty pages are scanned that are not queued for IO, it
+		 * implies that flushers are not keeping up. In this case, flag
+		 * the zone ZONE_DIRTY and kswapd will start writing pages from
+		 * reclaim context.
+		 */
+		if (nr_unqueued_dirty == nr_taken)
+			set_bit(ZONE_DIRTY, &zone->flags);
+
+		/*
+		 * If kswapd scans pages marked marked for immediate
+		 * reclaim and under writeback (nr_immediate), it implies
+		 * that pages are cycling through the LRU faster than
+		 * they are written so also forcibly stall.
+		 */
+		if (nr_immediate && current_may_throttle())
+			congestion_wait(BLK_RW_ASYNC, HZ/10);
+	}
+
+	/*
+	 * Stall direct reclaim for IO completions if underlying BDIs or zone
+	 * is congested. Allow kswapd to continue until it starts encountering
+	 * unqueued dirty pages or cycling through the LRU too quickly.
+	 */
+	if (!sc->hibernation_mode && !current_is_kswapd() &&
+	    current_may_throttle())
+		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
+}
+
 /*
  * shrink_inactive_list() is a helper for shrink_zone().  It returns the number
  * of reclaimed pages
@@ -1737,62 +1805,8 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 	mem_cgroup_uncharge_list(&page_list);
 	free_hot_cold_page_list(&page_list, true);
 
-	/*
-	 * If reclaim is isolating dirty pages under writeback, it implies
-	 * that the long-lived page allocation rate is exceeding the page
-	 * laundering rate. Either the global limits are not being effective
-	 * at throttling processes due to the page distribution throughout
-	 * zones or there is heavy usage of a slow backing device. The
-	 * only option is to throttle from reclaim context which is not ideal
-	 * as there is no guarantee the dirtying process is throttled in the
-	 * same way balance_dirty_pages() manages.
-	 *
-	 * Once a zone is flagged ZONE_WRITEBACK, kswapd will count the number
-	 * of pages under pages flagged for immediate reclaim and stall if any
-	 * are encountered in the nr_immediate check below.
-	 */
-	if (nr_writeback && nr_writeback == nr_taken)
-		set_bit(ZONE_WRITEBACK, &zone->flags);
-
-	/*
-	 * Legacy memcg will stall in page writeback so avoid forcibly
-	 * stalling here.
-	 */
-	if (sane_reclaim(sc)) {
-		/*
-		 * Tag a zone as congested if all the dirty pages scanned were
-		 * backed by a congested BDI and wait_iff_congested will stall.
-		 */
-		if (nr_dirty && nr_dirty == nr_congested)
-			set_bit(ZONE_CONGESTED, &zone->flags);
-
-		/*
-		 * If dirty pages are scanned that are not queued for IO, it
-		 * implies that flushers are not keeping up. In this case, flag
-		 * the zone ZONE_DIRTY and kswapd will start writing pages from
-		 * reclaim context.
-		 */
-		if (nr_unqueued_dirty == nr_taken)
-			set_bit(ZONE_DIRTY, &zone->flags);
-
-		/*
-		 * If kswapd scans pages marked marked for immediate
-		 * reclaim and under writeback (nr_immediate), it implies
-		 * that pages are cycling through the LRU faster than
-		 * they are written so also forcibly stall.
-		 */
-		if (nr_immediate && current_may_throttle())
-			congestion_wait(BLK_RW_ASYNC, HZ/10);
-	}
-
-	/*
-	 * Stall direct reclaim for IO completions if underlying BDIs or zone
-	 * is congested. Allow kswapd to continue until it starts encountering
-	 * unqueued dirty pages or cycling through the LRU too quickly.
-	 */
-	if (!sc->hibernation_mode && !current_is_kswapd() &&
-	    current_may_throttle())
-		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
+	reclaim_writeback_throttle(zone, sc, nr_taken, nr_dirty, nr_congested,
+				   nr_unqueued_dirty, nr_writeback, nr_immediate);
 
 	trace_mm_vmscan_lru_shrink_inactive(zone->zone_pgdat->node_id,
 		zone_idx(zone),
@@ -4264,6 +4278,22 @@ unlock:
 	return taken;
 }
 
+/*
+ * MGLRU uses the same isolated-page counters as classic 4.4 reclaim. Give
+ * existing reclaimers one bounded chance to put pages back before removing
+ * another batch. Recheck outside lru_lock; never sleep holding that lock.
+ * Returning without fake progress lets the caller try the other page type.
+ */
+static bool lru_gen_reclaim_throttled(struct zone *zone, int type,
+				    struct scan_control *sc)
+{
+	if (!too_many_isolated(zone, type, sc))
+		return false;
+
+	congestion_wait(BLK_RW_ASYNC, HZ / 10);
+	return fatal_signal_pending(current) || too_many_isolated(zone, type, sc);
+}
+
 static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 					   struct scan_control *sc,
 					   int type,
@@ -4280,6 +4310,9 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 	unsigned long nr_immediate = 0;
 	struct page *page;
 	struct zone *zone = lruvec_zone(lruvec);
+
+	if (lru_gen_reclaim_throttled(zone, type, sc))
+		return 0;
 
 	lru_add_drain();
 
@@ -4343,6 +4376,9 @@ static unsigned long lru_gen_reclaim_batch(struct lruvec *lruvec,
 
 	mem_cgroup_uncharge_list(&page_list);
 	free_hot_cold_page_list(&page_list, true);
+
+	reclaim_writeback_throttle(zone, sc, nr_taken, nr_dirty, nr_congested,
+				   nr_unqueued_dirty, nr_writeback, nr_immediate);
 
 	sc->nr_reclaimed += nr_reclaimed;
 	atomic64_add(nr_reclaimed, &lru_gen_diag_reclaim_reclaimed);

@@ -51,8 +51,8 @@ static bool arch_scale_freq_invariant(void) { return invariant; }
 /* Exynos legacy .target makes resolve_freq return the unquantized request. */
 static unsigned int cpufreq_driver_resolve_freq(struct cpufreq_policy *p,unsigned int f)
 { return clamp(f,p->min,p->max); }
-static void esgov_iowait_boost(struct esgov_cpu *cpu,unsigned long *u,unsigned long *m)
-{ (void)cpu; (void)u; (void)m; }
+static void esgov_iowait_boost(struct esgov_cpu *cpu,u64 time,unsigned long *u,unsigned long *m)
+{ (void)cpu; (void)time; (void)u; (void)m; }
 '''
 main=r'''
 int main(void)

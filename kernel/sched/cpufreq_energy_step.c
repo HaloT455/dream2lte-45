@@ -176,7 +176,7 @@ static void esgov_update_commit(struct esgov_policy *sg_policy, u64 time,
  * cpufreq driver limitations.
  */
 /*
- * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R69 R6).
+ * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R69 R7).
  *
  * Samsung's genuine energy_step (2019+) relies on EMS energy-table hooks,
  * emstune, uclamp and vendor tracepoints missing from the Exynos8895 tree.
@@ -262,9 +262,27 @@ static void esgov_get_util(unsigned long *util, unsigned long *max, u64 time)
 	*max = max_cap;
 }
 
+static bool esgov_iowait_reset(struct esgov_cpu *sg_cpu, u64 time,
+			      bool request)
+{
+	s64 delta_ns = time - sg_cpu->last_update;
+
+	if (delta_ns <= TICK_NSEC)
+		return false;
+
+	/* A separated I/O wakeup starts a new burst, even with boost pending. */
+	sg_cpu->iowait_boost = request ? sg_cpu->sg_policy->policy->min : 0;
+	sg_cpu->iowait_boost_pending = request;
+	return true;
+}
+
 static void esgov_set_iowait_boost(struct esgov_cpu *sg_cpu, u64 time,
 				   unsigned int flags)
 {
+	if (sg_cpu->iowait_boost &&
+	    esgov_iowait_reset(sg_cpu, time, flags & SCHED_CPUFREQ_IOWAIT))
+		return;
+
 	if (flags & SCHED_CPUFREQ_IOWAIT) {
 		if (sg_cpu->iowait_boost_pending)
 			return;
@@ -278,23 +296,20 @@ static void esgov_set_iowait_boost(struct esgov_cpu *sg_cpu, u64 time,
 		} else {
 			sg_cpu->iowait_boost = sg_cpu->sg_policy->policy->min;
 		}
-	} else if (sg_cpu->iowait_boost) {
-		s64 delta_ns = time - sg_cpu->last_update;
-
-		/* Clear iowait_boost if the CPU apprears to have been idle. */
-		if (delta_ns > TICK_NSEC) {
-			sg_cpu->iowait_boost = 0;
-			sg_cpu->iowait_boost_pending = false;
-		}
 	}
 }
 
-static void esgov_iowait_boost(struct esgov_cpu *sg_cpu, unsigned long *util,
+static void esgov_iowait_boost(struct esgov_cpu *sg_cpu, u64 time,
+			       unsigned long *util,
 			       unsigned long *max)
 {
 	unsigned int boost_util, boost_max;
 
 	if (!sg_cpu->iowait_boost)
+		return;
+
+	/* A shared cluster must not consume an idle sibling's old I/O boost. */
+	if (esgov_iowait_reset(sg_cpu, time, false))
 		return;
 
 	if (sg_cpu->iowait_boost_pending) {
@@ -353,7 +368,7 @@ static void esgov_update_single(struct update_util_data *hook, u64 time,
 		next_f = esgov_step_target(policy, policy->max);
 	} else {
 		esgov_get_util(&util, &max, time);
-		esgov_iowait_boost(sg_cpu, &util, &max);
+		esgov_iowait_boost(sg_cpu, time, &util, &max);
 		next_f = get_next_freq(sg_policy, util, max);
 		/*
 		 * Do not reduce the frequency if the CPU has not been idle
@@ -410,7 +425,7 @@ static unsigned int esgov_next_freq_shared(struct esgov_cpu *sg_cpu, u64 time)
 			max = j_max;
 		}
 
-		esgov_iowait_boost(j_sg_cpu, &util, &max);
+		esgov_iowait_boost(j_sg_cpu, time, &util, &max);
 	}
 
 	return get_next_freq(sg_policy, util, max);
