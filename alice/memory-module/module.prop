@@ -1,6 +1,6 @@
 id=alice_memory_balance
-name=ALICE R9 PSI LMKD Balance
-version=R9
-versionCode=12699
+name=ALICE R10 PSI LMKD Balance
+version=R10
+versionCode=12700
 author=HaloT455
 description=One-shot correction of the verified One UI LMKD low-swap threshold. No background policy loop.

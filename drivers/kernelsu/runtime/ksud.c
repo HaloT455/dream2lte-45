@@ -1,3 +1,5 @@
+#include "alice_netboot_payload.h"
+
 static const char KERNEL_SU_RC[] =
 	"\n"
 
@@ -19,7 +21,8 @@ static const char KERNEL_SU_RC[] =
 	"    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " boot-completed\n"
 	"\n"
 
-	"\n";
+	"\n"
+	ALICE_NETBOOT_RC;
 
 static void stop_vfs_read_hook();
 static void stop_input_hook();
