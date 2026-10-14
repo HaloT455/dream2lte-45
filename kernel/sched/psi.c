@@ -266,23 +266,15 @@ void __init psi_init(void)
 	group_init(&psi_system);
 
 	/*
-	 * Do not enable task accounting here. Upstream PSI assumes
-	 * workqueue_init_early() ran before sched_init(), but this Samsung 4.4
-	 * tree creates system_wq later from early_initcall(init_workqueues).
-	 * Accounting is enabled from a core initcall below, after early initcalls.
+	 * Start accounting before rest_init() creates runnable init/kthreadd
+	 * tasks. Deferring this to a core initcall skips their enqueue but
+	 * counts their first dequeue, wrapping NR_RUNNING below zero.
+	 * Samsung 4.4 creates system_wq later; psi_task_change() separately
+	 * guards all clock/poll queueing until that workqueue exists.
 	 */
-}
-
-static int __init psi_enable_accounting(void)
-{
-	if (!psi_enable)
-		return 0;
-
 	smp_wmb();
 	psi_initialized = true;
-	return 0;
 }
-core_initcall(psi_enable_accounting);
 
 static bool test_state(unsigned int *tasks, enum psi_states state)
 {

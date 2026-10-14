@@ -6,8 +6,8 @@ exec > "$MODDIR/status.log" 2>&1
 date
 uname -r
 case "$(uname -r)" in
- *-Alice-V12R69-R8-*) ;;
- *) echo ALICE_R8_KERNEL_REQUIRED; exit 0;;
+ *-Alice-V12R69-R8-*|*-Alice-V12R69-R9-*) ;;
+ *) echo ALICE_R8_OR_R9_KERNEL_REQUIRED; exit 0;;
 esac
 tries=0
 while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$tries" -lt 60 ]; do

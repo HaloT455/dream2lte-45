@@ -29,7 +29,6 @@ struct worker {
 
 	struct work_struct	*current_work;	/* L: work being processed */
 	work_func_t		current_func;	/* L: current_work's fn */
-	work_func_t		last_func;	/* L: last completed work for PSI */
 	struct pool_workqueue	*current_pwq; /* L: current_work's pwq */
 	bool			desc_valid;	/* ->desc is valid */
 	struct list_head	scheduled;	/* L: scheduled works */
@@ -54,6 +53,9 @@ struct worker {
 
 	/* used only by rescuers to point to the target workqueue */
 	struct workqueue_struct	*rescue_wq;	/* I: the workqueue to rescue */
+
+	/* Keep the original Samsung worker member offsets unchanged. */
+	work_func_t		last_func;	/* L: last completed work for PSI */
 };
 
 /**
