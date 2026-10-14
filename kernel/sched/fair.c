@@ -132,7 +132,8 @@ unsigned int sysctl_sched_cfs_bandwidth_slice = 5000UL;
  * scheduler utilization independently and applies its own frequency headroom.
  * Placement margin is not a governor dependency or a frequency multiplier.
  */
-unsigned int capacity_margin = 1280;
+/* Match EnergyStep's 12.5% capacity reserve for placement and DVFS. */
+unsigned int capacity_margin = 1152;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {

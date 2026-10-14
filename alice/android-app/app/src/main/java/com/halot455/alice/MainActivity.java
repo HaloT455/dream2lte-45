@@ -9,6 +9,7 @@ import android.graphics.Typeface;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.OutputStream;
@@ -17,6 +18,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** LRU controls run only on a button press; there is no resident service. */
 public final class MainActivity extends Activity {
@@ -25,6 +28,8 @@ public final class MainActivity extends Activity {
     private final AtomicBoolean turningOff = new AtomicBoolean(false);
     private final StringBuilder history = new StringBuilder();
     private TextView report, status;
+    private TextView gpuLabel;
+    private SeekBar gpuBoost;
 
     private TextView text(LinearLayout root, String value, int size) {
         TextView view = new TextView(this);
@@ -51,15 +56,34 @@ public final class MainActivity extends Activity {
         int padding = (int)(20 * getResources().getDisplayMetrics().density);
         root.setPadding(padding, padding, padding, padding);
         scroll.addView(root);
-        text(root, "ALICE LRU · R5", 24).setTypeface(null, Typeface.BOLD);
+        text(root, "ALICE LRU · GPU · R8", 24).setTypeface(null, Typeface.BOLD);
         text(root, "Điều khiển MGLRU và lấy log trên S8+ Exynos. Cấp quyền root bằng KernelSU khi thao tác.", 15);
         status = text(root, "Nhấn Đọc trạng thái để xem LRU, xung CPU và nhiệt độ.", 15);
         button(root, "Đọc trạng thái và nhiệt độ", () -> run("status"));
         button(root, "Bật MGLRU", () -> confirm("on"));
         button(root, "Thử MGLRU 8 giây rồi tắt", () -> confirm("trial"));
         button(root, "Tắt MGLRU", () -> run("off"));
+        text(root, "GPU boost", 21).setTypeface(null, Typeface.BOLD);
+        text(root, "Mức âm ưu tiên pin; mức dương ưu tiên hiệu năng. Điều chỉnh độ nhạy theo tải, không phải phần trăm xung hoặc pin. Kernel giữ giới hạn nhiệt/xung; mức âm giảm dần tác động khi tải gần đầy.", 14);
+        gpuLabel = text(root, "GPU boost chọn: -5% · chưa đọc từ kernel", 16);
+        gpuBoost = new SeekBar(this);
+        gpuBoost.setMax(30);
+        int selected = state == null ? -5 : state.getInt("gpu_selection", -5);
+        gpuBoost.setProgress(Math.max(0, Math.min(30, selected + 10)));
+        gpuLabel.setText("GPU boost chọn: " + (gpuBoost.getProgress() - 10) + "% · chưa đọc từ kernel");
+        root.addView(gpuBoost, new LinearLayout.LayoutParams(-1, -2));
+        gpuBoost.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int value = progress - 10;
+                gpuLabel.setText("GPU boost chọn: " + (value > 0 ? "+" : "") + value + "% · bấm Áp dụng để đổi");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        button(root, "Đọc GPU boost hiện tại", () -> run("gpu-status"));
+        button(root, "Áp dụng GPU boost", () -> run("gpu:" + (gpuBoost.getProgress() - 10)));
         button(root, "Xuất log", this::exportLog);
-        text(root, "EnergyStep được giữ trong kernel. ALICE chỉ chạy khi anh bấm nút; không tải model hoặc tự chỉnh RAM, LMKD, CPU hay GPU.", 14);
+        text(root, "R8 để MGLRU tắt mặc định. EAS + EnergyStep điều khiển CPU theo tải. ALICE chỉ đổi LRU/GPU boost khi anh bấm nút; không có dịch vụ chạy nền. GPU boost trở về mặc định kernel sau reboot.", 14);
         report = text(root, "Chưa có log.", 13);
         report.setTextIsSelectable(true);
         if (state != null) {
@@ -89,7 +113,7 @@ public final class MainActivity extends Activity {
         AtomicBoolean gate = off ? turningOff : busy;
         if (!gate.compareAndSet(false, true)) { toast("Đang xử lý thao tác trước."); return; }
         // OFF has its own request, so it never waits behind an eight-second trial.
-        status.setText(off ? "Đang tắt MGLRU…" : "Đang đọc / điều khiển MGLRU…");
+        status.setText(off ? "Đang tắt MGLRU…" : action.startsWith("gpu") ? "Đang đọc / điều chỉnh GPU boost…" : "Đang đọc / điều khiển MGLRU…");
         new Thread(() -> {
             String output;
             try {
@@ -103,6 +127,14 @@ public final class MainActivity extends Activity {
                 history.append(value).append("\n\n");
                 if (history.length() > 96000) history.delete(0, history.length() - 96000);
                 report.setText(value);
+                Matcher match = Pattern.compile("(?m)^ALICE_GPU_BOOST=(-?\\d+)$").matcher(value);
+                if (match.find()) {
+                    int applied = Integer.parseInt(match.group(1));
+                    if (applied >= -10 && applied <= 20) {
+                        gpuBoost.setProgress(applied + 10);
+                        gpuLabel.setText("GPU boost từ kernel: " + (applied > 0 ? "+" : "") + applied + "%");
+                    }
+                }
                 status.setText("Đã nhận kết quả. Trạng thái thực và mã lỗi nằm trong log bên dưới.");
             });
         }, off ? "alice-lru-off" : "alice-lru-request").start();
@@ -114,7 +146,7 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("text/plain");
-        intent.putExtra(Intent.EXTRA_TITLE, "ALICE_LRU_R5_" + date + ".log");
+        intent.putExtra(Intent.EXTRA_TITLE, "ALICE_LRU_GPU_R8_" + date + ".log");
         startActivityForResult(intent, EXPORT_LOG);
     }
 
@@ -139,6 +171,7 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(state);
         state.putString("history", history.toString());
         state.putString("report", report.getText().toString());
+        state.putInt("gpu_selection", gpuBoost.getProgress() - 10);
     }
 
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_LONG).show(); }

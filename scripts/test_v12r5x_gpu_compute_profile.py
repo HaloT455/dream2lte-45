@@ -15,7 +15,7 @@ assert "CONFIG_MALI_TMIX_R19P0=y" in cfg
 assert "CONFIG_EXYNOS_VPU_EXYNOS8895=y" in cfg
 assert "CONFIG_EXYNOS_VPU_HARDWARE=y" in cfg
 assert "CONFIG_LRU_GEN=y" in cfg
-assert "CONFIG_LRU_GEN_ENABLED=y" in cfg
+assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg
 assert "CONFIG_ZRAM=y" in cfg
 assert "CONFIG_PSI=y" in cfg
 assert "#define HALO_NPU_GPU_CORE_COUNT 5" in gpu
@@ -38,5 +38,5 @@ assert "static bool lru_gen_ptwalk_runtime;" in vmscan
 assert "static bool lru_gen_scan_around_runtime;" in vmscan
 print("PASS: split requires real Mali-G71 MP20 dual group topology")
 print("PASS: optional 15/5 implementation retained in source, disabled in R5")
-print("PASS: VPU remains independent; MGLRU remains CPU-side and default ON; compute split disabled")
+print("PASS: VPU remains independent; MGLRU remains CPU-side and default OFF; compute split disabled")
 print("NOTE: not an AI accelerator or verified boot until on-device evaluation")

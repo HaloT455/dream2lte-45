@@ -1,4 +1,4 @@
-name: ALICE V12R69 R5 LRU-only APK
+name: ALICE V12R69 R8 LRU GPU APK
 on:
   workflow_dispatch:
   push:
@@ -43,7 +43,7 @@ jobs:
           fi
       - name: Install Android SDK 35
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - name: Check lean LRU-only package
+      - name: Check lean LRU and GPU controls
         run: python3 scripts/test_v12r69_r5_lru_only.py
       - name: Build APK
         run: gradle -p alice/android-app :app:assembleDebug --no-daemon --stacktrace
@@ -60,7 +60,7 @@ jobs:
           sha256sum "$FILE" > alice/android-app/apk.SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R5-LRU-APK-${{ github.sha }}
+          name: ALICE-V12R69-R8-LRU-GPU-APK-${{ github.sha }}
           path: |
             alice/android-app/app/build/outputs/apk/debug/app-debug.apk
             alice/android-app/apk.SHA256SUMS

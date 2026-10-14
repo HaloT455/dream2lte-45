@@ -176,7 +176,7 @@ static void esgov_update_commit(struct esgov_policy *sg_policy, u64 time,
  * cpufreq driver limitations.
  */
 /*
- * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R69 R7).
+ * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R69 R8).
  *
  * Samsung's genuine energy_step (2019+) relies on EMS energy-table hooks,
  * emstune, uclamp and vendor tracepoints missing from the Exynos8895 tree.
@@ -218,8 +218,9 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 	if (unlikely(!max))
 		return policy->min;
 
-	/* Conservative frequency headroom (112.5%). */
-	raw = div64_u64((u64)(base + (base >> 3)) * util, max);
+	/* Use the same capacity reserve as energy-aware task placement. */
+	raw = div64_u64((u64)base * util * READ_ONCE(capacity_margin),
+			(u64)max * SCHED_CAPACITY_SCALE);
 
 	if (raw == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
 		return sg_policy->next_freq;

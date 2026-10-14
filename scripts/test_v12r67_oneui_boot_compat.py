@@ -7,7 +7,7 @@ from pathlib import Path
 v = Path("mm/vmscan.c").read_text()
 cfg = Path("arch/arm64/configs/exynos8895-dream2lte_defconfig").read_text()
 a = Path("kernel/alice_sysintel.c").read_text()
-assert "CONFIG_LRU_GEN_ENABLED=y" in cfg
+assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg
 assert "lru_gen_early_shell_off_ignored = ATOMIC_INIT(0)" in v
 assert "time_before(jiffies, msecs_to_jiffies(60000))" in v
 assert '!strcmp(current->comm, "sh")' in v

@@ -920,6 +920,20 @@ struct task_struct *wq_worker_sleeping(struct task_struct *task, int cpu)
 }
 
 /**
+ * wq_worker_last_func - last completed work of a sleeping worker
+ * @task: workqueue worker being dequeued under rq->lock
+ *
+ * No pool lock is taken here: the scheduler already serializes the sleeping
+ * worker. This is the upstream PSI idle-shutoff interface for the 4.4 worker.
+ */
+work_func_t wq_worker_last_func(struct task_struct *task)
+{
+	struct worker *worker = kthread_data(task);
+
+	return worker->last_func;
+}
+
+/**
  * worker_set_flags - set worker flags and adjust nr_running accordingly
  * @worker: self
  * @flags: flags to set
@@ -2097,6 +2111,9 @@ __acquires(&pool->lock)
 	/* clear cpu intensive status */
 	if (unlikely(cpu_intensive))
 		worker_clr_flags(worker, WORKER_CPU_INTENSIVE);
+
+	/* Preserve the completed function for PSI's scheduler dequeue hook. */
+	worker->last_func = worker->current_func;
 
 	/* we're done with it, release */
 	hash_del(&worker->hentry);

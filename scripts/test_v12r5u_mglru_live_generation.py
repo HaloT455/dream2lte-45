@@ -40,11 +40,11 @@ assert "unlock_scan_around:\n\tspin_unlock_irq(&zone->lru_lock);" in scan
 
 # Keep potentially risky walkers as explicit opt-in until field evidence.
 assert "CONFIG_LRU_GEN=y" in cfg
-assert "CONFIG_LRU_GEN_ENABLED=y" in cfg
+assert "# CONFIG_LRU_GEN_ENABLED is not set" in cfg
 assert "static bool lru_gen_scan_around_runtime;" in v
 assert "static bool lru_gen_ptwalk_runtime;" in v
 assert "lru_gen_age_lruvec_legacy(lruvec, sc, swappiness)" in v
 print("PASS: sampled PTE promotion loads current generation under per-zone LRU lock")
 print("PASS: rmap scan-around checks live MGLRU state under per-zone LRU lock")
-print("PASS: V12R5U retains default-ON and bounded opt-in PTE aging")
+print("PASS: V12R5U retains default-OFF and bounded opt-in PTE aging")
 print("NOTE: physical device stress + persistent logs still required")

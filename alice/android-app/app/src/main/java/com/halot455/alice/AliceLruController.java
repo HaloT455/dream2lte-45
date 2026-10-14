@@ -36,8 +36,14 @@ public final class AliceLruController {
 
     public static Result run(Context context, String action) throws Exception {
         if (!"status".equals(action) && !"on".equals(action)
-                && !"off".equals(action) && !"trial".equals(action))
+                && !"off".equals(action) && !"trial".equals(action)
+                && !"gpu-status".equals(action) && !action.startsWith("gpu:"))
             throw new IllegalArgumentException("Lệnh LRU không hợp lệ");
+        if (action.startsWith("gpu:")) {
+            int boost = Integer.parseInt(action.substring(4));
+            if (boost < -10 || boost > 20) throw new IllegalArgumentException("GPU boost phải từ -10 đến +20");
+            action = "gpu:" + boost; // Only a validated integer reaches the shell.
+        }
         String path = helper(context).getAbsolutePath();
         // Context supplies this private path; quoting also handles unusual paths.
         String quoted = "'" + path.replace("'", "'\\''") + "'";

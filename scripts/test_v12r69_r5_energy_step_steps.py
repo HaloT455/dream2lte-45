@@ -46,6 +46,9 @@ struct esgov_policy { struct cpufreq_policy *policy; unsigned int cached_raw_fre
 struct esgov_cpu { struct esgov_policy *sg_policy; unsigned long util,max; unsigned int flags,iowait_boost; bool iowait_boost_pending; u64 last_update; };
 static struct esgov_cpu esgov_cpu[4];
 static unsigned int stale_ns=20000000;
+#define READ_ONCE(x) (x)
+#define SCHED_CAPACITY_SCALE 1024
+static unsigned int capacity_margin=1152;
 static bool invariant=true;
 static bool arch_scale_freq_invariant(void) { return invariant; }
 /* Exynos legacy .target makes resolve_freq return the unquantized request. */
@@ -88,6 +91,11 @@ int main(void)
         sg.next_freq=f;
         assert(get_next_freq(&sg,u,1024)==f);
     }
+    /* Placement's capacity reserve controls the actual frequency request too. */
+    capacity_margin=1280; sg.need_freq_update=true;
+    assert(get_next_freq(&sg,512,1024)==esgov_step_target(&p,1251250));
+    capacity_margin=1152; sg.need_freq_update=true;
+    assert(get_next_freq(&sg,512,1024)==esgov_step_target(&p,1126125));
     assert(get_next_freq(&sg,1,0)==p.min);
     invariant=false; sg.need_freq_update=true;
     assert(get_next_freq(&sg,1024,1024)==esgov_step_target(&p,936000));

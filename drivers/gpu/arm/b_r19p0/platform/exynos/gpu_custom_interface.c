@@ -1886,6 +1886,38 @@ static struct kobj_attribute gpu_governor_attribute =
 
 static struct kobj_attribute gpu_available_governor_attribute =
 	__ATTR(gpu_available_governor, S_IRUGO, show_kernel_sysfs_available_governor, NULL);
+
+static ssize_t show_gpu_load_boost(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", gpu_dvfs_get_load_boost());
+}
+
+static ssize_t set_gpu_load_boost(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t count)
+{
+	int boost, err;
+
+	err = kstrtoint(buf, 10, &boost);
+	if (err)
+		return err;
+	err = gpu_dvfs_set_load_boost(boost);
+	if (err)
+		return err;
+	return count;
+}
+
+static ssize_t show_gpu_effective_load(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", gpu_dvfs_get_effective_load());
+}
+
+static struct kobj_attribute gpu_load_boost_attribute =
+	__ATTR(gpu_boost, S_IRUGO|S_IWUSR, show_gpu_load_boost, set_gpu_load_boost);
+static struct kobj_attribute gpu_effective_load_attribute =
+	__ATTR(gpu_dvfs_load, S_IRUGO, show_gpu_effective_load, NULL);
 #endif /* #ifdef CONFIG_MALI_DVFS */
 
 static struct kobj_attribute gpu_model_attribute =
@@ -1906,6 +1938,8 @@ static struct attribute *attrs[] = {
 	&gpu_freq_table_attribute.attr,
 #ifdef CONFIG_MALI_DVFS
 	&gpu_governor_attribute.attr,
+	&gpu_load_boost_attribute.attr,
+	&gpu_effective_load_attribute.attr,
 	&gpu_available_governor_attribute.attr,
 #endif /* #ifdef CONFIG_MALI_DVFS */
 	&gpu_model_attribute.attr,

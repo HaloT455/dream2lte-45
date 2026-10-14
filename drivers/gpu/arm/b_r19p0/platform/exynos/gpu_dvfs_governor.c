@@ -28,6 +28,45 @@
 typedef int (*GET_NEXT_LEVEL)(struct exynos_context *platform, int utilization);
 GET_NEXT_LEVEL gpu_dvfs_get_next_level;
 
+/* Relative governor load bias; measured utilization remains unchanged. */
+static int gpu_load_boost = -5;
+static int gpu_last_dvfs_load;
+
+int gpu_dvfs_get_load_boost(void)
+{
+	return READ_ONCE(gpu_load_boost);
+}
+
+int gpu_dvfs_set_load_boost(int boost)
+{
+	if (boost < -10 || boost > 20)
+		return -EINVAL;
+	WRITE_ONCE(gpu_load_boost, boost);
+	return 0;
+}
+
+int gpu_dvfs_get_effective_load(void)
+{
+	return READ_ONCE(gpu_last_dvfs_load);
+}
+
+static int gpu_dvfs_apply_load_boost(int utilization)
+{
+	int load = clamp(utilization, 0, 100);
+	int boost = READ_ONCE(gpu_load_boost);
+	int bias;
+
+	/* Fade an energy-saving bias above 80%; preserve saturated demand. */
+	if (boost < 0 && load > 80) {
+		if (load >= 95)
+			return load;
+		bias = load * boost * (95 - load) / (100 * 15);
+	} else {
+		bias = load * boost / 100;
+	}
+	return clamp(load + bias, 0, 100);
+}
+
 static int gpu_dvfs_governor_default(struct exynos_context *platform, int utilization);
 static int gpu_dvfs_governor_interactive(struct exynos_context *platform, int utilization);
 static int gpu_dvfs_governor_static(struct exynos_context *platform, int utilization);
@@ -284,24 +323,30 @@ void ipa_mali_dvfs_requested(unsigned int freq);
 int gpu_dvfs_decide_next_freq(struct kbase_device *kbdev, int utilization)
 {
 	unsigned long flags;
+	int effective_load, clock;
 	struct exynos_context *platform = (struct exynos_context *) kbdev->platform_context;
 	DVFS_ASSERT(platform);
 
 	spin_lock_irqsave(&platform->gpu_dvfs_spinlock, flags);
+	effective_load = gpu_dvfs_apply_load_boost(utilization);
+	WRITE_ONCE(gpu_last_dvfs_load, effective_load);
 	gpu_dvfs_decide_next_governor(platform);
-	gpu_dvfs_get_next_level(platform, utilization);
-	spin_unlock_irqrestore(&platform->gpu_dvfs_spinlock, flags);
+	gpu_dvfs_get_next_level(platform, effective_load);
 
 #ifdef CONFIG_MALI_SEC_CL_BOOST
-	if (kbdev->pm.backend.metrics.is_full_compute_util && platform->cl_boost_disable == false)
+	/* Compute-only job mix is not proof of high total GPU utilization. */
+	if (kbdev->pm.backend.metrics.is_full_compute_util &&
+	    platform->cl_boost_disable == false && utilization >= 95)
 		platform->step = gpu_dvfs_get_level(platform->gpu_max_clock);
 #endif
+	clock = platform->table[platform->step].clock;
+	spin_unlock_irqrestore(&platform->gpu_dvfs_spinlock, flags);
 
 #ifdef CONFIG_CPU_THERMAL_IPA
-	ipa_mali_dvfs_requested(platform->table[platform->step].clock);
+	ipa_mali_dvfs_requested(clock);
 #endif /* CONFIG_CPU_THERMAL_IPA */
 
-	return platform->table[platform->step].clock;
+	return clock;
 }
 
 int gpu_dvfs_governor_setting(struct exynos_context *platform, int governor_type)

@@ -34,5 +34,8 @@ void *gpu_dvfs_get_governor_info(void);
 int gpu_dvfs_decide_next_freq(struct kbase_device *kbdev, int utilization);
 int gpu_dvfs_governor_setting(struct exynos_context *platform, int governor_type);
 int gpu_dvfs_governor_init(struct kbase_device *kbdev);
+int gpu_dvfs_get_load_boost(void);
+int gpu_dvfs_set_load_boost(int boost);
+int gpu_dvfs_get_effective_load(void);
 
 #endif /* _GPU_DVFS_GOVERNOR_H_ */

@@ -3,11 +3,31 @@
 set -u
 M=/sys/kernel/mm/lru_gen/enabled
 action=${1:-status}
-case "$action" in status|on|off|trial) ;; *) echo ALICE_BAD_ACTION; exit 2;; esac
+case "$action" in status|on|off|trial|gpu-status|gpu:*) ;; *) echo ALICE_BAD_ACTION; exit 2;; esac
 [ "$(id -u)" = 0 ] || { echo ALICE_ROOT_REQUIRED; exit 3; }
+GPU=/sys/kernel/gpu/gpu_boost
+gpu_status() {
+ [ -r "$GPU" ] || { echo ALICE_GPU_HOOK_UNAVAILABLE; return 1; }
+ echo "ALICE_GPU_BOOST=$(cat "$GPU")"
+ for file in /sys/kernel/gpu/gpu_busy /sys/kernel/gpu/gpu_dvfs_load /sys/kernel/gpu/gpu_clock; do
+  [ ! -r "$file" ] || { echo "$file"; cat "$file"; }
+ done
+}
+case "$action" in
+ gpu-status) gpu_status || exit 9; exit 0;;
+ gpu:*)
+  value=${action#gpu:}
+  case "$value" in -[0-9]|-10|[0-9]|1[0-9]|20) ;; *) echo ALICE_BAD_GPU_BOOST; exit 2;; esac
+  [ "$value" != -0 ] || value=0
+  [ -w "$GPU" ] || { echo ALICE_GPU_HOOK_UNAVAILABLE; exit 9; }
+  printf '%s\n' "$value" > "$GPU" || exit 9
+  [ "$(cat "$GPU")" = "$value" ] || { echo ALICE_GPU_STATE_MISMATCH; exit 9; }
+  gpu_status || exit 9
+  exit 0;;
+esac
 
 snapshot() {
- echo "=== ALICE LRU R5: $(date '+%Y-%m-%d %H:%M:%S') ==="
+ echo "=== ALICE LRU GPU R8: $(date '+%Y-%m-%d %H:%M:%S') ==="
  echo "kernel=$(cat /proc/sys/kernel/osrelease 2>/dev/null)"
  echo "mglru=$(cat "$M" 2>/dev/null || echo unavailable)"
  for file in /sys/kernel/mm/lru_gen/features /sys/kernel/mm/lru_gen/stats /sys/kernel/alice/mm_reclaim; do
@@ -16,6 +36,8 @@ snapshot() {
  echo '=== RAM / PSI ==='
  awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/' /proc/meminfo
  cat /proc/pressure/memory 2>/dev/null || :
+ echo '=== GPU ==='
+ gpu_status || :
  echo '=== CPU ==='
  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
   [ -d "$policy" ] || continue

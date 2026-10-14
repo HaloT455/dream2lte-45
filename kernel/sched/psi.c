@@ -391,6 +391,11 @@ static void collect_percpu_times(struct psi_group *group, u32 *pchanged_states)
 		u32 cpu_changed_states;
 
 		get_recent_times(group, cpu, times, &cpu_changed_states);
+		/* Preserve short stalls, but do not keep the averaging clock alive
+		 * solely for sub-tick execution of its own aggregation worker.
+		 */
+		if (!nsecs_to_jiffies(times[PSI_NONIDLE]))
+			cpu_changed_states &= ~(1U << PSI_NONIDLE);
 		changed_states |= cpu_changed_states;
 
 		nonidle = nsecs_to_jiffies(times[PSI_NONIDLE]);
@@ -725,15 +730,16 @@ retry:
 	 * Once restarted, we'll catch up the running averages in one
 	 * go - see calc_avgs() and missed_periods.
 	 */
-	if (nonidle && first_pass) {
+	if (first_pass && (nonidle || polling)) {
 		if (now >= group->avg_next_update)
 			group->avg_next_update = update_averages(group, now);
 
-		if (now >= group->polling_next_update) {
-			group->polling_next_update = update_triggers(
-					group, now);
-		}
 	}
+	/* Poll deadlines must advance during the idle grace period as well.
+	 * Otherwise an overdue deadline requeues this worker every tick.
+	 */
+	if (polling && now >= group->polling_next_update)
+		group->polling_next_update = update_triggers(group, now);
 	if ((nonidle && first_pass) || polling) {
 		/* Calculate closest update time */
 		next_update = min(group->polling_next_update,
@@ -865,14 +871,14 @@ static struct psi_group *iterate_groups(struct task_struct *task, void **iter)
 void psi_task_change(struct task_struct *task, int clear, int set)
 {
 	int cpu;
+	struct psi_group *group;
+	bool wake_clock = true;
+	void *iter = NULL;
 
 	if (unlikely(!psi_initialized))
 		return;
 
 	cpu = task_cpu(task);
-	struct psi_group *group;
-	bool wake_clock = true;
-	void *iter = NULL;
 
 	if (!task->pid)
 		return;
@@ -890,10 +896,14 @@ void psi_task_change(struct task_struct *task, int clear, int set)
 	task->psi_flags |= set;
 
 	/*
-	 * Old 4.4 workqueues do not expose wq_worker_last_func().
-	 * Keep the PSI aggregation clock wakeable; this costs a tiny periodic
-	 * work item but preserves correct LMKD pressure accounting.
+	 * Account the aggregation worker's sleep, but do not let it restart
+	 * its own idle averaging clock. Real stall-trigger activation below
+	 * remains independent of this averaging-only wake decision.
 	 */
+	if (unlikely((clear & TSK_RUNNING) &&
+		     (task->flags & PF_WQ_WORKER) &&
+		     wq_worker_last_func(task) == psi_update_work))
+		wake_clock = false;
 	while ((group = iterate_groups(task, &iter))) {
 		u32 state_mask = psi_group_change(group, cpu, clear, set);
 

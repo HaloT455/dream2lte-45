@@ -32,7 +32,7 @@ assert "static unsigned int esgov_step_target" in es
 assert "ALICE_ESGOV_STEPS" not in es
 assert "cpufreq_frequency_table_target(policy, policy->freq_table," in es
 assert "clamp(requested, policy->min, policy->max)" in es
-assert "raw = div64_u64((u64)(base + (base >> 3)) * util, max);" in es
+assert "raw = div64_u64((u64)base * util * READ_ONCE(capacity_margin)," in es
 for code in ("cpufreq_add_update_util_hook", "cpufreq_remove_update_util_hook",
              "cpufreq_register_governor", "esgov_get_util",
              "esgov_iowait_boost", "CPUFREQ_GOV_LIMITS",
