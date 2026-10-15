@@ -171,6 +171,7 @@ public class MainActivity extends Activity {
             } catch (Exception error) { runOnUiThread(() -> exportError(error)); }
         }, "alice-export").start();
     }
+    @android.annotation.TargetApi(29)
     private Uri saveDownloads(File zip) throws Exception {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Downloads.DISPLAY_NAME, zip.getName());
