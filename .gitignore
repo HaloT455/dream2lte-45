@@ -116,3 +116,5 @@ all.config
 # fetched Android config fragments
 android/configs/android-*.cfg
 linux-upstream.sh
+# Generated from the public-source Android service in CI.
+/kernel/power/alice_powerhal_blob.h

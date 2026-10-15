@@ -48,7 +48,8 @@ with tempfile.TemporaryDirectory(prefix='alice-cpu-compat-') as tmp:
  t=Path(tmp);c=t/'rc.c';exe=t/'rc'
  c.write_text('#include <stdio.h>\n#define KERNEL_SU_DOMAIN "ksu"\n#define KSUD_PATH "/data/adb/ksud"\n'
  '#include "drivers/kernelsu/runtime/alice_netboot_payload.h"\n'
- '#include "drivers/kernelsu/runtime/alice_cpu_compat_payload.h"\n'+decl+
+ '#include "drivers/kernelsu/runtime/alice_cpu_compat_payload.h"\n'
+                 '#include "drivers/kernelsu/runtime/alice_powerhal_payload.h"\n'+decl+
  '\nint main(void){fwrite(KERNEL_SU_RC,1,sizeof(KERNEL_SU_RC)-1,stdout);}\n')
  subprocess.run([os.environ.get('HOSTCC','cc'),'-I',str(root),'-Wall','-Wextra','-Werror',str(c),'-o',str(exe)],check=True)
  rc=subprocess.check_output([str(exe)],text=True)

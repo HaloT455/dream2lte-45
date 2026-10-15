@@ -1,4 +1,4 @@
-name: Build V12R69 R11 GPIS cpuset and EnergyStep QoS kernel
+name: Build V12R69 R12 Power HAL and bounded EnergyStep hints
 # MGLRU OFF at boot by user request; EnergyStep retained, AI workers disabled.
 
 on:
@@ -70,6 +70,13 @@ jobs:
           echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           ccache --max-size=1G
 
+      - name: Build public-source AIDL V2 Power HAL
+        run: |
+          sdkmanager --install "ndk;27.3.13750724"
+          python3 scripts/build_alice_powerhal.py \
+            --ndk "$ANDROID_HOME/ndk/27.3.13750724" \
+            --out powerhal-out --tools "$HOME/tools/alice-aidl-v13"
+
       - name: Host scheduler regression checks
         run: |
           python3 scripts/test_cpu_ui_hints.py
@@ -101,6 +108,10 @@ jobs:
           sh -n alice/cpu-compat/boot.sh
           python3 scripts/test_alice_cpu_compat.py
           python3 scripts/test_v12r69_r11_qos.py
+          python3 scripts/gen_alice_powerhal.py --check
+          sh -n alice/powerhal/boot.sh
+          python3 scripts/test_alice_powerhal.py
+          python3 scripts/test_alice_powerhal_boot.py
           python3 scripts/test_v12r69_r8_memory_service.py
           python3 scripts/test_v12r69_r8_gpu_boost.py
           sh -n alice/memory-module/low-swap.sh
@@ -136,12 +147,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-R11-ENERGYSTEP-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R69-R12-ENERGYSTEP-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R69-R11-ENERGYSTEP-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R69-R12-ENERGYSTEP-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" --disable LOCALVERSION_AUTO
           make O="$OUT" olddefconfig
@@ -257,7 +268,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R11-build-log-${{ github.sha }}
+          name: ALICE-V12R69-R12-build-log-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -312,9 +323,12 @@ jobs:
           check_map_symbol alice_sysintel_no_progress
           check_image_string 'mglru_offload=0 mglru_auto_enable=0'
           check_image_string 'manual_vm_policy=0 mglru_boot_default=%d'
-          check_image_string 'V12R69 R11 ALICE EAS ENERGY-STEP-COMPAT GPU-BALANCE'
+          check_image_string 'V12R69 R12 ALICE EAS ENERGY-STEP-COMPAT GPU-BALANCE'
           python3 scripts/verify_alice_netboot_image.py "$OUT/arch/arm64/boot/Image"
           check_map_symbol alice_sysintel_init
+          check_map_symbol alice_power_hint_init
+          check_map_symbol alice_powerhal_blob_init
+          python3 scripts/verify_alice_powerhal_image.py "$OUT/arch/arm64/boot/Image" powerhal-out/android.hardware.power.samsung-service
           check_map_symbol vpu_device_init
           check_map_symbol vpu_system_resume
           if grep -a -q 'HALO compute partition: graphics=%u compute=%u' "$OUT/arch/arm64/boot/Image"; then
@@ -338,9 +352,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R11-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R12-ENERGYSTEP-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R11-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R69-R12-ENERGYSTEP-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package verified kernel
@@ -352,22 +366,24 @@ jobs:
           cp "$OUT/arch/arm64/boot/dtb.img" "$DEST/"
           cp "$OUT/System.map" "$DEST/"
           cp "$OUT/.config" "$DEST/kernel.config"
+          cp powerhal-out/metadata.json "$DEST/powerhal-metadata.json"
+          cp powerhal-out/android.hardware.power.samsung-service "$DEST/"
           cd "$DEST"
           python3 - <<'PYZIP'
           from pathlib import Path
           import zipfile
           module=Path('../alice/memory-module')
-          with zipfile.ZipFile('ALICE_R11_PSI_LMKD_BALANCE_MODULE.zip','w',zipfile.ZIP_DEFLATED) as z:
+          with zipfile.ZipFile('ALICE_R12_PSI_LMKD_BALANCE_MODULE.zip','w',zipfile.ZIP_DEFLATED) as z:
               for name in ['module.prop','customize.sh','service.sh','uninstall.sh','low-swap.sh']:
                   z.write(module/name,name)
           PYZIP
-          sha256sum Image dtb.img System.map kernel.config ALICE_R11_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
+          sha256sum Image dtb.img System.map kernel.config powerhal-metadata.json android.hardware.power.samsung-service ALICE_R12_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
-      - name: Upload compiled R11 kernel
+      - name: Upload compiled R12 kernel
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R11-kernel-${{ github.sha }}
+          name: ALICE-V12R69-R12-kernel-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
           compression-level: 9
