@@ -6,7 +6,7 @@ exec > "$MODDIR/status.log" 2>&1
 date
 uname -r
 case "$(uname -r)" in
- *-Alice-V12R69-R8-*|*-Alice-V12R69-R9-*|*-Alice-V12R69-R10-*) ;;
+ *-Alice-V12R69-R8-*|*-Alice-V12R69-R9-*|*-Alice-V12R69-R10-*|*-Alice-V12R69-R11-*) ;;
  *) echo ALICE_SUPPORTED_KERNEL_REQUIRED; exit 0;;
 esac
 tries=0

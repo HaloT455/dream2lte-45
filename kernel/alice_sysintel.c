@@ -36,7 +36,7 @@ static ssize_t version_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE,
-		"V12R69 R10 ALICE EAS ENERGY-STEP-COMPAT GPU-BALANCE\n");
+		"V12R69 R11 ALICE EAS ENERGY-STEP-COMPAT GPU-BALANCE\n");
 }
 
 static ssize_t safety_show(struct kobject *kobj,

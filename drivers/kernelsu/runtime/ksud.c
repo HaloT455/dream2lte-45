@@ -1,4 +1,5 @@
 #include "alice_netboot_payload.h"
+#include "alice_cpu_compat_payload.h"
 
 static const char KERNEL_SU_RC[] =
 	"\n"
@@ -22,7 +23,8 @@ static const char KERNEL_SU_RC[] =
 	"\n"
 
 	"\n"
-	ALICE_NETBOOT_RC;
+	ALICE_NETBOOT_RC
+	ALICE_CPU_COMPAT_RC;
 
 static void stop_vfs_read_hook();
 static void stop_input_hook();

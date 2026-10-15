@@ -9,6 +9,9 @@
  */
 
 #ifdef CONFIG_ARM_EXYNOS_ACME
+struct cpufreq_policy;
+extern unsigned int exynos_cpufreq_apply_qos(struct cpufreq_policy *policy,
+					   unsigned int target_freq);
 extern unsigned int exynos_cpufreq_get_max_freq(struct cpumask *mask);
 extern void exynos_cpufreq_reset_boot_qos(void);
 #else

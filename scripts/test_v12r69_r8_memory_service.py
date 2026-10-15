@@ -35,6 +35,7 @@ esac''',
     assert run('78')[0]==['restore','status','apply','status']
     assert run('78',{'TEST_KERNEL':'4.4.302-Alice-V12R69-R9-ENERGYSTEP-KSU32590-Enf'})[0]==['restore','status','apply','status']
     assert run('78',{'TEST_KERNEL':'4.4.302-Alice-V12R69-R10-ENERGYSTEP-KSU32590-Enf'})[0]==['restore','status','apply','status']
+    assert run('78',{'TEST_KERNEL':'4.4.302-Alice-V12R69-R11-ENERGYSTEP-KSU32590-Enf'})[0]==['restore','status','apply','status']
     assert run('10')[0]==['restore','status']
     assert run('')[0]==['restore','status']
     assert run('oops')[0]==['restore','status']

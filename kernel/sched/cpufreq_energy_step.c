@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/cpufreq.h>
+#include <linux/exynos-cpufreq.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <trace/events/power.h>
@@ -195,6 +196,9 @@ static unsigned int esgov_step_target(struct cpufreq_policy *policy,
 	unsigned int index;
 
 	requested = clamp(requested, policy->min, policy->max);
+#ifdef CONFIG_ARM_EXYNOS_ACME
+	requested = exynos_cpufreq_apply_qos(policy, requested);
+#endif
 	/* Exynos uses legacy .target: resolve_freq() alone returns the raw
 	 * request for that driver. Quantize against its real table before
 	 * committing, so requests in one hardware step don't wake the worker.
@@ -222,9 +226,11 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 	raw = div64_u64((u64)base * util * READ_ONCE(capacity_margin),
 			(u64)max * SCHED_CAPACITY_SCALE);
 
-	if (raw == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
-		return sg_policy->next_freq;
-
+	/* QoS can change without changing scheduler utilization or policy
+	 * min/max. Resolve each sampled demand against the current snapshot;
+	 * update_commit() still suppresses identical effective OPPs. Reusing
+	 * an old raw-utilization cache here would retain a released boost/cap.
+	 */
 	sg_policy->need_freq_update = false;
 	sg_policy->cached_raw_freq = raw;
 	return esgov_step_target(policy, raw);

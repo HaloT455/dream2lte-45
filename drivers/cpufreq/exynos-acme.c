@@ -16,6 +16,7 @@
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
 #include <linux/cpufreq.h>
+#include <linux/exynos-cpufreq.h>
 #include <linux/exynos-ss.h>
 #include <linux/pm_opp.h>
 
@@ -195,6 +196,21 @@ static unsigned int apply_pm_qos(struct exynos_cpufreq_domain *domain,
 
 	return freq;
 }
+
+/* Read the same lockless QoS snapshot used by the target path. EnergyStep
+ * calls this before queuing its slow worker, so demands above a thermal cap
+ * (or below an input floor) collapse to one effective hardware target.
+ * The real target path still rechecks QoS after queuing: this is an
+ * optimization, never a replacement for the driver's safety limits.
+ */
+unsigned int exynos_cpufreq_apply_qos(struct cpufreq_policy *policy,
+				    unsigned int target_freq)
+{
+	struct exynos_cpufreq_domain *domain = find_domain(policy->cpu);
+
+	return domain ? apply_pm_qos(domain, policy, target_freq) : target_freq;
+}
+EXPORT_SYMBOL_GPL(exynos_cpufreq_apply_qos);
 
 static int pre_scale(void)
 {
