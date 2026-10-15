@@ -1,0 +1,79 @@
+name: ALICE Pin and Lag diagnostic APK
+on:
+  push:
+    branches: [agent/alice-pin-lag-apk]
+    paths: ['tools/AliceDiag/**', '.github/workflows/alice-pin-lag-apk.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: alice-diag-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install Android SDK components
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Verify accounting and read-only collector shell syntax
+        run: |
+          mkdir -p /tmp/alice-diag-tests
+          javac -d /tmp/alice-diag-tests tools/AliceDiag/app/src/main/java/com/halot455/alice/diag/DrainStats.java tools/AliceDiag/tests/DrainStatsTest.java
+          java -cp /tmp/alice-diag-tests com.halot455.alice.diag.DrainStatsTest
+          sh -n tools/AliceDiag/app/src/main/assets/sample.sh
+          sh -n tools/AliceDiag/app/src/main/assets/snapshot.sh
+      - name: Build and lint APK
+        run: gradle -p tools/AliceDiag :app:assembleDebug :app:lintDebug --stacktrace
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Smoke test the built APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk
+            python3 tools/AliceDiag/tests/smoke.py
+      - name: Verify APK and checksums
+        run: |
+          cp tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk ALICE-Pin-Lag-1.0.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ALICE-Pin-Lag-1.0.0.apk
+          sha256sum ALICE-Pin-Lag-1.0.0.apk > SHA256SUMS.txt
+      - name: Store APK and validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-Pin-Lag-1.0.0-${{ github.sha }}
+          path: |
+            ALICE-Pin-Lag-1.0.0.apk
+            SHA256SUMS.txt
+            tools/AliceDiag/README.md
+            tools/AliceDiag/app/build/reports/lint-results-debug.html
+            smoke-output/log.zip
+      - name: Publish diagnostic APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/alice-diag-release.md <<'NOTES'
+          APK chẩn đoán pin/nhiệt/lag, không chỉnh kernel hay bật MGLRU.
+          Cấp root KSU để có log CPU/GPU/PSI; quyền thống kê app là tùy chọn.
+          Chọn Pin (24h) hoặc Lag (10 phút), Bắt đầu, Dừng, Xuất ZIP ở Tải xuống.
+          Không tự upload log. Đây là bản chẩn đoán ký bằng debug key.
+          Đã kiểm tra build/lint, tính hao pin và ghi/dừng/xuất ZIP trên Android35 không root.
+          KSU, sysfs Samsung và hao pin thực tế cần đo trên thiết bị.
+          NOTES
+          gh release create alice-pin-lag-1.0.0 ALICE-Pin-Lag-1.0.0.apk SHA256SUMS.txt --target "$GITHUB_SHA" --title 'ALICE Pin & Lag 1.0.0' --notes-file /tmp/alice-diag-release.md --prerelease
