@@ -39,6 +39,9 @@ jobs:
           sh -n tools/AliceDiag/app/src/main/assets/snapshot.sh
       - name: Build and lint APK
         run: gradle -p tools/AliceDiag :app:assembleDebug :app:lintDebug --stacktrace
+      - name: Print merged APK identity
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk | sed -n '/^package:/p; /^launchable-activity:/p'
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -54,6 +57,13 @@ jobs:
           script: |
             adb install tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk
             python3 tools/AliceDiag/tests/smoke.py
+      - name: Store failed emulator diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-Lite-failure-${{ github.sha }}
+          path: smoke-output/
+          if-no-files-found: ignore
       - name: Verify APK and checksums
         run: |
           cp tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk ALICE-Pin-Lag-Lite-1.1.0.apk

@@ -8,13 +8,13 @@
     <application android:allowBackup="false" android:label="ALICE Pin &amp; Lag Lite"
         android:icon="@drawable/ic_battery" android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name="com.halot455.alice.diag.MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".RecorderService" android:exported="false"
+        <service android:name="com.halot455.alice.diag.RecorderService" android:exported="false"
             android:foregroundServiceType="specialUse" android:stopWithTask="false">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-started local battery, thermal and performance diagnostic recording with visible stop control" />

@@ -26,11 +26,17 @@ def tap(label):
                     return
         adb('shell', 'input', 'swipe', '500', '1500', '500', '500', '300')
         time.sleep(.5)
+    Path('smoke-output').mkdir(exist_ok=True)
+    Path('smoke-output/failure-window.xml').write_text(ET.tostring(tree, encoding='unicode'))
+    print('Visible UI:', [(n.attrib.get('text'), n.attrib.get('package')) for n in tree.iter('node') if n.attrib.get('text')])
+    print(adb('logcat', '-d', '-s', 'AndroidRuntime:E'))
     raise AssertionError(f'Button not found: {label}')
 
 adb('shell', 'pm', 'grant', PKG, 'android.permission.POST_NOTIFICATIONS')
 adb('shell', 'appops', 'set', PKG, 'GET_USAGE_STATS', 'allow')
-adb('shell', 'am', 'start', '-n', COMPONENT)
+launch_output = adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-p', PKG)
+print(launch_output)
+assert 'Error' not in launch_output, launch_output
 time.sleep(2)
 tap('Bắt đầu ghi')
 time.sleep(8)
@@ -39,7 +45,9 @@ assert 'isForeground=true' in services, services
 adb('shell', 'am', 'start', '-a', 'android.settings.SETTINGS')
 time.sleep(2)
 # Returning to the visible activity and using its stop action also verifies intent routing.
-adb('shell', 'am', 'start', '-n', COMPONENT)
+launch_output = adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-p', PKG)
+print(launch_output)
+assert 'Error' not in launch_output, launch_output
 tap('Dừng ghi')
 time.sleep(3)
 services = adb('shell', 'dumpsys', 'activity', 'services', PKG)
