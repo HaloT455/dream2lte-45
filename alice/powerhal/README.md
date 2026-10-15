@@ -1,4 +1,4 @@
-# ALICE Power HAL R12
+# ALICE Power HAL R13
 
 Replacement for the audited Samsung AIDL V2 service, with a bounded CPU QoS
 backend for the Exynos8895 EnergyStep kernel. The boot action only installs when
@@ -59,8 +59,17 @@ The dump should say `backend=ready`; `session_created` and `report_batches` show
 delivered hint has been established. App ADPF use depends on framework/app
 support; this does not add ADPF support to applications that never send hints.
 
-Rollback just this service, leaving the R12 kernel/CPU fixes active:
+Rollback just this service, leaving the R13 kernel/CPU fixes active:
 ```
 adb shell 'su -c "touch /data/adb/alice-powerhal/disable; reboot"'
 ```
 The bind mount is temporary. The original vendor image is never written.
+
+R13 bootstrap correction: checksum command exit status and digest format are
+validated before comparison. Explicit platform tool paths avoid init PATH
+differences. Unavailable reads defer installation; sys.boot_completed starts
+one finite retry in init's guard service. A late successful bind restarts the
+existing vendor service through init. Fallback requires a matching current
+boot ID, owned mount ID and payload digest; a missing or foreign mount is never
+unmounted. Exact cause of the R12 early read failure is not established by the
+device log; current vendor digest does match the audited vendor.

@@ -218,7 +218,7 @@ public:
     }
     binder_status_t dump(int fd, const char**, uint32_t) override {
         if (!systemCaller() && AIBinder_getCallingUid() != 2000) return STATUS_PERMISSION_DENIED;
-        dprintf(fd, "ALICE Power HAL R12 AIDL V2; backend=%s; sessions=%d\n",
+        dprintf(fd, "ALICE Power HAL R13 AIDL V2; backend=%s; sessions=%d\n",
                 backend->available() ? "ready" : "unavailable", SLOTS);
         backend->dump(fd);
         char buf[512];
@@ -241,7 +241,7 @@ int main() {
         __android_log_print(ANDROID_LOG_ERROR, "AlicePower", "registration failed: %d", status);
         return 1;
     }
-    __android_log_write(ANDROID_LOG_INFO, "AlicePower", "R12 AIDL V2 EnergyStep hint service registered");
+    __android_log_write(ANDROID_LOG_INFO, "AlicePower", "R13 AIDL V2 EnergyStep hint service registered");
     ABinderProcess_joinThreadPool();
     return 1;
 }

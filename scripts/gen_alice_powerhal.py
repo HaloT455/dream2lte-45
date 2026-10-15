@@ -16,11 +16,12 @@ command = (f'umask 077; mkdir -p {state} || exit 1; chmod 0700 {state} || exit 1
            f'printf %s {payload} | /system/bin/base64 -d > {state}/boot.sh.tmp && '
            f'chmod 0600 {state}/boot.sh.tmp && mv {state}/boot.sh.tmp {state}/boot.sh && '
            f'exec /system/bin/sh {state}/boot.sh')
-rc = ('\n# ALICE_POWERHAL_R12\non post-fs-data\n'
+rc = ('\n# ALICE_POWERHAL_R13\non post-fs-data\n'
       f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 8 /system/bin/sh -c "{command}"\n\n'
-      f'service alice-powerhal-guard /system/bin/timeout 20 /system/bin/sh {state}/boot.sh guard\n'
+      f'service alice-powerhal-guard /system/bin/timeout 25 /system/bin/sh {state}/boot.sh guard\n'
       '    user root\n    group root\n    seclabel u:r:ksu:s0\n    disabled\n    oneshot\n\n'
-      'on property:init.svc.vendor.samsung.power-default=running\n    start alice-powerhal-guard\n\n')
+      'on property:init.svc.vendor.samsung.power-default=running\n    start alice-powerhal-guard\n\n'
+      'on property:sys.boot_completed=1\n    start alice-powerhal-guard\n\n')
 lines = []
 for line in rc.splitlines(keepends=True):
     for i in range(0, len(line), 100):
