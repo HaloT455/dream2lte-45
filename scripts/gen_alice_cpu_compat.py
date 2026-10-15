@@ -16,11 +16,13 @@ command = (
     f'exec /system/bin/sh {state}/boot.sh apply'
 )
 rc = (
-    '\n# ALICE_CPU_COMPAT_R11\n'
+    '\n# ALICE_CPU_COMPAT_R14\n'
     'on post-fs-data\n'
     f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 8 /system/bin/sh -c "{command}"\n'
     '\non property:init.svc.surfaceflinger=running\n'
-    f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 5 /system/bin/sh {state}/boot.sh join\n\n'
+    f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 5 /system/bin/sh {state}/boot.sh join\n'
+    '\non property:sys.boot_completed=1\n'
+    f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 8 /system/bin/sh {state}/boot.sh apply\n\n'
 )
 lines=[]
 for line in rc.splitlines(keepends=True):

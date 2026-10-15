@@ -1392,6 +1392,31 @@ static void *vmstat_next(struct seq_file *m, void *arg, loff_t *pos)
 	return (unsigned long *)m->private + *pos;
 }
 
+#ifdef CONFIG_VM_EVENT_COUNTERS
+/* Android LMKD uses all-zone names; retain every legacy per-zone field. */
+static unsigned long vmstat_reclaim_sum(const unsigned long *events,
+		                                enum vm_event_item normal)
+{
+	unsigned long total = 0;
+	int zone;
+
+	for (zone = 0; zone <= ZONE_MOVABLE; zone++)
+		total += events[normal - ZONE_NORMAL + zone];
+	return total;
+}
+
+static void vmstat_lmkd_aliases(struct seq_file *m)
+{
+	const unsigned long *events = (unsigned long *)m->private +
+		NR_VM_ZONE_STAT_ITEMS + NR_VM_WRITEBACK_STAT_ITEMS;
+
+	seq_printf(m, "pgscan_kswapd %lu\n", vmstat_reclaim_sum(events, PGSCAN_KSWAPD_NORMAL));
+	seq_printf(m, "pgscan_direct %lu\n", vmstat_reclaim_sum(events, PGSCAN_DIRECT_NORMAL));
+	seq_printf(m, "pgsteal_kswapd %lu\n", vmstat_reclaim_sum(events, PGSTEAL_KSWAPD_NORMAL));
+	seq_printf(m, "pgsteal_direct %lu\n", vmstat_reclaim_sum(events, PGSTEAL_DIRECT_NORMAL));
+}
+#endif
+
 static int vmstat_show(struct seq_file *m, void *arg)
 {
 	unsigned long *l = arg;
@@ -1400,6 +1425,10 @@ static int vmstat_show(struct seq_file *m, void *arg)
 	seq_puts(m, vmstat_text[off]);
 	seq_put_decimal_ull(m, ' ', *l);
 	seq_putc(m, '\n');
+#ifdef CONFIG_VM_EVENT_COUNTERS
+	if (off == ARRAY_SIZE(vmstat_text) - 1)
+		vmstat_lmkd_aliases(m);
+#endif
 	return 0;
 }
 
