@@ -49,6 +49,7 @@ public class RecorderService extends Service {
             long wall = System.currentTimeMillis(), elapsed = SystemClock.elapsedRealtime();
             worker.post(() -> {
                 if (directory == null || stopping) return;
+                if (stats != null && (Intent.ACTION_POWER_CONNECTED.equals(action) || Intent.ACTION_POWER_DISCONNECTED.equals(action))) stats.interrupt();
                 try { SessionStore.append(directory, "events.tsv", wall + "\t" + elapsed + "\t" + action + "\n"); }
                 catch (Exception ignored) { }
                 if (started > 0 && elapsed - started >= duration) requestStop("Đã đủ thời gian theo dõi");

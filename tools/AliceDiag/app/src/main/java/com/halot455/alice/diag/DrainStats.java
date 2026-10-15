@@ -7,18 +7,20 @@ final class DrainStats {
     long samples, unpluggedMs, screenOnMs, maxGapMs, elapsedMs;
     double lostPercent;
     double maxTempC = Double.NaN;
-    private long previousTime = -1;
+    private long previousTime = -1, firstTime = -1;
     private int previousLevel = -1;
     private boolean previousPlugged, previousScreen;
     final long gapLimitMs;
     DrainStats(long intervalMs) { gapLimitMs = Math.max(180_000, intervalMs * 3); }
+    void interrupt() { previousTime = -1; previousLevel = -1; }
     void add(long elapsed, int level, boolean plugged, boolean screen, double temp) {
         samples++;
+        if (firstTime < 0) firstTime = elapsed;
+        elapsedMs = Math.max(0, elapsed - firstTime);
         if (Double.isFinite(temp)) maxTempC = Double.isNaN(maxTempC) ? temp : Math.max(maxTempC, temp);
         if (previousTime >= 0) {
             long delta = elapsed - previousTime;
             maxGapMs = Math.max(maxGapMs, delta);
-            elapsedMs += Math.max(0, delta);
             if (delta > 0 && delta <= gapLimitMs && !plugged && !previousPlugged
                     && level >= 0 && previousLevel >= level && previousLevel - level <= 3) {
                 unpluggedMs += delta;

@@ -24,6 +24,8 @@ jobs:
           gradle-version: '8.9'
       - name: Install Android SDK components
         run: |
+          DIAG_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export PATH="$DIAG_SDK_ROOT/cmdline-tools/latest/bin:$DIAG_SDK_ROOT/platform-tools:$PATH"
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Verify accounting and read-only collector shell syntax
         run: |

@@ -24,6 +24,12 @@ public class DrainStatsTest {
         gaps.add(3_660_000, 69, false, false, 36.2);
         check(gaps.lostPercent == 1 && gaps.unpluggedMs == 60_000, "Sampling resumes after gap");
         check(gaps.summary().contains("Chưa đủ"), "Short measurements are not extrapolated");
+        DrainStats briefCharge = new DrainStats(60_000);
+        briefCharge.add(0, 80, false, true, 30);
+        briefCharge.interrupt();
+        briefCharge.add(60_000, 79, false, true, 30);
+        check(briefCharge.unpluggedMs == 0, "Charge event between samples breaks the interval");
+        check(briefCharge.elapsedMs == 60_000, "Observed elapsed span is retained");
         DrainStats unknown = new DrainStats(5000);
         unknown.add(0, -1, false, true, Double.NaN);
         unknown.add(5000, 80, false, true, Double.NaN);
