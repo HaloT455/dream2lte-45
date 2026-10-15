@@ -39,6 +39,7 @@ public class RecorderService extends Service {
     private File directory;
     private long interval, duration, started, sampleIndex, lastDetail, usageWall;
     private DrainStats stats;
+    private SamplingBudget budget;
     private String script, rootState = "pending";
     private boolean root;
     private boolean batteryMode;
@@ -77,7 +78,8 @@ public class RecorderService extends Service {
         running = true;
         stopping = false;
         batteryMode = !intent.getBooleanExtra("lag", false);
-        interval = batteryMode ? 60_000 : 5_000;
+        interval = batteryMode ? 60_000 : 15_000;
+        budget = new SamplingBudget(interval);
         duration = batteryMode ? 24 * 3_600_000L : 10 * 60_000L;
         live = "Đang chuẩn bị; hãy cấp root trong KernelSU khi được hỏi";
         showForeground();
@@ -91,7 +93,7 @@ public class RecorderService extends Service {
         PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, RecorderService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification notice = new Notification.Builder(this, "recording")
                 .setSmallIcon(com.halot455.alice.diag.R.drawable.ic_battery)
-                .setContentTitle("ALICE đang ghi " + (batteryMode ? "pin" : "lag"))
+                .setContentTitle("ALICE Lite đang ghi " + (batteryMode ? "pin" : "lag"))
                 .setContentText("Bấm Dừng để kết thúc. Log chỉ ở trên máy.")
                 .setContentIntent(open).addAction(new Notification.Action.Builder(null, "Dừng", stop).build())
                 .setOngoing(true).setOnlyAlertOnce(true).build();
@@ -114,25 +116,26 @@ public class RecorderService extends Service {
             started = SystemClock.elapsedRealtime();
             usageWall = System.currentTimeMillis();
             stats = new DrainStats(interval);
-            SessionStore.write(directory, "battery.csv", "wall_ms,elapsed_ms,uptime_ms,screen_on,percent,status,plugged,battery_temp_c,voltage_mv,current_ua,charge_uah,energy_nwh,thermal_status,available_ram_bytes,low_memory,collector_ms,root_state\n");
+            SessionStore.write(directory, "battery.csv", "wall_ms,elapsed_ms,uptime_ms,screen_on,percent,status,plugged,battery_temp_c,voltage_mv,api_current_ua_reported,charge_uah,energy_nwh,thermal_status,available_ram_bytes,low_memory,collector_ms,root_state,usage_access,next_delay_ms\n");
             SessionStore.write(directory, "events.tsv", "wall_ms\telapsed_ms\taction\n");
             SessionStore.write(directory, "usage-events.csv", "wall_ms,event_type,package\n");
-            SessionStore.write(directory, "README.txt", "ALICE Pin & Lag 1.0.0\nMode=" + (batteryMode ? "battery_24h_60s" : "lag_10min_5s")
+            SessionStore.write(directory, "README.txt", "ALICE Pin & Lag Lite 1.1.0\nMode=" + (batteryMode ? "battery_24h_60s" : "lag_10min_15s_with_backoff")
                     + "\nAndroid=" + Build.VERSION.RELEASE + " SDK=" + Build.VERSION.SDK_INT + "\nModel=" + Build.MODEL
                     + "\nKernel=" + System.getProperty("os.version")
                     + "\nTime zone=" + java.util.TimeZone.getDefault().getID()
                     + "\nTelemetry is read-only. No kernel tuning, MGLRU changes, network upload, wakelock, wakeup alarm or boot receiver.\n"
                     + "Clock: wall_ms=UTC epoch; elapsed_ms includes suspend; uptime_ms excludes suspend.\n"
                     + "A missing/unsupported value is empty, never zero-filled. Battery status/plugged follow Android BatteryManager constants.\n"
-                    + "API current is microamps, charge counter microamp-hours; sysfs units/sign remain driver-specific.\n"
+                    + "API current is stored unchanged in api_current_ua_reported. Android documents microamps, but a ported ROM can report driver-scaled values. Do not derive power from it without validation. Charge counter is reported microamp-hours; raw sysfs units/sign are not inferred.\n"
                     + "CPU/process/GPU residence, wakeup and gfxinfo counters are cumulative, not interval loads. No counters are reset.\n"
                     + "Foreground package is sampled, not a complete app-usage timeline. No images, messages, location, SSID, device serial or raw logcat.\n"
-                    + "Collector duration is recorded so measurement overhead is visible. Unavailable root nodes remain missing.\n");
+                    + "Collector duration and next delay are recorded. Delay is measured AFTER collection, never used to catch up; slow samples back off to 30/60s. Periodic reads use shell builtins; dumpsys and task-profile JSON are startup/end snapshots only. Unavailable root nodes remain missing.\n");
             script = asset("sample.sh");
             RootCommand.Result access = RootCommand.run("id -u\n", 20);
             root = access.code == 0 && access.output.trim().equals("0");
             rootState = root ? "ready" : "unavailable";
             SessionStore.append(directory, "events.tsv", System.currentTimeMillis() + "\t" + SystemClock.elapsedRealtime() + "\troot_" + rootState + "_code_" + access.code + "\n");
+            SessionStore.append(directory, "events.tsv", System.currentTimeMillis() + "\t" + SystemClock.elapsedRealtime() + "\tusage_access_" + UsageReader.allowed(this) + "\n");
             if (root && !stopping) snapshot("start");
             if (!stopping) sample();
         } catch (Exception error) { fail(error); }
@@ -166,10 +169,13 @@ public class RecorderService extends Service {
             }
             ActivityManager.MemoryInfo memory = new ActivityManager.MemoryInfo();
             getSystemService(ActivityManager.class).getMemoryInfo(memory);
+            String apiCurrent = property(bm, BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+            String charge = property(bm, BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
+            String energy = property(bm, BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER);
             long elapsed = SystemClock.elapsedRealtime(), wall = System.currentTimeMillis(), uptime = SystemClock.uptimeMillis();
-            boolean detail = sampleIndex == 0 || begin - lastDetail >= (batteryMode ? 300_000 : 30_000);
+            boolean detail = sampleIndex == 0 || begin - lastDetail >= (batteryMode ? 300_000 : 60_000);
             if (root) {
-                RootCommand.Result result = RootCommand.run("detail=" + (detail ? "1" : "0") + "\nframes=" + (detail && screen ? "1" : "0") + "\n" + script, 12);
+                RootCommand.Result result = RootCommand.run("detail=" + (detail ? "1" : "0") + "\n" + script, 5);
                 SessionStore.append(directory, "root-samples.txt", "\n=== sample=" + sampleIndex + " wall_ms=" + wall + " elapsed_ms=" + elapsed + " code=" + result.code + " ===\n" + result.output);
                 if (result.code != 0) {
                     // Never repeatedly prompt or spawn failing root commands for the rest of a session.
@@ -182,26 +188,29 @@ public class RecorderService extends Service {
             catch (Exception denied) { SessionStore.append(directory, "events.tsv", wall + "\t" + elapsed + "\tusage_unavailable\n"); }
             usageWall = wall;
             long cost = SystemClock.elapsedRealtime() - begin;
+            long nextDelay = budget.observe(cost);
+            boolean usageAllowed = UsageReader.allowed(this);
             String temperature = Double.isNaN(temp) ? "" : String.format(Locale.US, "%.1f", temp);
             String thermal = Build.VERSION.SDK_INT >= 29 ? Integer.toString(pm.getCurrentThermalStatus()) : "";
             SessionStore.append(directory, "battery.csv", wall + "," + elapsed + "," + uptime + "," + (screen ? 1 : 0) + ","
                     + (level < 0 ? "" : level) + "," + (status < 0 ? "" : status) + "," + (plugged < 0 ? "" : plugged) + ","
-                    + temperature + "," + voltage + "," + property(bm, BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) + ","
-                    + property(bm, BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) + "," + property(bm, BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER) + ","
-                    + thermal + "," + memory.availMem + "," + (memory.lowMemory ? 1 : 0) + "," + cost + "," + rootState + "\n");
+                    + temperature + "," + voltage + "," + apiCurrent + ","
+                    + charge + "," + energy + ","
+                    + thermal + "," + memory.availMem + "," + (memory.lowMemory ? 1 : 0) + "," + cost + "," + rootState + "," + (usageAllowed ? 1 : 0) + "," + nextDelay + "\n");
             stats.add(elapsed, level, plugged != 0 || status != BatteryManager.BATTERY_STATUS_DISCHARGING, screen, temp);
             sampleIndex++;
             live = "Đang ghi " + (batteryMode ? "pin" : "lag") + " · " + (elapsed - started) / 60_000 + " phút · " + sampleIndex + " mẫu\n"
                     + "Pin " + (level < 0 ? "?" : level) + "% · " + temperature + " °C · " + (plugged > 0 ? "Đang cắm sạc" : "Không cắm sạc")
                     + "\n" + (root ? "Root OK · Có log CPU/GPU/RAM" : "Thiếu root · Chỉ có pin và RAM Android")
-                    + "\nMẫu vừa ghi tốn " + cost + " ms";
+                    + "\nMẫu vừa ghi tốn " + cost + " ms · Nghỉ " + nextDelay / 1000 + " giây sau mỗi mẫu"
+                    + "\n" + (usageAllowed ? "Có thống kê app" : "Chưa cho phép thống kê app");
             SessionStore.write(directory, "SUMMARY.txt", stats.summary());
             // Handler uses uptime and does not wake the device from suspend.
-            if (!stopping) worker.postDelayed(this::sample, Math.max(1000, interval - cost));
+            if (!stopping) worker.postDelayed(this::sample, nextDelay);
         } catch (Exception error) { fail(error); }
     }
     private void snapshot(String phase) throws Exception {
-        RootCommand.Result result = RootCommand.run(asset("snapshot.sh"), 8);
+        RootCommand.Result result = RootCommand.run("end_snapshot=" + ("end".equals(phase) ? "1" : "0") + "\n" + asset("snapshot.sh"), 12);
         SessionStore.write(directory, phase + "-configuration.txt", "command_code=" + result.code + "\n" + result.output);
     }
     private void fail(Exception error) {
@@ -216,9 +225,15 @@ public class RecorderService extends Service {
         worker.post(() -> {
             try {
                 if (directory != null) {
-                    // Finish the optional usage timeline; no root prompt or dumpsys on stop.
+                    // Mark the measurement boundary before the one-off end diagnostic.
+                    SessionStore.append(directory, "events.tsv", System.currentTimeMillis() + "\t" + SystemClock.elapsedRealtime() + "\tMEASUREMENT_ENDED\n");
+                    // Finish the optional usage timeline; never prompt for new root on stop.
                     try { UsageReader.collect(this, directory, usageWall, System.currentTimeMillis()); }
                     catch (Exception ignored) { }
+                    if (root) {
+                        try { snapshot("end"); }
+                        catch (Exception ignored) { }
+                    }
                     if (stats != null) SessionStore.write(directory, "SUMMARY.txt", stats.summary());
                     SessionStore.append(directory, "events.tsv", System.currentTimeMillis() + "\t" + SystemClock.elapsedRealtime() + "\tSTOP " + reason + "\n");
                     SessionStore.prefs(this).edit().putString("status", reason).apply();

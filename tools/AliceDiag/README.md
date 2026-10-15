@@ -1,47 +1,46 @@
-# ALICE Pin & Lag 1.0.0
+# ALICE Pin & Lag Lite 1.1.0
 
-Local diagnostics for the S8+ / One UI 8 EnergyStep investigation. This is a
-separate app from the old MGLRU Diag app: it never enables MGLRU or changes any
-kernel/ROM setting.
+Read-only local diagnostic APK for S8+ / One UI 8 (Android16). This version
+replaces the expensive per-node `cat` readers with shell builtins. Periodic
+collection never calls dumpsys/gfxinfo, awk, getprop or cat. One optional `ps`
+is allowed every 60s in lag mode / 5min in battery mode. Configuration and
+frame summaries are one-off startup/end snapshots, outside the sample loop.
 
-- **Pin:** user-started 24-hour session, samples every 60 seconds while the
-  process is scheduled. No wakelock, wakeup alarm, boot receiver or network
-  permission. The device may suspend naturally: samples can be far apart, and
-  the recorder ends at its next scheduled run/wake after the elapsed limit.
-- **Lag:** 10-minute session, 5-second sampling; process/wakeup/foreground-frame
-  summaries at most every 30 seconds. No gfxinfo or batterystats counter reset.
-- Battery percentage, temperature, voltage, current µA, charge µAh, charge state,
-  screen state, elapsed/awake clocks, Android thermal status and available RAM.
-- Optional KSU root: raw CPU frequency/residency/limits, GPU load/frequency,
-  thermal sensors, PSI, zram, reclaim counters and process CPU cumulative time.
-  Every root command is bounded in time and output. A failed root command
-  disables root reads for that session rather than repeatedly requesting root.
-- Optional Android usage access: resumed/paused package and screen events from
-  the session only, with timestamps. No class names or notification content.
-- One ZIP exported via MediaStore Downloads on Android10+; document picker on
-  Android8–9. Logs survive interrupted recording/reboot inside private storage.
-  Sessions are limited to 32MiB before the next sample; individual root outputs
-  to 512KiB. Old sessions remain until the explicit delete button is used.
+- Battery: sample, then rest 60s; at most 24h elapsed, no wakeup alarm.
+- Lag: sample, then rest 15s; 10min maximum. A sample >=750ms increases the
+  rest to >=30s, >=2000ms to >=60s. Backoff never decreases in a session.
+  There is no subtract-cost or catch-up loop. Root commands time out in 5s.
+- CSV includes `collector_ms`, `next_delay_ms`, `usage_access`, screen/charging
+  state, reported battery values, memory and thermal status. Large suspend
+  gaps remain missing; valid drain accounting excludes charging boundaries.
+- `api_current_ua_reported` is stored verbatim. Some ported ROMs return the
+  driver's mA scale through an API documented as microamps; this app does not
+  auto-convert or derive power/battery health from it. Sysfs values are raw.
+- Optional KSU root provides CPU/GPU/PSI/reclaim/zram/process/wakeup counters.
+  Unknown nodes are omitted. A failed root read disables further root reads.
+- Optional usage access records only session package-resumed/paused and screen
+  events. Missing access is explicitly recorded in CSV and events.tsv.
+- Startup/end configuration records actual task-profile JSON and digests,
+  cpuset permissions, CPU QoS limits, schedtune and known bootstrap status.
+  This allows a skipped compatibility fix to be investigated without guessing
+  whether the checksum was unavailable or the ROM was a different version.
+- At end, only counts of a selected cpuset error in the latest 400 system log
+  entries are retained; this is a window count, not a session total/rate.
+  Raw logcat contents, screen text, messages, SSIDs, serial and location are
+  never retained. Logs do include package/process names.
 
-There is a visible foreground-service notification with a stop action. Root
-and usage access are optional; unavailable readings remain missing. No
-analytics, Internet, accessibility service, screen capture, location, SSID,
-accounts, contacts, messages, serial or raw logcat collection. Logs reveal
-package/process names and should be shared only deliberately.
+The visible foreground service has a stop action. No Internet, wakelock,
+boot receiver, background tuning, MGLRU changes or automatic upload. Logs
+survive interruption/reboot in private app storage; ZIP exports to Downloads.
 
-`battery.csv` records measurement cost, so overhead can be assessed. Battery
-rate excludes charging transitions, missing readings, >3% capacity jumps, and
-sampling gaps >3 minutes. It is only shown after >=30 minutes of valid samples
-and >=2% drop. It does not estimate battery health or promise 24–36h runtime.
-`usage-events.csv` event constants: 1=resumed, 2=paused, 15=screen interactive,
-16=screen not interactive. Multiwindow events need interpretation; they are not
-automatically converted into exclusive foreground durations.
+The new application ID `com.halot455.alice.diaglite` installs alongside 1.0.0,
+preserving old private logs despite the CI diagnostic signing key changing.
+Stop the old recorder before starting Lite. UI label includes Lite.
 
-Checks: executable Java drain-accounting cases; Android lint/build; API36
-emulator launch/foreground service/stop/export with root absent. KSU permission,
-SELinux access, Samsung sysfs coverage and long-run overhead require the phone.
+Validation: actual script execution with external readers instrumented,
+Java drain-accounting/backoff tests, Android build/lint, Android16 emulator
+foreground service/usage access/stop/ZIP export, and shell-sampler timing.
+Emulator timing is not a real S8+/KSU overhead or battery-life measurement.
+CI signing uses a diagnostic debug key, not a production update-signing scheme.
 
-Build: Java17, Android SDK35, Gradle8.9, Android Gradle Plugin8.7.3. No app
-runtime dependencies. CI publishes a public prerelease APK built only from
-this source. Debug-key signing is for this diagnostic build, not a production
-update-signing guarantee.
+Build: JDK17, SDK35, Gradle8.9, AGP8.7.3; runs on Android8+. No runtime libraries.

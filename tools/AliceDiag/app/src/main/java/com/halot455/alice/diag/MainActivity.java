@@ -53,7 +53,7 @@ public class MainActivity extends Activity {
             return insets;
         });
         text(body, "ALICE", 14, Color.rgb(23, 107, 99));
-        text(body, "Pin & Lag", 32, Color.rgb(18, 45, 42));
+        text(body, "Pin & Lag Lite", 32, Color.rgb(18, 45, 42));
         text(body, "Ghi cách máy hoạt động để tìm nguyên nhân nóng, hao pin và giật.", 16, Color.DKGRAY);
         modes = new RadioGroup(this);
         RadioButton battery = new RadioButton(this);
@@ -62,7 +62,7 @@ public class MainActivity extends Activity {
         modes.addView(battery);
         lag = new RadioButton(this);
         lag.setId(View.generateViewId());
-        lag.setText("Bắt lag · 10 phút\nMỗi 5 giây; mở app và vuốt thử");
+        lag.setText("Bắt lag · 10 phút\nMỗi 15 giây; tự giảm nhịp nếu ghi chậm");
         modes.addView(lag);
         modes.check(battery.getId());
         body.addView(modes);
@@ -83,7 +83,7 @@ public class MainActivity extends Activity {
         });
         stop = button(body, "Dừng ghi");
         stop.setOnClickListener(v -> {
-            state.setText("Đang dừng; chờ lệnh đọc hiện tại kết thúc...");
+            state.setText("Đang dừng và chụp cấu hình cuối; tối đa khoảng 15 giây...");
             startService(new Intent(this, RecorderService.class).setAction(RecorderService.STOP));
         });
         export = button(body, "Xuất ZIP log");

@@ -9,7 +9,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-PKG = 'com.halot455.alice.diag'
+PKG = 'com.halot455.alice.diaglite'
+COMPONENT = PKG + '/com.halot455.alice.diag.MainActivity'
 def adb(*args):
     return subprocess.check_output(['adb', *args], text=True, timeout=30)
 def tap(label):
@@ -29,7 +30,7 @@ def tap(label):
 
 adb('shell', 'pm', 'grant', PKG, 'android.permission.POST_NOTIFICATIONS')
 adb('shell', 'appops', 'set', PKG, 'GET_USAGE_STATS', 'allow')
-adb('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
+adb('shell', 'am', 'start', '-n', COMPONENT)
 time.sleep(2)
 tap('Bắt đầu ghi')
 time.sleep(8)
@@ -38,7 +39,7 @@ assert 'isForeground=true' in services, services
 adb('shell', 'am', 'start', '-a', 'android.settings.SETTINGS')
 time.sleep(2)
 # Returning to the visible activity and using its stop action also verifies intent routing.
-adb('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
+adb('shell', 'am', 'start', '-n', COMPONENT)
 tap('Dừng ghi')
 time.sleep(3)
 services = adb('shell', 'dumpsys', 'activity', 'services', PKG)
@@ -60,6 +61,20 @@ with zipfile.ZipFile('smoke-output/log.zip') as archive:
 # There must be no receiver that automatically starts the recorder on reboot.
 package = adb('shell', 'dumpsys', 'package', PKG)
 assert 'BOOT_COMPLETED' not in package
+# Exercise the exact periodic asset on Android's shell; keep timing separate from
+# the APK non-root test. This is not a Samsung/KSU or battery-life measurement.
+import json
+asset = 'tools/AliceDiag/app/src/main/assets/sample.sh'
+adb('push', asset, '/data/local/tmp/alice-diag-sample.sh')
+timings = []
+for _ in range(5):
+    start = time.monotonic()
+    output = adb('shell', 'detail=0 /system/bin/sh /data/local/tmp/alice-diag-sample.sh')
+    timings.append(round((time.monotonic() - start) * 1000, 2))
+    assert '@@ /proc/stat' in output
+Path('smoke-output/sampler-benchmark.json').write_text(json.dumps({'environment':'Android36 emulator adb shell; not Samsung/KSU', 'fast_sample_adb_wall_ms':timings},indent=2))
+assert max(timings) < 3000, timings
 log = adb('logcat', '-d', '-s', 'AndroidRuntime:E')
 assert 'FATAL EXCEPTION' not in log, log
+print('Sampler shell timings (emulator adb wall ms):', timings)
 print('PASS: launch -> foreground recording without root + optional usage access -> stop -> Downloads ZIP; no boot restart')

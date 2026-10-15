@@ -1,4 +1,4 @@
-name: ALICE Pin and Lag diagnostic APK
+name: ALICE Pin and Lag Lite diagnostic APK
 on:
   push:
     branches: [agent/alice-pin-lag-apk]
@@ -31,8 +31,10 @@ jobs:
       - name: Verify accounting and read-only collector shell syntax
         run: |
           mkdir -p /tmp/alice-diag-tests
-          javac -d /tmp/alice-diag-tests tools/AliceDiag/app/src/main/java/com/halot455/alice/diag/DrainStats.java tools/AliceDiag/tests/DrainStatsTest.java
+          javac -d /tmp/alice-diag-tests tools/AliceDiag/app/src/main/java/com/halot455/alice/diag/DrainStats.java tools/AliceDiag/app/src/main/java/com/halot455/alice/diag/SamplingBudget.java tools/AliceDiag/tests/DrainStatsTest.java tools/AliceDiag/tests/SamplingBudgetTest.java
           java -cp /tmp/alice-diag-tests com.halot455.alice.diag.DrainStatsTest
+          java -cp /tmp/alice-diag-tests com.halot455.alice.diag.SamplingBudgetTest
+          python3 tools/AliceDiag/tests/collector.py
           sh -n tools/AliceDiag/app/src/main/assets/sample.sh
           sh -n tools/AliceDiag/app/src/main/assets/snapshot.sh
       - name: Build and lint APK
@@ -54,29 +56,32 @@ jobs:
             python3 tools/AliceDiag/tests/smoke.py
       - name: Verify APK and checksums
         run: |
-          cp tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk ALICE-Pin-Lag-1.0.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ALICE-Pin-Lag-1.0.0.apk
-          sha256sum ALICE-Pin-Lag-1.0.0.apk > SHA256SUMS.txt
+          cp tools/AliceDiag/app/build/outputs/apk/debug/app-debug.apk ALICE-Pin-Lag-Lite-1.1.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ALICE-Pin-Lag-Lite-1.1.0.apk
+          sha256sum ALICE-Pin-Lag-Lite-1.1.0.apk > SHA256SUMS.txt
       - name: Store APK and validation
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-Pin-Lag-1.0.0-${{ github.sha }}
+          name: ALICE-Pin-Lag-Lite-1.1.0-${{ github.sha }}
           path: |
-            ALICE-Pin-Lag-1.0.0.apk
+            ALICE-Pin-Lag-Lite-1.1.0.apk
             SHA256SUMS.txt
             tools/AliceDiag/README.md
             tools/AliceDiag/app/build/reports/lint-results-debug.html
             smoke-output/log.zip
+            smoke-output/sampler-benchmark.json
       - name: Publish diagnostic APK download
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > /tmp/alice-diag-release.md <<'NOTES'
+          Bản Lite thay bộ đọc mỗi node bằng shell builtin, bỏ dumpsys khỏi vòng lấy mẫu.
           APK chẩn đoán pin/nhiệt/lag, không chỉnh kernel hay bật MGLRU.
           Cấp root KSU để có log CPU/GPU/PSI; quyền thống kê app là tùy chọn.
-          Chọn Pin (24h) hoặc Lag (10 phút), Bắt đầu, Dừng, Xuất ZIP ở Tải xuống.
+          Chọn Pin (60s) hoặc Lag (15s), tự giảm nhịp nếu thu thập chậm. Dừng, Xuất ZIP ở Tải xuống.
+          Package mới com.halot455.alice.diaglite cài cạnh bản cũ; hãy dừng bản cũ trước khi ghi.
           Không tự upload log. Đây là bản chẩn đoán ký bằng debug key.
           Đã kiểm tra build/lint, tính hao pin và ghi/dừng/xuất ZIP trên Android36 không root.
           KSU, sysfs Samsung và hao pin thực tế cần đo trên thiết bị.
           NOTES
-          gh release create alice-pin-lag-1.0.0 ALICE-Pin-Lag-1.0.0.apk SHA256SUMS.txt --target "$GITHUB_SHA" --title 'ALICE Pin & Lag 1.0.0' --notes-file /tmp/alice-diag-release.md --prerelease
+          gh release create alice-pin-lag-lite-1.1.0 ALICE-Pin-Lag-Lite-1.1.0.apk SHA256SUMS.txt --target "$GITHUB_SHA" --title 'ALICE Pin & Lag Lite 1.1.0' --notes-file /tmp/alice-diag-release.md --prerelease

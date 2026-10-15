@@ -38,7 +38,7 @@ final class DrainStats {
         String rate = unpluggedMs >= 30 * 60_000 && lostPercent >= 2
                 ? String.format(Locale.US, "%.2f %%/giờ", lostPercent * 3_600_000 / unpluggedMs)
                 : "Chưa đủ 30 phút và 2% pin để ước tính";
-        return "ALICE Pin & Lag — kết quả quan sát\n"
+        return "ALICE Pin & Lag Lite — kết quả quan sát\n"
                 + "Số mẫu: " + samples + "\n"
                 + "Thời gian quan sát: " + elapsedMs / 60_000 + " phút\n"
                 + "Đoạn không sạc liên tục, không có khoảng trống lớn: " + unpluggedMs / 60_000 + " phút\n"
@@ -49,7 +49,7 @@ final class DrainStats {
                 + "Không quy đổi thành thời lượng pin 1–1,5 ngày hay sức khỏe pin.\n"
                 + "Máy ngủ tự nhiên; không giữ wakelock, không đánh thức máy để lấy mẫu.\n"
                 + "Khoảng trống khi ngủ/tiến trình bị dừng được giữ nguyên, không nội suy.\n"
-                + "Dòng điện sysfs giữ nguyên đơn vị/dấu của driver; API Android có cột µA riêng.\n"
+                + "Dòng điện API/sysfs giữ nguyên giá trị; ROM port có thể trả sai thang đơn vị. Chưa dùng để tính công suất.\n"
                 + "Tên app có thể xuất hiện trong log. Không chứa ảnh, tin nhắn, vị trí, SSID hay logcat thô.\n";
     }
 }
