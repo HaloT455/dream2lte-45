@@ -12,7 +12,15 @@ from pathlib import Path
 PKG = 'com.halot455.alice.diaglite'
 COMPONENT = PKG + '/com.halot455.alice.diag.MainActivity'
 def adb(*args):
-    return subprocess.check_output(['adb', *args], text=True, timeout=30)
+    result = subprocess.run(['adb', *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    if result.returncode:
+        print('ADB failed:', args, result.returncode, result.stdout, flush=True)
+        Path('smoke-output').mkdir(exist_ok=True)
+        errors = subprocess.run(['adb', 'logcat', '-d', '-s', 'AndroidRuntime:E', 'ActivityTaskManager:E'], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15).stdout
+        print(errors, flush=True)
+        Path('smoke-output/failure-logcat.txt').write_text(errors)
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout)
+    return result.stdout
 def tap(label):
     for attempt in range(7):
         adb('shell', 'uiautomator', 'dump', '/sdcard/alice-window.xml')
@@ -34,7 +42,7 @@ def tap(label):
 
 adb('shell', 'pm', 'grant', PKG, 'android.permission.POST_NOTIFICATIONS')
 adb('shell', 'appops', 'set', PKG, 'GET_USAGE_STATS', 'allow')
-launch_output = adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-p', PKG)
+launch_output = adb('shell', 'am', 'start', '-W', '-n', COMPONENT)
 print(launch_output)
 assert 'Error' not in launch_output, launch_output
 time.sleep(2)
@@ -45,7 +53,7 @@ assert 'isForeground=true' in services, services
 adb('shell', 'am', 'start', '-a', 'android.settings.SETTINGS')
 time.sleep(2)
 # Returning to the visible activity and using its stop action also verifies intent routing.
-launch_output = adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-p', PKG)
+launch_output = adb('shell', 'am', 'start', '-W', '-n', COMPONENT)
 print(launch_output)
 assert 'Error' not in launch_output, launch_output
 tap('Dừng ghi')
