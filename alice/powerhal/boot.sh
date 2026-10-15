@@ -22,7 +22,8 @@ if [ "${1:-apply}" = guard ]; then
   tries=$((tries + 1))
   sleep 1
  done
- if umount "$TARGET" && [ "$(hash "$TARGET")" = "$OLD_SHA" ]; then
+ # Detach even when the failed service still maps the replacement executable.
+ if umount -l "$TARGET" && [ "$(hash "$TARGET")" = "$OLD_SHA" ]; then
   printf 'reset\n' > "$NODE"
   touch "$STATE/disable"
   echo POWERHAL_FALLBACK_VENDOR_RESTORED

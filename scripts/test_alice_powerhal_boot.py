@@ -23,7 +23,10 @@ if name=='ls':
 if name in ['chown','chmod','chcon','sleep','setprop']:sys.exit(0)
 if name=='mount':
  assert a[0]=='--bind';shutil.copyfile(a[2],base/'original');shutil.copyfile(a[1],a[2]);sys.exit(0)
-if name=='umount':shutil.copyfile(base/'original',a[-1]);sys.exit(0)
+if name=='umount':
+ # The running HAL retains an executable/mmap reference to the bind mount.
+ if a[0]!='-l':sys.exit(16)
+ shutil.copyfile(base/'original',a[-1]);sys.exit(0)
 if name=='dumpsys':
  if os.environ.get('MOCK_READY')=='1':print('ALICE Power HAL R12 AIDL V2; backend=ready; sessions=16')
  else:print('backend=unavailable')
