@@ -38,6 +38,7 @@ class Backend {
     std::array<bool, SLOTS> used{};
     bool ready = false;
     bool warned = false;
+    uint64_t created = 0, reports = 0;
 public:
     bool write(const std::string& command) {
         int fd = open(NODE, O_WRONLY | O_CLOEXEC);
@@ -58,7 +59,7 @@ public:
     bool available() const { return ready; }
     int acquire() {
         std::lock_guard<std::mutex> guard(lock);
-        for (int i = 0; i < SLOTS; i++) if (!used[i]) { used[i] = true; return i; }
+        for (int i = 0; i < SLOTS; i++) if (!used[i]) { used[i] = true; created++; return i; }
         return -1;
     }
     void clear(int slot) { write("session " + std::to_string(slot) + " 0 0\n"); }
@@ -69,7 +70,17 @@ public:
         used[slot] = false;
     }
     void report(int slot, int level, int ms) {
-        write("session " + std::to_string(slot) + " " + std::to_string(level) + " " + std::to_string(ms) + "\n");
+        if (write("session " + std::to_string(slot) + " " + std::to_string(level) + " " + std::to_string(ms) + "\n")) {
+            std::lock_guard<std::mutex> guard(lock);
+            reports++;
+        }
+    }
+    void dump(int fd) {
+        std::lock_guard<std::mutex> guard(lock);
+        int active = 0;
+        for (bool occupied : used) active += occupied;
+        dprintf(fd, "session_active=%d session_created=%llu report_batches=%llu\n", active,
+                static_cast<unsigned long long>(created), static_cast<unsigned long long>(reports));
     }
 };
 
@@ -207,6 +218,7 @@ public:
         if (!systemCaller() && AIBinder_getCallingUid() != 2000) return STATUS_PERMISSION_DENIED;
         dprintf(fd, "ALICE Power HAL R12 AIDL V2; backend=%s; sessions=%d\n",
                 backend->available() ? "ready" : "unavailable", SLOTS);
+        backend->dump(fd);
         char buf[512];
         int input = open(NODE, O_RDONLY | O_CLOEXEC);
         if (input >= 0) {

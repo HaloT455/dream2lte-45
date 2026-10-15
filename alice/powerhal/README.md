@@ -55,7 +55,7 @@ After flashing check:
 ```
 adb shell 'su -c "cat /data/adb/alice-powerhal/status.log; cat /sys/power/alice_power_hint; dumpsys android.hardware.power.IPower/default"'
 ```
-The dump should say `backend=ready`. An unchanged `commands` count means no
+The dump should say `backend=ready`; `session_created` and `report_batches` show whether ADPF sessions/reports actually reach the HAL. An unchanged `commands` count means no
 delivered hint has been established. App ADPF use depends on framework/app
 support; this does not add ADPF support to applications that never send hints.
 
