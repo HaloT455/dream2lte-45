@@ -1,4 +1,10 @@
-# R14 boot compatibility
+# R15 boot compatibility
+
+R15 renames the checksum helper to `alice_sha256` to avoid Android mksh's
+built-in `hash` alias. This enables the existing audited two-action GPIS patch
+when the actual profile matches; unknown JSON and failed hashes still cannot
+authorize an edit. The complete script fixture now runs under mksh as well as
+the host POSIX shell. No CPU masks or policy parameters change in R15.
 
 Create an owned `/dev/cpuset/sf` group with the same 0-7 CPU eligibility and root
 memory-node mask. Hash failures/unknown JSON no longer suppress this setup.
@@ -21,4 +27,5 @@ reclaim rather than absent counters. LMKD kill thresholds are not modified.
 
 Host fixtures execute the embedded script and compiled aggregation routines.
 They do not establish on-device boot success, SELinux access, frame-time or
-battery improvements. Kernel boot retains the R13 guarded Power HAL bootstrap.
+battery improvements. Kernel boot includes the same mksh correction in the
+guarded Power HAL bootstrap.

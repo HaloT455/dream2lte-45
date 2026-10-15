@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 
 root=Path(__file__).resolve().parent.parent
+test_shell=os.environ.get('ALICE_TEST_SHELL','sh')
+print('Bootstrap test shell:', test_shell, flush=True)
 subprocess.run(['python3',str(root/'scripts/gen_alice_cpu_compat.py'),'--check'],check=True)
 script=(root/'alice/cpu-compat/boot.sh').read_text()
 ksu=(root/'drivers/kernelsu/runtime/ksud.c').read_text()
@@ -53,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='alice-cpu-compat-') as tmp:
  '\nint main(void){fwrite(KERNEL_SU_RC,1,sizeof(KERNEL_SU_RC)-1,stdout);}\n')
  subprocess.run([os.environ.get('HOSTCC','cc'),'-I',str(root),'-Wall','-Wextra','-Werror',str(c),'-o',str(exe)],check=True)
  rc=subprocess.check_output([str(exe)],text=True)
- block=rc.split('# ALICE_CPU_COMPAT_R14\n',1)[1]
+ block=rc.split('# ALICE_CPU_COMPAT_R15\n',1)[1]
  assert block.startswith('on post-fs-data\n    exec ')
  line=block.splitlines()[1];args=shlex.split(line)
  assert args[:10]==['exec','u:r:ksu:s0','root','root','--','/system/bin/timeout','8','/system/bin/sh','-c',args[-1]]
@@ -117,7 +119,7 @@ raise AssertionError(name)
   (proc/'comm').write_text('surfaceflinger\n');(proc/'status').write_text('Uid:\t1000\t1000\t1000\t1000\nCpus_allowed_list:\t0-7\n')
   (proc/'cgroup').write_text('2:cpuset:/\n')
  def run(action='apply',fail='',hash_mode=''):
-  subprocess.run(['sh',str(device),action],env=env|{'MOCK_FAIL':fail,'MOCK_HASH_MODE':hash_mode},check=True,timeout=5)
+  subprocess.run([test_shell,str(device),action],env=env|{'MOCK_FAIL':fail,'MOCK_HASH_MODE':hash_mode},check=True,timeout=5)
   return [json.loads(x) for x in calls.read_text().splitlines()],(state/'status.log').read_text()
  reset();ops,log=run()
  assert target.read_text()==fixed_text

@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parent.parent
+test_shell = os.environ.get('ALICE_TEST_SHELL', 'sh')
+print('Bootstrap test shell:', test_shell, flush=True)
 script = (root/'alice/powerhal/boot.sh').read_text()
 old, new = b'audited synthetic original', b'public source service fixture'
 digest = lambda b: hashlib.sha256(b).hexdigest()
@@ -42,7 +44,7 @@ if name=='umount':
 if name=='dumpsys':
  if os.environ.get('MOCK_FOREIGN_SWAP')=='1':
   p=base/'mountinfo';p.write_text(p.read_text().replace('101 ','202 ',1))
- if os.environ.get('MOCK_READY')=='1':print('ALICE Power HAL R13; backend=ready')
+ if os.environ.get('MOCK_READY')=='1':print('ALICE Power HAL R15; backend=ready')
  else:print('backend=unavailable')
  sys.exit(0)
 raise AssertionError(name)
@@ -86,7 +88,7 @@ with tempfile.TemporaryDirectory() as tmp:
         return p,target,node,state,f,env
 
     def run(f, env, action='apply'):
-        subprocess.run(['sh',str(f),action],env=env,check=True)
+        subprocess.run([test_shell,str(f),action],env=env,check=True,timeout=10)
     def calls(p):
         return [json.loads(l) for l in (p/'calls').read_text().splitlines()]
 

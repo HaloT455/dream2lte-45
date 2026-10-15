@@ -1,4 +1,15 @@
-# ALICE Power HAL R13
+# ALICE Power HAL R15
+
+R15 fixes an Android shell collision in the bootstrap. Android mksh predefines
+`hash` as an alias for its command-path cache. A `hash()` function did not make
+`$(hash path)` call the checksum reader: the alias could instead return success
+with empty stdout. The bootstrap now uses the distinct `alice_sha256` function.
+The existing full checksum, ROM-layout, label, mount-ownership and fallback
+guards remain mandatory. No boost floors or thermal policy changed.
+
+CI runs the complete bootstrap fixture under both the host POSIX shell and
+mksh. The previous script fails the mksh install fixture; the corrected script
+passes the same fixture, including deferred reads, late install and rollback.
 
 Replacement for the audited Samsung AIDL V2 service, with a bounded CPU QoS
 backend for the Exynos8895 EnergyStep kernel. The boot action only installs when
@@ -59,7 +70,7 @@ The dump should say `backend=ready`; `session_created` and `report_batches` show
 delivered hint has been established. App ADPF use depends on framework/app
 support; this does not add ADPF support to applications that never send hints.
 
-Rollback just this service, leaving the R13 kernel/CPU fixes active:
+Rollback just this service, leaving the R15 kernel/CPU fixes active:
 ```
 adb shell 'su -c "touch /data/adb/alice-powerhal/disable; reboot"'
 ```

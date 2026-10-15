@@ -16,7 +16,7 @@ command = (
     f'exec /system/bin/sh {state}/boot.sh apply'
 )
 rc = (
-    '\n# ALICE_CPU_COMPAT_R14\n'
+    '\n# ALICE_CPU_COMPAT_R15\n'
     'on post-fs-data\n'
     f'    exec u:r:ksu:s0 root root -- /system/bin/timeout 8 /system/bin/sh -c "{command}"\n'
     '\non property:init.svc.surfaceflinger=running\n'

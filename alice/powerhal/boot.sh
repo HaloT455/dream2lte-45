@@ -15,12 +15,14 @@ umask 077
 mkdir -p "$STATE" || exit 1
 chmod 0700 "$STATE" || exit 1
 exec >> "$STATE/status.log" 2>&1
-echo "ALICE_POWERHAL_R13 action=${1:-apply}"
+echo "ALICE_POWERHAL_R15 action=${1:-apply}"
 mkdir "$LOCK" 2>/dev/null || { echo INSTALL_BUSY; exit 0; }
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 trap 'exit 1' HUP INT TERM
 
-hash() {
+# Android mksh predefines hash as an alias for its command-path cache.
+# Use a unique function name: hash can return success with no digest.
+alice_sha256() {
  # Explicit tool path and validated output: failed reads can never compare equal.
  line=$("$TOYBOX" sha256sum "$1" 2> "$STATE/hash-error.log") || line=
  if [ -z "$line" ]; then
@@ -67,7 +69,7 @@ install_payload() {
  LABEL=${1:-}
  case "$LABEL" in u:object_r:sysfs_power*:s0) ;; *) echo QOS_LABEL_UNKNOWN; return 1;; esac
  cat "$BLOB" > "$STATE/service.tmp" || { echo COPY_FAILED; return 1; }
- COPIED_SHA=$(hash "$STATE/service.tmp") || { rm -f "$STATE/service.tmp"; return 1; }
+ COPIED_SHA=$(alice_sha256 "$STATE/service.tmp") || { rm -f "$STATE/service.tmp"; return 1; }
  [ "$COPIED_SHA" = "$PAYLOAD_SHA" ] || { rm -f "$STATE/service.tmp"; echo COPY_HASH_FAILED; return 1; }
  chmod 0755 "$STATE/service.tmp" && chown 0:0 "$STATE/service.tmp" &&
   chcon "$CONTEXT" "$STATE/service.tmp" &&
@@ -75,7 +77,7 @@ install_payload() {
   mv "$STATE/service.tmp" "$STATE/service" || { rm -f "$STATE/service.tmp"; echo PREPARE_FAILED; return 1; }
  mount --bind "$STATE/service" "$TARGET" || { echo BIND_FAILED; return 1; }
  INSTALLED_MOUNT=$(mount_id)
- CURRENT_SHA=$(hash "$TARGET") || CURRENT_SHA=
+ CURRENT_SHA=$(alice_sha256 "$TARGET") || CURRENT_SHA=
  if [ -n "$INSTALLED_MOUNT" ] && [ "$CURRENT_SHA" = "$PAYLOAD_SHA" ]; then
   printf '%s %s %s\n' "$BOOT_ID" "$INSTALLED_MOUNT" "$PAYLOAD_SHA" > "$STATE/bound.tmp" &&
    mv "$STATE/bound.tmp" "$STATE/bound" || {
@@ -96,10 +98,10 @@ install_payload() {
 }
 
 rollback_owned() {
- CURRENT_SHA=$(hash "$TARGET") || { echo FALLBACK_HASH_UNREADABLE_SKIPPED; return 1; }
+ CURRENT_SHA=$(alice_sha256 "$TARGET") || { echo FALLBACK_HASH_UNREADABLE_SKIPPED; return 1; }
  own_mount || { echo FALLBACK_UNOWNED_MOUNT_SKIPPED; return 1; }
  umount -l "$TARGET" || { echo POWERHAL_FALLBACK_UNMOUNT_FAILED; return 1; }
- RESTORED_SHA=$(hash "$TARGET") || { echo FALLBACK_READBACK_FAILED; return 1; }
+ RESTORED_SHA=$(alice_sha256 "$TARGET") || { echo FALLBACK_READBACK_FAILED; return 1; }
  [ "$RESTORED_SHA" = "$OLD_SHA" ] || { echo FALLBACK_VENDOR_CHANGED_SKIPPED; return 1; }
  rm -f "$STATE/bound"
  printf 'reset\n' > "$NODE"
@@ -115,8 +117,8 @@ read -r BOOT_ID < "$BOOT_ID_FILE" || { echo BOOT_ID_UNAVAILABLE_DEFERRED; exit 0
 # mountinfo reports the resolved mountpoint even when /vendor is a symlink.
 MOUNT_POINT=$("$TOYBOX" readlink -f "$TARGET") || { echo TARGET_PATH_NOT_READY_DEFERRED; exit 0; }
 [ -n "$MOUNT_POINT" ] && [ -f "$MOUNT_POINT" ] || { echo TARGET_PATH_NOT_READY_DEFERRED; exit 0; }
-CURRENT_SHA=$(hash "$TARGET") || { echo VENDOR_NOT_READABLE_DEFERRED; exit 0; }
-PAYLOAD_SHA=$(hash "$BLOB") || { echo PAYLOAD_NOT_READABLE_DEFERRED; exit 0; }
+CURRENT_SHA=$(alice_sha256 "$TARGET") || { echo VENDOR_NOT_READABLE_DEFERRED; exit 0; }
+PAYLOAD_SHA=$(alice_sha256 "$BLOB") || { echo PAYLOAD_NOT_READABLE_DEFERRED; exit 0; }
 [ -n "$CURRENT_SHA" ] && [ -n "$PAYLOAD_SHA" ] || { echo HASH_NOT_READY_DEFERRED; exit 0; }
 [ "$PAYLOAD_SHA" != "$OLD_SHA" ] || { echo PAYLOAD_INVALID_SKIPPED; exit 0; }
 
