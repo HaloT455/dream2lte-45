@@ -113,6 +113,7 @@ int main(void) {
  assert(cmd("session 1 2 200")>0 && applied_level==3);
  assert(cmd("session 0 0 0")>0 && applied_level==2);
  assert(cmd("mode 7 0")>0 && applied_level==0 && !scheduled);
+ assert(cmd("reset")>0 && !interactive); // service restart preserves the screen-off gate
  assert(cmd("session 0 3 250")>0 && applied_level==0 && !scheduled);
  assert(cmd("mode 7 1")>0 && applied_level==0); // screen-on cannot revive stale hints
  assert(cmd("mode 1 1")>0);
@@ -262,7 +263,9 @@ int main() {
  sessions.clear(); // Binder/session destruction releases every occupied slot.
  for(int i=0;i<16;i++)assert(power.createHintSession(42,10001,{42},16666667,&session).isOk());
  session.reset();
- deny=true;Power unavailable;
+ deny=true;power.setBoost(Boost::INTERACTION,80);
+ power.isModeSupported(Mode::LAUNCH,&supported);assert(!supported);
+ Power unavailable;
  unavailable.isModeSupported(Mode::LAUNCH,&supported);assert(!supported);
  assert(!unavailable.createHintSession(42,10001,{42},16666667,&session).isOk());
  deny=false;

@@ -128,8 +128,7 @@ static ssize_t alice_power_hint_store(struct kobject *kobj,
 	mutex_lock(&hint_lock);
 	if (sysfs_streq(buf, "reset")) {
 		memset(hints, 0, sizeof(hints));
-		interactive = true;
-		low_power = device_idle = display_inactive = false;
+		/* A HAL restart must not forget screen-off/idle/low-power state. */
 		ret = 0;
 	} else if (sscanf(buf, "%15s %u %u %u %c", op, &id, &value, &ms, &tail) == 4 &&
 		   !strcmp(op, "session") && id < ALICE_SESSIONS && value <= 3 && ms <= 250) {

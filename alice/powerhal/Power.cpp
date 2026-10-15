@@ -6,6 +6,7 @@
 #include <android/binder_process.h>
 #include <android/log.h>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -36,7 +37,7 @@ static int64_t monotonicNs() {
 class Backend {
     std::mutex lock;
     std::array<bool, SLOTS> used{};
-    bool ready = false;
+    std::atomic<bool> ready{false};
     bool warned = false;
     uint64_t created = 0, reports = 0;
 public:
@@ -46,6 +47,7 @@ public:
         int saved = errno;
         if (fd >= 0) close(fd);
         if (n != static_cast<ssize_t>(command.size())) {
+            ready.store(false);
             std::lock_guard<std::mutex> guard(lock);
             if (!warned) {
                 __android_log_print(ANDROID_LOG_ERROR, "AlicePower", "hint backend unavailable: %s", strerror(saved));
@@ -56,7 +58,7 @@ public:
         return true;
     }
     void init() { ready = write("reset\n"); }
-    bool available() const { return ready; }
+    bool available() const { return ready.load(); }
     int acquire() {
         std::lock_guard<std::mutex> guard(lock);
         for (int i = 0; i < SLOTS; i++) if (!used[i]) { used[i] = true; created++; return i; }
