@@ -37,7 +37,7 @@ and >=2% drop. It does not estimate battery health or promise 24–36h runtime.
 16=screen not interactive. Multiwindow events need interpretation; they are not
 automatically converted into exclusive foreground durations.
 
-Checks: executable Java drain-accounting cases; Android lint/build; API35
+Checks: executable Java drain-accounting cases; Android lint/build; API36
 emulator launch/foreground service/stop/export with root absent. KSU permission,
 SELinux access, Samsung sysfs coverage and long-run overhead require the phone.
 

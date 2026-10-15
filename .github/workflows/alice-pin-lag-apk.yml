@@ -22,6 +22,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+          cache-read-only: false
       - name: Install Android SDK components
         run: |
           DIAG_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -44,7 +45,7 @@ jobs:
       - name: Smoke test the built APK
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 36
           arch: x86_64
           profile: pixel_2
           disable-animations: true
@@ -75,7 +76,7 @@ jobs:
           Cấp root KSU để có log CPU/GPU/PSI; quyền thống kê app là tùy chọn.
           Chọn Pin (24h) hoặc Lag (10 phút), Bắt đầu, Dừng, Xuất ZIP ở Tải xuống.
           Không tự upload log. Đây là bản chẩn đoán ký bằng debug key.
-          Đã kiểm tra build/lint, tính hao pin và ghi/dừng/xuất ZIP trên Android35 không root.
+          Đã kiểm tra build/lint, tính hao pin và ghi/dừng/xuất ZIP trên Android36 không root.
           KSU, sysfs Samsung và hao pin thực tế cần đo trên thiết bị.
           NOTES
           gh release create alice-pin-lag-1.0.0 ALICE-Pin-Lag-1.0.0.apk SHA256SUMS.txt --target "$GITHUB_SHA" --title 'ALICE Pin & Lag 1.0.0' --notes-file /tmp/alice-diag-release.md --prerelease

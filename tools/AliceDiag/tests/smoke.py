@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the shipped APK's recording/stop/export UI on a non-root API35 emulator."""
+"""Exercise the shipped APK's recording/stop/export UI on a non-root API36 emulator."""
 import csv
 import io
 import re
@@ -28,12 +28,15 @@ def tap(label):
     raise AssertionError(f'Button not found: {label}')
 
 adb('shell', 'pm', 'grant', PKG, 'android.permission.POST_NOTIFICATIONS')
+adb('shell', 'appops', 'set', PKG, 'GET_USAGE_STATS', 'allow')
 adb('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
 time.sleep(2)
 tap('Bắt đầu ghi')
 time.sleep(8)
 services = adb('shell', 'dumpsys', 'activity', 'services', PKG)
 assert 'isForeground=true' in services, services
+adb('shell', 'am', 'start', '-a', 'android.settings.SETTINGS')
+time.sleep(2)
 # Returning to the visible activity and using its stop action also verifies intent routing.
 adb('shell', 'am', 'start', '-n', PKG + '/.MainActivity')
 tap('Dừng ghi')
@@ -52,10 +55,11 @@ with zipfile.ZipFile('smoke-output/log.zip') as archive:
     rows = list(csv.DictReader(io.StringIO(archive.read('battery.csv').decode())))
     assert rows and rows[0]['root_state'] == 'unavailable', rows
     assert 'Chưa đủ' in archive.read('SUMMARY.txt').decode()
+    assert 'com.android.settings' in archive.read('usage-events.csv').decode(), archive.read('usage-events.csv')
     assert not any('logcat' in name for name in archive.namelist())
 # There must be no receiver that automatically starts the recorder on reboot.
 package = adb('shell', 'dumpsys', 'package', PKG)
 assert 'BOOT_COMPLETED' not in package
 log = adb('logcat', '-d', '-s', 'AndroidRuntime:E')
 assert 'FATAL EXCEPTION' not in log, log
-print('PASS: launch -> foreground recording without root -> stop -> Downloads ZIP; no boot restart')
+print('PASS: launch -> foreground recording without root + optional usage access -> stop -> Downloads ZIP; no boot restart')
