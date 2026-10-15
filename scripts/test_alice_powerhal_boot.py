@@ -19,6 +19,8 @@ name=Path(sys.argv[0]).name;a=sys.argv[1:];base=Path(os.environ['MOCK_ROOT'])
 with (base/'calls').open('a') as f:f.write(json.dumps([name]+a)+'\n')
 if name==os.environ.get('MOCK_FAIL'):sys.exit(1)
 if name in ['toybox','sha256sum']:
+ if name=='toybox' and a[:2]==['readlink','-f']:
+  print(Path(a[2]).resolve());sys.exit(0)
  if name=='toybox':assert a.pop(0)=='sha256sum'
  kind=os.environ.get('MOCK_HASH','')
  if kind=='empty':sys.exit(0)
@@ -32,7 +34,7 @@ if name=='ls':
 if name in ['chown','chmod','chcon','sleep','setprop']:sys.exit(0)
 if name=='mount':
  assert a[0]=='--bind';shutil.copyfile(a[2],base/'original');shutil.copyfile(a[1],a[2])
- (base/'mountinfo').write_text('101 1 0:1 /service '+a[2]+' rw - tmpfs tmpfs rw\n');sys.exit(0)
+ (base/'mountinfo').write_text('101 1 0:1 /service '+str(Path(a[2]).resolve())+' rw - tmpfs tmpfs rw\n');sys.exit(0)
 if name=='umount':
  assert a[0]=='-l'  # Running HAL keeps an executable/mmap reference.
  assert (base/'mountinfo').read_text().startswith('101 '),'must not detach a foreign mount'
@@ -93,6 +95,11 @@ with tempfile.TemporaryDirectory() as tmp:
     run(f,e,'guard');assert 'POWERHAL_RUNTIME_READY' in (s/'status.log').read_text()
     run(f,e);assert sum(c[0]=='mount' for c in calls(p))==1
     assert not any(c[0]=='setprop' for c in calls(p))
+
+    p,t,n,s,f,e=fixture('vendor-symlink')
+    (p/'vendor').rename(p/'real-vendor');(p/'vendor').symlink_to('real-vendor')
+    run(f,e,'guard');assert t.read_bytes()==new and 'POWERHAL_RUNTIME_READY' in (s/'status.log').read_text()
+    run(f,dict(e,MOCK_READY='0'),'guard');assert t.read_bytes()==old and (s/'disable').exists()
 
     for kind in ['empty','error','invalid']:
         p,t,n,s,f,e=fixture('hash-'+kind)

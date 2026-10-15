@@ -39,7 +39,7 @@ hash() {
 
 mount_id() {
  while read -r ident parent device root point options rest; do
-  [ "$point" = "$TARGET" ] && printf '%s\n' "$ident"
+  [ "$point" = "$MOUNT_POINT" ] && printf '%s\n' "$ident"
  done < "$MOUNTINFO"
  return 0
 }
@@ -112,6 +112,9 @@ case "${1:-apply}" in apply|guard) ;; *) echo INVALID_ACTION; exit 1;; esac
 [ ! -e "$STATE/disable" ] || { echo DISABLED; exit 0; }
 read -r BOOT_ID < "$BOOT_ID_FILE" || { echo BOOT_ID_UNAVAILABLE_DEFERRED; exit 0; }
 [ -n "$BOOT_ID" ] || { echo BOOT_ID_UNAVAILABLE_DEFERRED; exit 0; }
+# mountinfo reports the resolved mountpoint even when /vendor is a symlink.
+MOUNT_POINT=$("$TOYBOX" readlink -f "$TARGET") || { echo TARGET_PATH_NOT_READY_DEFERRED; exit 0; }
+[ -n "$MOUNT_POINT" ] && [ -f "$MOUNT_POINT" ] || { echo TARGET_PATH_NOT_READY_DEFERRED; exit 0; }
 CURRENT_SHA=$(hash "$TARGET") || { echo VENDOR_NOT_READABLE_DEFERRED; exit 0; }
 PAYLOAD_SHA=$(hash "$BLOB") || { echo PAYLOAD_NOT_READABLE_DEFERRED; exit 0; }
 [ -n "$CURRENT_SHA" ] && [ -n "$PAYLOAD_SHA" ] || { echo HASH_NOT_READY_DEFERRED; exit 0; }
