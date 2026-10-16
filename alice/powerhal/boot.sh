@@ -15,7 +15,7 @@ umask 077
 mkdir -p "$STATE" || exit 1
 chmod 0700 "$STATE" || exit 1
 exec >> "$STATE/status.log" 2>&1
-echo "ALICE_POWERHAL_R15 action=${1:-apply}"
+echo "ALICE_POWERHAL_R16 action=${1:-apply}"
 mkdir "$LOCK" 2>/dev/null || { echo INSTALL_BUSY; exit 0; }
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 trap 'exit 1' HUP INT TERM
@@ -105,9 +105,68 @@ rollback_owned() {
  [ "$RESTORED_SHA" = "$OLD_SHA" ] || { echo FALLBACK_VENDOR_CHANGED_SKIPPED; return 1; }
  rm -f "$STATE/bound"
  printf 'reset\n' > "$NODE"
- touch "$STATE/disable"
+ # Automatic failure belongs to this payload; the separate disable file stays
+ # an explicit user/legacy opt-out and is never deleted by this script.
+ printf 'ALICE_POWERHAL_R16 %s\n' "$PAYLOAD_SHA" > "$STATE/auto-disabled.tmp" &&
+  mv "$STATE/auto-disabled.tmp" "$STATE/auto-disabled" || echo AUTO_DISABLE_RECORD_FAILED
  echo POWERHAL_FALLBACK_VENDOR_RESTORED
  /system/bin/setprop ctl.restart vendor.samsung.power-default
+}
+
+payload_running() {
+ for pid in $(/system/bin/pidof android.hardware.power.samsung-service 2>/dev/null); do
+  case "$pid" in ''|*[!0-9]*) continue;; esac
+  RUNNING_SHA=$(alice_sha256 /proc/"$pid"/exe) || continue
+  [ "$RUNNING_SHA" = "$PAYLOAD_SHA" ] && return 0
+ done
+ return 1
+}
+
+health_probe() {
+ if /system/bin/dumpsys -t 1 android.hardware.power.IPower/default > "$STATE/health-last.log" 2>&1; then
+  HEALTH_RC=0
+ else HEALTH_RC=$?; fi
+ [ "$HEALTH_RC" = 0 ] &&
+  grep -Fq 'ALICE Power HAL R16 AIDL V2; backend=ready;' "$STATE/health-last.log" && payload_running
+}
+
+restart_owned_once() {
+ CURRENT_SHA=$(alice_sha256 "$TARGET") || return 1
+ own_mount || { echo RESTART_UNOWNED_MOUNT_SKIPPED; return 1; }
+ attempt_boot= attempt_mount= attempt_sha=
+ if [ -r "$STATE/restart-attempt" ]; then
+  read -r attempt_boot attempt_mount attempt_sha < "$STATE/restart-attempt"
+ fi
+ if [ "$attempt_boot" = "$BOOT_ID" ] && [ "$attempt_mount" = "$(mount_id)" ] &&
+    [ "$attempt_sha" = "$PAYLOAD_SHA" ]; then
+  echo POWERHAL_RESTART_ALREADY_REQUESTED
+  return 0
+ fi
+ printf '%s %s %s\n' "$BOOT_ID" "$(mount_id)" "$PAYLOAD_SHA" > "$STATE/restart-attempt.tmp" &&
+  mv "$STATE/restart-attempt.tmp" "$STATE/restart-attempt" || { echo RESTART_RECORD_FAILED; return 1; }
+ echo POWERHAL_OWNED_BIND_RESTART
+ /system/bin/setprop ctl.restart vendor.samsung.power-default || { echo RESTART_REQUEST_FAILED; return 1; }
+}
+
+save_failure() {
+ {
+  echo "ALICE_POWERHAL_R16 health_rc=$HEALTH_RC payload_sha=$PAYLOAD_SHA"
+  /system/bin/getprop init.svc.vendor.samsung.power-default
+  for pid in $(/system/bin/pidof android.hardware.power.samsung-service 2>/dev/null); do
+   case "$pid" in ''|*[!0-9]*) continue;; esac
+   echo "PROCESS pid=$pid"
+   alice_sha256 /proc/"$pid"/exe
+  done
+  echo HEALTH_OUTPUT
+  cat "$STATE/health-last.log"
+  echo KERNEL_BACKEND
+  cat "$NODE"
+  echo FILTERED_STARTUP_LOG
+  /system/bin/timeout 2 /system/bin/logcat -d -b all -t 600 -v threadtime 2>&1 |
+   grep -Ei 'AlicePower|CANNOT LINK EXECUTABLE.*power|linker.*power|avc:.*(hal_power|alice_power)|init.*(power-default|power.samsung)' |
+   tail -60
+ } > "$STATE/diagnostic-last.log" 2>&1
+ echo POWERHAL_FAILURE_DIAGNOSTIC_SAVED
 }
 
 case "${1:-apply}" in apply|guard) ;; *) echo INVALID_ACTION; exit 1;; esac
@@ -121,30 +180,39 @@ CURRENT_SHA=$(alice_sha256 "$TARGET") || { echo VENDOR_NOT_READABLE_DEFERRED; ex
 PAYLOAD_SHA=$(alice_sha256 "$BLOB") || { echo PAYLOAD_NOT_READABLE_DEFERRED; exit 0; }
 [ -n "$CURRENT_SHA" ] && [ -n "$PAYLOAD_SHA" ] || { echo HASH_NOT_READY_DEFERRED; exit 0; }
 [ "$PAYLOAD_SHA" != "$OLD_SHA" ] || { echo PAYLOAD_INVALID_SKIPPED; exit 0; }
+auto_version= auto_sha=
+if [ -r "$STATE/auto-disabled" ]; then
+ read -r auto_version auto_sha < "$STATE/auto-disabled"
+ if [ "$auto_version" = ALICE_POWERHAL_R16 ] && [ "$auto_sha" = "$PAYLOAD_SHA" ]; then
+  echo PAYLOAD_AUTOMATICALLY_DISABLED
+  exit 0
+ fi
+fi
 
-INSTALLED_NOW=0
 if own_mount; then
  echo POWERHAL_ALREADY_BOUND
 else
  install_payload || exit 0
- INSTALLED_NOW=1
 fi
 [ "${1:-apply}" = guard ] || exit 0
 
-# Late retries run through init's existing guard service, avoiding an adb shell's
-# private mount namespace. Restart the vendor service only after an owned bind.
-if [ "$INSTALLED_NOW" = 1 ]; then
- echo POWERHAL_LATE_INSTALL_RESTART
- /system/bin/setprop ctl.restart vendor.samsung.power-default
+# Pathname verification alone cannot prove which executable init already ran.
+# A healthy replacement needs no restart. Otherwise request at most one restart
+# for this verified current-boot bind, including binds made by the early action.
+if health_probe; then
+ echo POWERHAL_RUNTIME_READY
+ exit 0
 fi
+restart_owned_once || { save_failure; rollback_owned; exit 0; }
 tries=0
-while [ "$tries" -lt 6 ]; do
- if /system/bin/dumpsys -t 1 android.hardware.power.IPower/default 2>/dev/null | grep -q 'backend=ready'; then
+while [ "$tries" -lt 8 ]; do
+ if health_probe; then
   echo POWERHAL_RUNTIME_READY
   exit 0
  fi
  tries=$((tries + 1))
  sleep 1
 done
+save_failure
 rollback_owned
 exit 0

@@ -1,4 +1,24 @@
-# ALICE Power HAL R15
+# ALICE Power HAL R16
+
+R16 addresses a reproduced early-bind lifecycle failure: replacing the file
+path does not replace an already running original executable. The guard now
+requires both the R16 `backend=ready` Binder dump and a matching payload digest
+for a running service's `/proc/PID/exe`. When these are absent, a verified owned
+bind receives at most one restart request per boot/mount/payload. An already
+healthy replacement needs no restart. No boost or thermal parameters change.
+
+Failed checks preserve `health-last.log` (including stderr) and a bounded
+`diagnostic-last.log` with executable identity, kernel backend and only filtered
+Power HAL startup messages before restoring the original service. Automatic
+failure is recorded separately as `auto-disabled`, keyed to the payload/version;
+the explicit/legacy `disable` file is always respected and never auto-cleared.
+Users affected by the R15 automatic legacy flag must clear it once before
+booting R16; the boot kit gives the command to clear it and enter recovery.
+
+Host fixtures model both the mounted pathname and the separate running ELF.
+The old early-bind guard fails this fixture; R16 activates the replacement with
+one restart and preserves rollback on startup failure. These fixtures cannot
+establish on-device Binder, linker, SELinux, thermal or battery behavior.
 
 R15 fixes an Android shell collision in the bootstrap. Android mksh predefines
 `hash` as an alias for its command-path cache. A `hash()` function did not make
@@ -17,7 +37,8 @@ the original service SHA256, SELinux executable label, manifest version and
 service layout match. Unknown ROMs retain their existing service.
 An isolated, finite startup guard checks `backend=ready`; if this cannot be
 established, it unmounts the replacement, restarts the original service and
-creates the disable marker. It does not block Android's init action queue.
+records an automatic stop for the same payload. It does not block Android's
+init action queue.
 
 Supported modes: LOW_POWER, LAUNCH, INTERACTIVE, DEVICE_IDLE, DISPLAY_INACTIVE.
 Supported boosts: INTERACTION and DISPLAY_UPDATE_IMMINENT. Unsupported modes and
@@ -70,7 +91,7 @@ The dump should say `backend=ready`; `session_created` and `report_batches` show
 delivered hint has been established. App ADPF use depends on framework/app
 support; this does not add ADPF support to applications that never send hints.
 
-Rollback just this service, leaving the R15 kernel/CPU fixes active:
+Rollback just this service, leaving the R16 kernel/CPU fixes active:
 ```
 adb shell 'su -c "touch /data/adb/alice-powerhal/disable; reboot"'
 ```
