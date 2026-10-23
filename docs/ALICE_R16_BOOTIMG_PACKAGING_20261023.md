@@ -1,35 +1,39 @@
-# ALICE S8+ SM-G955F — R16 to boot.img packaging
+# SM-G955F ALICE R16 boot.img packaging — CURRENT WORKING TEMPLATE
 
-**Branch:** `agent/v12r69-r16-sim2-lte-ab-20261023`
-**Output:** an actual Android boot image named `boot.img` (40 MiB) **only when the pinned owner reference boot is supplied**. Not a validated flashable/stable image.
+**Update (2026-10-23): Use owner's confirmed bootable `V12R5T-Enforcing-BOOT.img`, not the earlier June 40MiB reference.** This document supersedes all earlier packaging directions for this branch.
 
-## Source identity and why a boot base is required
+## Exact user-provided template and verification
 
-The owner supplied a working 40 MiB `boot.img`, SHA256 `9012313ab3d8b2e15fe00871da4872d4d09f7068211b36604eede6fe138c646b`. It contains a boot-v0 header, special Exynos8895 ramdisk `/init`, vendor `fstab.samsungexynos8895`, `dpolicy`, original DTB, `SEANDROIDENFORCE` marker, and **signed AVB vbmeta footer**. A plain R16 `Image` and `dtb.img` are *not* a boot image. The original `init.rc` configures legacy `interactive` governor and two DH2/HMP shell scripts, conflicting with later R16 EnergyStep.
+- File: `V12R5T-Enforcing-BOOT.img`, confirmed bootable by the owner.
+- SHA256: `80c3f368ac934725aa1bae01529646c339ade3b88b656e4f98670ba71a850043`.
+- Android boot v0; page size 2048; header command line `androidboot.hardware=samsungexynos8895`.
+- Total 39,081,984 bytes: kernel 38,149,864, gzip ramdisk 700,389, DTBH dtb 229,376 bytes.
+- Ramdisk SHA256 `0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2`; contains only Android init, `dpolicy`, `fstab.samsungexynos8895`, and basic directories; **no DH2/HMP init scripts**.
+- **No AVB or Samsung trailer**. Do not add an unsigned AVB footer, and do not apply `scripts/pack_alice_r16_boot.py` which targets the obsolete June reference boot.
 
-`scripts/pack_alice_r16_boot.py` uses ONLY that SHA-pinned reference, retains init/fstab/dpolicy, removes old DH2/HMP scripts and legacy interactive init.rc, inserts the kernel-built R16 `Image` and `dtb.img` into the correct boot-v0 offsets, recomputes boot SHA-1 ID, places Samsung trailer, and regenerates the AVB hash footer with **algorithm NONE** using official Android avbtool. Exact result is padded to the 40MiB boot partition.
+The local reference was parsed, checked against its SHA-1 Android boot image ID, and repacked using original Image+DTB. The resulting file was **byte-for-byte equal** to the owner's bootable template; pass. A synthetic R16-labelled kernel structural test also passed (NOT a real R16 kernel and NOT flashable).
 
-**Security and platform caveat:** AVB algorithm NONE is unsigned. Old signed vbmeta cannot be retained when the image content changes, and its original signing key is unavailable. This image may fail on a locked bootloader or under strict verified-boot policy. Use ONLY on an already-unlocked development device after confirming a backup/TWRP recovery path. A generated image does not prove kernel boot, radio or camera function.
+## New actual packer
 
-## GitHub Actions automatic artifact
+Use `scripts/pack_r16_v12r5t_working_boot.py`:
 
-Workflow: `.github/workflows/alice-v12r69-baseline-build.yml` on this branch. Build compiles R16 and produces the source artifact containing `Image`, `dtb.img`, `SHA256SUMS`, etc.
+```bash
+python3 scripts/pack_r16_v12r5t_working_boot.py \
+  --base V12R5T-Enforcing-BOOT.img --selftest
+python3 scripts/pack_r16_v12r5t_working_boot.py \
+  --base V12R5T-Enforcing-BOOT.img \
+  --kernel Image --dt dtb.img --output boot.img
+sha256sum boot.img
+```
 
-For the **additional boot.img artifact**, manually run `workflow_dispatch` with the optional `boot_template_url` input pointing to the owner's **direct-download** reference `boot.img` served over HTTPS; or configure `ALICE_BOOT_REFERENCE_URL` as a repository Actions secret containing a private signed HTTPS file URL. Source must match the known SHA256; otherwise build fails closed. This file was supplied only inside ChatGPT and **does not exist automatically inside GitHub Actions**.
+It accepts only the exact owner's reference SHA; keeps the **original ramdisk byte-for-byte**, boot parameter memory addresses, page alignment, cmdline, and hashes; inserts the compiled R16 EnergyStep Image and its matching DTBH; recomputes Android boot SHA-1 image ID; refuses missing R16 signature, broken DTB or size over conservative 40MiB cap. It produces no AVB footer, matching the owner-confirmed boot style. None of these checks prove R16 boots.
 
-When supplied, extra artifact appears as:
+## GitHub Actions
 
-`ALICE-S8P-R16-SIM2-BOOT-UNSIGNED-UNTESTED-<commit>`
+Workflow `.github/workflows/alice-v12r69-baseline-build.yml` compiles R16. To also publish `boot.img`, manually run it with the optional `boot_template_url` input pointing to a **direct HTTPS download** of the exact `V12R5T-Enforcing-BOOT.img`, or configure the repository secret `ALICE_BOOT_REFERENCE_URL` with that private direct URL. The workflow checks its SHA, performs the exact-template selftest, and writes an additional `boot.img` and `boot.img.sha256` artifact. If the URL is empty, it only exports the compiled `Image`/`dtb.img` and does not fabricate `boot.img`.
 
-and contains `boot.img`, `boot.img.sha256`, `paired-contract.json`. The existing R16 kernel artifact continues to publish standalone Image/dtb as before. If the source URL is missing, the workflow reports "BOOT.IMG NOT PACKAGED" and **does not create a fake boot.img**.
+The uploaded template is currently accessible in this ChatGPT conversation, **not automatically to GitHub Actions**. To avoid publicly hosting the boot base, a ZIP built in this conversation named `ALICE_R16_V12R5T_WORKING_BOOT_PACKAGER.zip` includes the working boot template and a verified local packer; add compiled `Image` and `dtb.img` from the R16 Actions artifact and run `bash MAKE_R16_BOOT.sh` inside the ZIP's folder.
 
-Alternatively, the owner can use the locally supplied conversation ZIP `ALICE_S8P_R16_BOOTIMG_PACKAGER_REFERENCE.zip` which contains their exact reference boot and offline packing script. It requires unpacking the successful R16 Actions kernel artifact (Image and dtb.img) locally and running `bash build_boot_local.sh Image dtb.img`. This avoids exposing the user reference boot to a public GitHub repository.
+## Safety and release
 
-## Confirmation gates
-
-1. Verify exact SHA of reference boot and image size (40 MiB), review unsigned AVB and boot-v0 header fields.
-2. Have backed up current working boot image; verify restore under TWRP.
-3. Test whether S8+ actually boots R16, camera still previews and records, SIM1 still reaches LTE and SIM2 has service, before any LTE role switching.
-4. **No claim of 4G+4G simultaneous service:** Exynos8895 hardware capability remains unverified; setting LTE mask 9,9 is not a dual-LTE modem unlock.
-
-No EFS/NV/CP, IMEI, baseband or camera binary is changed by this packaging tool.
+Ensure TWRP backup/rollback and check actual `BOOT` block-device capacity before flashing. This output is a **device-UNTESTED test image** even if host packing succeeds. Do not promise two simultaneous LTE registrations on the Exynos8895 by building a kernel boot image; SIM2 LTE handoff and camera must be independently tested.
