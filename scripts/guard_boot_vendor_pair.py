@@ -135,6 +135,7 @@ def audit(kernel: Path, vendor: Path, reference_boot: Path | None) -> dict:
         if boot["ramdisk_legacy_hmp"]:
             warnings.append("Reference ramdisk uses obsolete HMP/interactive/DH2; do NOT repack it unchanged with R16 EnergyStep")
     return {
+        "pair_id": "ALICE-S8P-A16-R16-SIMCAM-20261023",
         "static_contract": "PASS" if not errors else "FAIL",
         "kernel_governor": "EnergyStep", "reference_governor": "interactive",
         "reference_modem_symbols_compared": len(REFERENCE_MODEM_CONFIG),
