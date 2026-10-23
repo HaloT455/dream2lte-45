@@ -107,8 +107,10 @@ def audit(kernel: Path, vendor: Path, reference_boot: Path | None) -> dict:
     rc = (vendor / "vendor" / RIL_INIT).read_text()
     if "exec_start network_config" not in rc or "service network_config" not in rc:
         errors.append("Samsung network_config missing")
-    if "setprop ro.telephony.default_network ${ro.vendor.radio.default_network}" in rc:
-        warnings.append("Late ro.telephony.default_network setprop is source-matched but may be rejected as read-only on Android 16")
+    if "setprop ro.telephony.default_network" in rc:
+        errors.append("Late ro.telephony.default_network write on read-only Android16 property is incompatible with paired SIM2 A/B vendor")
+    if rc.count("exec_start network_config") != 1 or rc.count("exec_start sim_config") != 1:
+        errors.append("Samsung SIM/NetworkConfig init lifecycle changed")
     for file in (
         "vendor/bin/hw/rild", "vendor/bin/secril_config_svc",
         "vendor/lib64/libsec-ril.so", "vendor/lib64/libril_sem.so",
@@ -135,12 +137,13 @@ def audit(kernel: Path, vendor: Path, reference_boot: Path | None) -> dict:
         if boot["ramdisk_legacy_hmp"]:
             warnings.append("Reference ramdisk uses obsolete HMP/interactive/DH2; do NOT repack it unchanged with R16 EnergyStep")
     return {
-        "pair_id": "ALICE-S8P-A16-R16-SIMCAM-20261023",
+        "pair_id": "ALICE-S8P-A16-R16-SIM2LTE-AB-20261023",
         "static_contract": "PASS" if not errors else "FAIL",
         "kernel_governor": "EnergyStep", "reference_governor": "interactive",
         "reference_modem_symbols_compared": len(REFERENCE_MODEM_CONFIG),
         "reference_boot": boot, "errors": errors, "warnings": warnings,
         "device_boot_verified": False, "two_sim_registered_verified": False,
+        "two_independent_lte_modems_verified": False,
         "camera_recording_verified_by_ci": False, "flash_ready": False,
     }
 
