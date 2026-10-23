@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import gzip
 import struct
 from pathlib import Path
 
@@ -36,6 +37,8 @@ def main() -> None:
                         help="optional replacement ramdisk")
     parser.add_argument("--dt", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--allow-legacy-hmp-ramdisk", action="store_true",
+                        help="DANGEROUS: allow obsolete HMP/DH2 init scripts in an EnergyStep boot")
     args = parser.parse_args()
 
     image = args.base.read_bytes()
@@ -55,6 +58,23 @@ def main() -> None:
     ramdisk, offset = section(image, offset, ramdisk_size, page_size)
     if args.ramdisk:
         ramdisk = args.ramdisk.read_bytes()
+    # Old SIM-working SM-G955F ramdisk contains HMP and interactive tweaks.
+    # EnergyStep uses a different governor and CPU placement interface.
+    is_r16 = b"ENERGYSTEP" in kernel or b"energy_step" in kernel
+    if is_r16:
+        try:
+            plain = gzip.decompress(ramdisk) if ramdisk[:2] == b"\x1f\x8b" else ramdisk
+        except (OSError, EOFError) as exc:
+            raise ValueError("Cannot inspect EnergyStep ramdisk: " + str(exc)) from exc
+        legacy = b"dh2_fastlane" in plain or b"interactive/hispeed_freq" in plain
+        if legacy and not args.allow_legacy_hmp_ramdisk:
+            raise ValueError(
+                "R16 EnergyStep cannot be repacked with legacy DH2/HMP/interactive ramdisk; "
+                "use a verified R16-compatible base boot first"
+            )
+        if legacy and args.allow_legacy_hmp_ramdisk:
+            print("WARNING: incompatible legacy HMP/DH2 ramdisk explicitly allowed; not device-verified")
+
     second, offset = section(image, offset, second_size, page_size)
     _, offset = section(image, offset, dt_size, page_size)
     footer = image[offset:]
