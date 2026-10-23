@@ -3,6 +3,11 @@ name: Build S8P R16 + SIM2 LTE Vendor A-B Paired Source Audit (UNTESTED)
 
 on:
   workflow_dispatch:
+    inputs:
+      boot_template_url:
+        description: 'Direct HTTPS URL to owner SIM-working 40MiB boot.img (optional; SHA pinned)'
+        required: false
+        type: string
   push:
     branches:
       - agent/v12r69-r16-sim2-lte-ab-20261023
@@ -418,6 +423,40 @@ jobs:
           sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
+      - name: Package boot.img from owner SHA-locked boot reference (optional)
+        shell: bash
+        env:
+          ALICE_BOOT_BASE_URL: ${{ inputs.boot_template_url || secrets.ALICE_BOOT_REFERENCE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALICE_BOOT_BASE_URL:-}" ]; then
+            echo "### BOOT.IMG NOT PACKAGED" >> "$GITHUB_STEP_SUMMARY"
+            echo "No template URL was provided; CI cannot access the boot.img uploaded in ChatGPT." >> "$GITHUB_STEP_SUMMARY"
+            echo "Run workflow_dispatch with boot_template_url, or configure ALICE_BOOT_REFERENCE_URL secret." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p boot-template-tools
+          curl --fail --location --silent --show-error --retry 2 \
+            "$ALICE_BOOT_BASE_URL" -o boot-template-tools/known-working-boot.img
+          echo '9012313ab3d8b2e15fe00871da4872d4d09f7068211b36604eede6fe138c646b  boot-template-tools/known-working-boot.img' | sha256sum --check --
+          # Upstream Android avbtool regenerates a new UNSIGNED AVB hash footer.
+          # Old signed vbmeta must NEVER be appended to a modified kernel.
+          curl --fail --location --silent --show-error --retry 2 \
+            'https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool.py?format=TEXT' \
+            | base64 --decode > boot-template-tools/avbtool
+          test -s boot-template-tools/avbtool
+          chmod 0755 boot-template-tools/avbtool
+          OUT="output-${{ matrix.variant }}"
+          python3 scripts/pack_alice_r16_boot.py \
+            --base boot-template-tools/known-working-boot.img \
+            --kernel "$OUT/Image" --dt "$OUT/dtb.img" \
+            --output "$OUT/boot.img" \
+            --avbtool boot-template-tools/avbtool \
+            --allow-unsigned-test-boot
+          sha256sum "$OUT/boot.img" > "$OUT/boot.img.sha256"
+          (cd "$OUT" && sha256sum boot.img >> SHA256SUMS && sha256sum --check SHA256SUMS)
+          echo "### UNSIGNED R16 boot.img produced: unlocked/test device only, not SIM2 4G proven" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload compiled R16 kernel
         uses: actions/upload-artifact@v4
         with:
@@ -426,3 +465,14 @@ jobs:
           if-no-files-found: error
           compression-level: 9
           retention-days: 30
+
+      - name: Upload complete experimental boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALICE-S8P-R16-SIM2-BOOT-UNSIGNED-UNTESTED-${{ github.sha }}
+          path: |
+            output-${{ matrix.variant }}/boot.img
+            output-${{ matrix.variant }}/boot.img.sha256
+            output-${{ matrix.variant }}/paired-contract.json
+          if-no-files-found: warn
+          retention-days: 14
