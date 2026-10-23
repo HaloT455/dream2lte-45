@@ -1,11 +1,11 @@
-name: Build V12R69 R16 Power HAL and bounded EnergyStep hints
+name: Build S8P R16 + Vendor SIM/Camera Paired Source Audit (UNTESTED)
 # MGLRU OFF at boot by user request; EnergyStep retained, AI workers disabled.
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r69-r3-ci-kernel
+      - agent/v12r69-r16-paired-vendor-20261023
 
 permissions:
   contents: read
@@ -26,6 +26,19 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Checkout paired Vendor SIM+Camera Video6 source
+        uses: actions/checkout@v4
+        with:
+          repository: HaloT455/Vendor-45-
+          ref: e65e21c5b1988492b7a84c9d47e278484a635b73
+          path: paired-vendor
+          persist-credentials: false
+
+      - name: Validate cross-repository modem and Camera pairing
+        run: |
+          python3 scripts/guard_boot_vendor_pair.py --vendor-root paired-vendor --output paired-contract.json
+          python3 scripts/test_r16_legacy_ramdisk_guard.py
 
       - name: Install dependencies
         run: |
@@ -104,6 +117,7 @@ jobs:
           python3 scripts/test_v12r69_mglru_audit.py
           python3 scripts/test_v12r69_energy_step_worker.py
           python3 scripts/test_v12r69_energy_step_runtime.py
+          python3 scripts/test_r16_legacy_ramdisk_guard.py
           python3 scripts/test_v12r69_r7_iowait.py
           python3 scripts/test_v12r69_r7_reclaim_throttle.py
           python3 scripts/test_v12r69_energy_step_tunables.py
@@ -388,6 +402,7 @@ jobs:
           cp "$OUT/System.map" "$DEST/"
           cp "$OUT/.config" "$DEST/kernel.config"
           cp powerhal-out/metadata.json "$DEST/powerhal-metadata.json"
+          cp paired-contract.json "$DEST/paired-contract.json"
           cp powerhal-out/android.hardware.power.samsung-service "$DEST/"
           cd "$DEST"
           python3 - <<'PYZIP'
@@ -398,13 +413,13 @@ jobs:
               for name in ['module.prop','customize.sh','service.sh','uninstall.sh','low-swap.sh']:
                   z.write(module/name,name)
           PYZIP
-          sha256sum Image dtb.img System.map kernel.config powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
+          sha256sum Image dtb.img System.map kernel.config paired-contract.json powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Upload compiled R16 kernel
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-V12R69-R16-kernel-${{ github.sha }}
+          name: ALICE-S8P-A16-R16-PAIR-KERNEL-SIMCAM-UNTESTED-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
           compression-level: 9
