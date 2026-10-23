@@ -94,11 +94,16 @@ def audit(kernel: Path, vendor: Path, reference_boot: Path | None) -> dict:
     props = (vendor / "vendor/build.prop").read_text()
     expected = ("ro.product.vendor.device=dream2lte", "ro.radio.noril=no",
                 "ro.telephony.default_network=9,9", "ro.vendor.sec.radio.def_network=9")
+    lines = props.splitlines()
     for s in expected:
-        if sum(line == s for line in props.splitlines()) != 1 and s != "ro.vendor.sec.radio.def_network=9":
-            errors.append(f"Vendor property missing/duplicate: {s}")
-        elif s == "ro.vendor.sec.radio.def_network=9" and s not in props.splitlines():
-            errors.append(f"Missing Samsung radio default: {s}")
+        count = lines.count(s)
+        # Historical Samsung Test7 repeats some immutable properties with the
+        # same value. Duplicates alone are not regressions; conflicts are.
+        if count < 1 or (s == "ro.telephony.default_network=9,9" and count != 1):
+            errors.append(f"Vendor property missing/ambiguous: {s}")
+        key = s.split("=", 1)[0] + "="
+        if any(row.startswith(key) and row != s for row in lines):
+            errors.append(f"Conflicting vendor value: {key[:-1]}")
     rc = (vendor / "vendor" / RIL_INIT).read_text()
     if "exec_start network_config" not in rc or "service network_config" not in rc:
         errors.append("Samsung network_config missing")
