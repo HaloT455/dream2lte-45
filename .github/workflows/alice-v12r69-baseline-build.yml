@@ -1,11 +1,11 @@
-name: Build S8P R16 + Vendor SIM/Camera Paired Source Audit (UNTESTED)
+name: Build S8P R16 + SIM2 LTE Vendor A-B Paired Source Audit (UNTESTED)
 # MGLRU OFF at boot by user request; EnergyStep retained, AI workers disabled.
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r69-r16-paired-vendor-20261023
+      - agent/v12r69-r16-sim2-lte-ab-20261023
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: HaloT455/Vendor-45-
-          ref: a3fe4c28cde42f079bf86de55ad6755d0b00afa4
+          ref: 8b97304c22d0371ad0af75e93159a3aac3c0c78d
           path: paired-vendor
           persist-credentials: false
 
@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 scripts/guard_boot_vendor_pair.py --vendor-root paired-vendor --output paired-contract.json
           python3 scripts/test_r16_legacy_ramdisk_guard.py
+          python3 paired-vendor/tools/alice_sim2_lte_handoff_probe.py --selftest
 
       - name: Install dependencies
         run: |
@@ -403,6 +404,7 @@ jobs:
           cp "$OUT/.config" "$DEST/kernel.config"
           cp powerhal-out/metadata.json "$DEST/powerhal-metadata.json"
           cp paired-contract.json "$DEST/paired-contract.json"
+          cp paired-vendor/tools/alice_sim2_lte_handoff_probe.py "$DEST/alice_sim2_lte_handoff_probe.py"
           cp powerhal-out/android.hardware.power.samsung-service "$DEST/"
           cd "$DEST"
           python3 - <<'PYZIP'
@@ -413,13 +415,13 @@ jobs:
               for name in ['module.prop','customize.sh','service.sh','uninstall.sh','low-swap.sh']:
                   z.write(module/name,name)
           PYZIP
-          sha256sum Image dtb.img System.map kernel.config paired-contract.json powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
+          sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Upload compiled R16 kernel
         uses: actions/upload-artifact@v4
         with:
-          name: ALICE-S8P-A16-R16-PAIR-KERNEL-SIMCAM-UNTESTED-${{ github.sha }}
+          name: ALICE-S8P-A16-R16-SIM2-LTE-AB-KERNEL-UNTESTED-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
           compression-level: 9
