@@ -412,6 +412,7 @@ jobs:
           cp powerhal-out/metadata.json "$DEST/powerhal-metadata.json"
           cp paired-contract.json "$DEST/paired-contract.json"
           cp paired-vendor/tools/alice_sim2_lte_handoff_probe.py "$DEST/alice_sim2_lte_handoff_probe.py"
+          cp paired-vendor/tools/alice_lte_slot1_policy_trial.py "$DEST/alice_lte_slot1_policy_trial.py"
           cp powerhal-out/android.hardware.power.samsung-service "$DEST/"
           cd "$DEST"
           python3 - <<'PYZIP'
@@ -422,7 +423,7 @@ jobs:
               for name in ['module.prop','customize.sh','service.sh','uninstall.sh','low-swap.sh']:
                   z.write(module/name,name)
           PYZIP
-          sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
+          sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py alice_lte_slot1_policy_trial.py powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Package boot.img from known-bootable V12R5T boot (optional)
