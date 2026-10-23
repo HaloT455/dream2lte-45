@@ -45,6 +45,7 @@ jobs:
           python3 scripts/guard_boot_vendor_pair.py --vendor-root paired-vendor --output paired-contract.json
           python3 scripts/test_r16_legacy_ramdisk_guard.py
           python3 paired-vendor/tools/alice_sim2_lte_handoff_probe.py --selftest
+          python3 -m py_compile scripts/pack_r16_v12r5t_working_boot.py
 
       - name: Install dependencies
         run: |
