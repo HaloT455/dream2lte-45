@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: HaloT455/Vendor-45-
-          ref: 62eee1f41e7b04af188f74ce749ac8367c21790c
+          ref: 9d5fcd5779f6680787b719d21c0144781f9fee13
           path: paired-vendor
           persist-credentials: false
 
@@ -53,6 +53,7 @@ jobs:
           python3 paired-vendor/tools/android16/alice_pull_telephony_framework.py --selftest
           python3 paired-vendor/tools/android16/alice_decompile_telephony_raf.py --selftest
           python3 paired-vendor/tools/test_s8p_real_rom_ril_raf0_patch.py
+          bash -n paired-vendor/tools/android16/alice_raf0_device_preflight_readonly.sh
           python3 -m py_compile scripts/pack_r16_v12r5t_working_boot.py
 
       - name: Install dependencies
