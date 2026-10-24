@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: HaloT455/Vendor-45-
-          ref: 961cb82209dcba222db9bc57feef5a32b5aa64bf
+          ref: eb004a6b0aff7f273fe02e1b8fc4e7e42e9ce508
           path: paired-vendor
           persist-credentials: false
 
