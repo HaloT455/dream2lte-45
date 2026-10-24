@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: HaloT455/Vendor-45-
-          ref: 0f03be4e6c92b268d135ec2d73a112f5c0fb3aa7
+          ref: 62eee1f41e7b04af188f74ce749ac8367c21790c
           path: paired-vendor
           persist-credentials: false
 
@@ -52,6 +52,7 @@ jobs:
           python3 paired-vendor/tools/test_android16_ril_raf0_resource_fallback.py
           python3 paired-vendor/tools/android16/alice_pull_telephony_framework.py --selftest
           python3 paired-vendor/tools/android16/alice_decompile_telephony_raf.py --selftest
+          python3 paired-vendor/tools/test_s8p_real_rom_ril_raf0_patch.py
           python3 -m py_compile scripts/pack_r16_v12r5t_working_boot.py
 
       - name: Install dependencies
@@ -422,6 +423,7 @@ jobs:
           cp paired-vendor/tools/alice_radio_capability_raf0_audit.py "$DEST/alice_radio_capability_raf0_audit.py"
           cp paired-vendor/patches/android16/0001-Phone-optional-S8Plus-phone1-RAF0-framework-fallback.patch "$DEST/0001-Phone-optional-S8Plus-phone1-RAF0-framework-fallback.patch"
           cp paired-vendor/patches/android16/0002-RIL-S8Plus-both-phones-RAF0-resource-fallback-OPTIN.patch "$DEST/0002-RIL-S8Plus-both-phones-RAF0-resource-fallback-OPTIN.patch"
+          cp paired-vendor/patches/android16/0003-S8Plus-OneUI8-RIL-REAL-METHOD-RAF0-FALLBACK-OPTIN.patch "$DEST/0003-S8Plus-OneUI8-RIL-REAL-METHOD-RAF0-FALLBACK-OPTIN.patch"
           cp powerhal-out/android.hardware.power.samsung-service "$DEST/"
           cd "$DEST"
           python3 - <<'PYZIP'
@@ -432,7 +434,7 @@ jobs:
               for name in ['module.prop','customize.sh','service.sh','uninstall.sh','low-swap.sh']:
                   z.write(module/name,name)
           PYZIP
-          sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py alice_lte_slot1_policy_trial.py alice_radio_capability_raf0_audit.py 0001-Phone-optional-S8Plus-phone1-RAF0-framework-fallback.patch 0002-RIL-S8Plus-both-phones-RAF0-resource-fallback-OPTIN.patch powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
+          sha256sum Image dtb.img System.map kernel.config paired-contract.json alice_sim2_lte_handoff_probe.py alice_lte_slot1_policy_trial.py alice_radio_capability_raf0_audit.py 0001-Phone-optional-S8Plus-phone1-RAF0-framework-fallback.patch 0002-RIL-S8Plus-both-phones-RAF0-resource-fallback-OPTIN.patch 0003-S8Plus-OneUI8-RIL-REAL-METHOD-RAF0-FALLBACK-OPTIN.patch powerhal-metadata.json android.hardware.power.samsung-service ALICE_R16_PSI_LMKD_BALANCE_MODULE.zip > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Package boot.img from known-bootable V12R5T boot (optional)
