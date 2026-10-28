@@ -1,0 +1,82 @@
+name: ALICE A17 UI9 S8+ boot kernel enforcing baseline (NOT FLASHABLE)
+on:
+  push:
+    branches:
+      - agent/a17-ui9-dream2lte-boot-vendor-r1-20261028
+    paths:
+      - '.github/workflows/alice-ui9-enforcing-boot-baseline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  enforcing-kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kernel build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils
+      - name: Download pinned 14.2 cross compiler
+        run: |
+          mkdir -p "$HOME/tools"
+          wget -q --show-progress -O "$HOME/tools/gcc.tar.xz" \
+            https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+      - name: Select Exynos8895 enforcing kernel from known V12R5T source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+      - name: Configure enforcing without bypass
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make O=out exynos8895-dream2lte_defconfig
+          scripts/config --file out/.config \
+            --disable ALWAYS_PERMISSIVE \
+            --disable SECURITY_SELINUX_DEVELOP \
+            --set-str LOCALVERSION "-Alice-V12R5T-UI9-BootResearch-Enf"
+          scripts/config --file out/.config --disable LOCALVERSION_AUTO
+          make O=out olddefconfig
+          grep -q '^# CONFIG_ALWAYS_PERMISSIVE is not set$' out/.config
+          grep -q '^# CONFIG_SECURITY_SELINUX_DEVELOP is not set$' out/.config
+          grep -q '^CONFIG_EROFS_FS=y$' out/.config
+          grep -q '^CONFIG_SECURITY_SELINUX=y$' out/.config
+      - name: Compile ARM64 kernel and device tree
+        shell: bash
+        run: |
+          set -o pipefail
+          make O=out -j"$(nproc)" Image dtb.img 2>&1 | tee kernel-build.log
+      - name: Inspect output
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s out/arch/arm64/boot/Image
+          test -s out/arch/arm64/boot/dtb.img
+          mkdir -p output
+          cp out/arch/arm64/boot/Image out/arch/arm64/boot/dtb.img output/
+          cp out/.config output/kernel.config
+          (cd output && sha256sum Image dtb.img kernel.config > SHA256SUMS.txt)
+          echo "KERNEL_SOURCE_BUILD=PASS"
+          echo "NOT_A_BOOT_IMG=YES"
+          echo "BASE_BOOT_RAMDISK_AVAILABLE=NO"
+          echo "A17_SELINUX_POLICY_COMPATIBLE=NO"
+          echo "FLASH_READY=NO"
+      - name: Retain enforcing kernel *components*, not flashable boot IMG
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alice-a17-ui9-v12r5t-enforcing-kernel-COMPONENTS-NOT-FLASHABLE
+          path: output/
+          retention-days: 7
+      - name: Retain build failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alice-a17-ui9-kernel-build-FAILURE-LOG
+          path: kernel-build.log
+          retention-days: 7
+          if-no-files-found: warn
