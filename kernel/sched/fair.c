@@ -31,6 +31,7 @@
 #include <linux/migrate.h>
 #include <linux/task_work.h>
 #include <linux/module.h>
+#include <linux/energy_step.h>
 
 #include <trace/events/sched.h>
 
@@ -5399,7 +5400,8 @@ unsigned long group_max_util(struct energy_env *eenv)
 
 	for_each_cpu(i, sched_group_cpus(eenv->sg_cap)) {
 		delta = calc_util_delta(eenv, i);
-		max_util = max(max_util, __cpu_util(i, delta));
+		max_util = max(max_util,
+			energy_step_cpu_capacity(i, __cpu_util(i, delta)));
 	}
 
 	return max_util;
@@ -5434,10 +5436,10 @@ long group_norm_util(struct energy_env *eenv, struct sched_group *sg)
 static int find_new_capacity(struct energy_env *eenv,
 	const struct sched_group_energy * const sge)
 {
-	int idx;
+	unsigned int idx;
 	unsigned long util = group_max_util(eenv);
 
-	for (idx = 0; idx < sge->nr_cap_states; idx++) {
+	for (idx = 0; idx + 1 < sge->nr_cap_states; idx++) {
 		if (sge->cap_states[idx].cap >= util)
 			break;
 	}

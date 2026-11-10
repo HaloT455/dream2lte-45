@@ -129,6 +129,16 @@ config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 	  have a look at the help section of that governor. The fallback
 	  governor will be 'performance'.
 
+config CPU_FREQ_DEFAULT_GOV_ENERGYSTEP
+	bool "energy_step (Exynos8895 experimental power-step port)"
+	depends on ARM64 && SMP && OF
+	select CPU_FREQ_GOV_ENERGYSTEP
+	select CPU_FREQ_GOV_PERFORMANCE
+	help
+	  Use the Energy Step backport with the legacy DT capacity/power
+	  tables and a shared EAS capacity predictor. Device measurements
+	  are required before drawing conclusions about energy savings.
+
 config CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE
 	bool "blu_active"
 	select CPU_FREQ_GOV_BLU_ACTIVE
@@ -253,6 +263,18 @@ config CPU_FREQ_GOV_SCHEDUTIL
 	  be called cpufreq_schedutil.
 
 	  If in doubt, say N.
+
+config CPU_FREQ_GOV_ENERGYSTEP
+	bool "'energy_step' Exynos8895 experimental cpufreq governor"
+	depends on CPU_FREQ && ARM64 && SMP && OF
+	select CPU_FREQ_GOV_ATTR_SET
+	select IRQ_WORK
+	select SCHED_TUNE
+	help
+	  Adapt Samsung's power-step idea to the 4.4 scheduler hooks and
+	  legacy sched-energy-costs tables. Uses WALT/PELT, SchedTune and
+	  the existing Exynos slow frequency-switch path. This is not a
+	  wholesale port of Samsung EMS/PART/emstune.
 
 config FREQVAR_SCHEDTUNE
 	depends on CPU_FREQ_GOV_SCHEDUTIL
