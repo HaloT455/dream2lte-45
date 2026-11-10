@@ -74,6 +74,69 @@ int main(void)
 }
 '''
 
+SNAPSHOT_PREAMBLE = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#define current get_current()
+typedef uint64_t u64;
+typedef struct { unsigned int sequence; } seqcount_t;
+struct capacity_state { unsigned long cap, power; };
+#include "energy_step_math.h"
+struct sched_group_energy { unsigned int nr_cap_states; struct capacity_state *cap_states; };
+struct esgov_policy { int update_lock; };
+struct cpufreq_policy {
+    unsigned int cpu, min, max, cur, related_cpus;
+    struct { unsigned int max_freq; } cpuinfo;
+    void *governor_data;
+};
+static struct sched_group_energy *sge_array[8][8];
+#define SD_LEVEL0 0
+#define ESGOV_POWER_STEPS 8U
+#define per_cpu(array,cpu) ((array)[cpu])
+#define for_each_cpu(cpu,mask) for ((cpu)=0; (cpu)<8; (cpu)++) if ((mask)&(1U<<(cpu)))
+#define arch_scale_cpu_capacity(a,cpu) (1024UL)
+#define div64_u64(a,b) ((a)/(b))
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+#define raw_spin_lock_irqsave(lock,flags) do { (flags)=0; assert(!*(lock)); *(lock)=1; } while (0)
+#define raw_spin_unlock_irqrestore(lock,flags) do { (void)(flags); assert(*(lock)); *(lock)=0; } while (0)
+static void write_seqcount_begin(seqcount_t *s) { s->sequence++; }
+static void write_seqcount_end(seqcount_t *s) { s->sequence++; }
+static unsigned int read_seqcount_begin(seqcount_t *s) { assert(!(s->sequence&1)); return s->sequence; }
+static bool read_seqcount_retry(seqcount_t *s, unsigned int old) { return old != s->sequence; }
+'''
+
+SNAPSHOT_TESTS = r'''
+int main(void)
+{
+    struct capacity_state states[] = {{128,10},{256,20},{512,50},{1024,130}};
+    struct sched_group_energy model = {4, states};
+    struct esgov_policy governor = {0};
+    struct cpufreq_policy policy = {0,128000,1024000,256000,15,{1024000},&governor};
+    unsigned int cpu;
+    for (cpu=0; cpu<4; cpu++) sge_array[cpu][0] = &model;
+    assert(energy_step_cpu_capacity(0,180) == 180);
+    esgov_publish_capacity(&policy,true);
+    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,180) == 360);
+    assert(energy_step_cpu_capacity(4,180) == 180);
+    policy.max = 200000;
+    esgov_publish_capacity(&policy,true);
+    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,1000) == 200);
+    esgov_publish_capacity(&policy,false);
+    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,180) == 180);
+    assert(!governor.update_lock);
+    puts("PASS: actual shared-policy snapshots publish limits, disable on stop, and tolerate kernel current macro");
+    return 0;
+}
+'''
+
+
+def c_function(source, signature):
+    start = source.index(signature)
+    return source[start:source.index("\n}", start) + 2]
+
 
 def main():
     fair = (ROOT / "kernel/sched/fair.c").read_text()
@@ -90,9 +153,22 @@ def main():
                             "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 
+        governor = (ROOT / "kernel/sched/cpufreq_energy_step.c").read_text()
+        start = governor.index("struct esgov_capacity_snapshot {")
+        definition = governor[start:governor.index("\n};", start) + 3]
+        source.write_text(SNAPSHOT_PREAMBLE + definition +
+                          "\nstatic struct esgov_capacity_snapshot esgov_capacity[8];\n" +
+                          c_function(governor, "static void esgov_publish_capacity(") +
+                          c_function(governor, "unsigned long energy_step_cpu_capacity(") +
+                          SNAPSHOT_TESTS)
+        subprocess.run(cc + ["-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=undefined", "-fno-sanitize-recover=all",
+                            "-iquote", str(ROOT / "kernel/sched"), str(source),
+                            "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+
         # Exercise the new governor's actual deferred-work functions with the
         # established queue/driver-interleaving suite, including publication.
-        governor = (ROOT / "kernel/sched/cpufreq_energy_step.c").read_text()
         governor = governor.replace("esgov", "sugov")
         names = ("sugov_up_down_rate_limit", "sugov_update_commit",
                  "sugov_work", "sugov_irq_work")

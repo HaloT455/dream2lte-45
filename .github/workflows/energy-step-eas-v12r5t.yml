@@ -185,11 +185,17 @@ jobs:
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
           fi
 
+      - name: Compile scheduler objects first
+        run: |
+          set -o pipefail
+          OUT="out-${{ matrix.variant }}"
+          make O="$OUT" -j"$(nproc)" kernel/sched/cpufreq_energy_step.o kernel/sched/fair.o 2>&1 | tee "build-${{ matrix.variant }}.log"
+
       - name: Build kernel and DTB
         run: |
           set -o pipefail
           OUT="out-${{ matrix.variant }}"
-          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee "build-${{ matrix.variant }}.log"
+          make O="$OUT" -j"$(nproc)" Image dtb.img 2>&1 | tee -a "build-${{ matrix.variant }}.log"
 
       - name: Upload build log
         if: always()

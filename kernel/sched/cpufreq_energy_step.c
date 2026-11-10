@@ -159,14 +159,14 @@ static void esgov_update_commit(struct esgov_policy *sg_policy, u64 time,
 struct esgov_capacity_snapshot {
 	seqcount_t seq;
 	const struct sched_group_energy *energy;
-	unsigned long floor, ceiling, current;
+	unsigned long floor, ceiling, current_cap;
 	bool enabled;
 };
 static DEFINE_PER_CPU(struct esgov_capacity_snapshot, esgov_capacity);
 
 static void esgov_publish_capacity(struct cpufreq_policy *policy, bool enabled)
 {
-	unsigned long flags, floor, ceiling, current, cap;
+	unsigned long flags, floor, ceiling, current_cap, cap;
 	struct esgov_policy *sg_policy = policy->governor_data;
 	unsigned int cpu;
 
@@ -174,7 +174,7 @@ static void esgov_publish_capacity(struct cpufreq_policy *policy, bool enabled)
 	floor = div64_u64((u64)cap * policy->min + policy->cpuinfo.max_freq - 1,
 			 policy->cpuinfo.max_freq);
 	ceiling = div64_u64((u64)cap * policy->max, policy->cpuinfo.max_freq);
-	current = div64_u64((u64)cap * policy->cur, policy->cpuinfo.max_freq);
+	current_cap = div64_u64((u64)cap * policy->cur, policy->cpuinfo.max_freq);
 	raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
 	for_each_cpu(cpu, policy->related_cpus) {
 		struct esgov_capacity_snapshot *snap = &per_cpu(esgov_capacity, cpu);
@@ -183,7 +183,7 @@ static void esgov_publish_capacity(struct cpufreq_policy *policy, bool enabled)
 		snap->energy = sge_array[cpu][SD_LEVEL0];
 		snap->floor = min(floor, ceiling);
 		snap->ceiling = ceiling;
-		snap->current = max(1UL, current);
+		snap->current_cap = max(1UL, current_cap);
 		snap->enabled = enabled;
 		write_seqcount_end(&snap->seq);
 	}
@@ -194,7 +194,7 @@ unsigned long energy_step_cpu_capacity(int cpu, unsigned long util)
 {
 	struct esgov_capacity_snapshot *snap = &per_cpu(esgov_capacity, cpu);
 	const struct sched_group_energy *energy;
-	unsigned long floor, ceiling, current;
+	unsigned long floor, ceiling, current_cap;
 	unsigned int seq;
 	bool enabled;
 
@@ -204,13 +204,13 @@ unsigned long energy_step_cpu_capacity(int cpu, unsigned long util)
 		energy = snap->energy;
 		floor = snap->floor;
 		ceiling = snap->ceiling;
-		current = snap->current;
+		current_cap = snap->current_cap;
 	} while (read_seqcount_retry(&snap->seq, seq));
 
 	if (!enabled || !energy)
 		return util;
 	return energy_step_target_capacity(energy->cap_states,
-		energy->nr_cap_states, util, current, floor, ceiling,
+		energy->nr_cap_states, util, current_cap, floor, ceiling,
 		ESGOV_POWER_STEPS);
 }
 
@@ -718,7 +718,8 @@ static int esgov_init(struct cpufreq_policy *policy)
 	unsigned int i;
 	int ret = 0;
 
-	if (!energy || !energy->nr_cap_states || !policy->cpuinfo.max_freq)
+	if (!energy || !energy->cap_states || !energy->nr_cap_states ||
+	    !policy->cpuinfo.max_freq)
 		return -ENODEV;
 	for (i = 0; i < energy->nr_cap_states; i++) {
 		if (!energy->cap_states[i].cap || energy->cap_states[i].cap > 1024 ||
