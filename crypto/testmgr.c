@@ -2061,6 +2061,24 @@ static int alg_test_null(const struct alg_test_desc *desc,
 }
 
 /* Please keep this list sorted by algorithm name. */
+#if IS_ENABLED(CONFIG_CRYPTO_ZSTD)
+static struct comp_testvec zstd_decomp_tv_template[] = {
+	{
+		.inlen = 50,
+		.outlen = 65,
+		.input = "\x28\xb5\x2f\xfd\x00\x10\x4d\x01"
+			 "\x00\x14\x02\x5a\x73\x74\x61\x6e"
+			 "\x64\x61\x72\x64\x20\x70\x61\x67"
+			 "\x65\x20\x63\x6f\x64\x65\x63\x20"
+			 "\x72\x6f\x75\x6e\x64\x20\x74\x72"
+			 "\x69\x70\x2e\x20\x01\x00\x21\xb8"
+			 "\x7a\x02",
+		.output = "Zstandard page codec round trip. "
+			  "Zstandard page codec round trip.",
+	},
+};
+#endif
+
 static const struct alg_test_desc alg_test_descs[] = {
 	{
 		.alg = "__cbc-cast5-avx",
@@ -3941,7 +3959,17 @@ static const struct alg_test_desc alg_test_descs[] = {
 				}
 			}
 		}
-	}
+	},
+#if IS_ENABLED(CONFIG_CRYPTO_ZSTD)
+	{
+		.alg = "zstd",
+		.test = alg_test_comp,
+		.suite.comp.decomp = {
+			.vecs = zstd_decomp_tv_template,
+			.count = ARRAY_SIZE(zstd_decomp_tv_template),
+		},
+	},
+#endif
 };
 
 static bool alg_test_descs_checked;

@@ -37,14 +37,17 @@ int main(void)
     unsigned int k;
 
     assert(energy_step_target_capacity(ordinary,4,0,256,128,1024,8) == 128);
-    assert(energy_step_target_capacity(ordinary,4,180,256,128,1024,8) == 360);
+    assert(energy_step_target_capacity(ordinary,4,180,256,128,1024,8) == 180);
+    assert(energy_step_target_capacity(costly_mid,4,256,256,128,1024,8) == 256);
     /* Same capacities/load, different power costs => different target. */
-    assert(energy_step_target_capacity(costly_mid,4,180,256,128,1024,8) == 720);
-    assert(energy_step_target_capacity(ordinary,4,180,256,128,1024,2) == 720);
-    assert(energy_step_target_capacity(ordinary,4,180,256,128,1024,0) == 225);
-    assert(energy_step_target_capacity(NULL,0,180,256,128,1024,8) == 225);
+    assert(energy_step_target_capacity(ordinary,4,512,256,128,1024,8) == 576);
+    assert(energy_step_target_capacity(costly_mid,4,512,256,128,1024,8) == 768);
+    assert(energy_step_target_capacity(ordinary,4,512,256,128,1024,2) == 768);
+    assert(energy_step_target_capacity(ordinary,4,512,256,128,1024,0) == 576);
+    assert(energy_step_target_capacity(NULL,0,512,256,128,1024,8) == 576);
+    assert(energy_step_target_capacity(NULL,0,800,256,128,1024,8) == 1000);
     assert(energy_step_target_capacity(ordinary,4,4096,256,128,305,8) == 305);
-    assert(energy_step_target_capacity(ordinary,4,180,0,128,1024,8) == 512);
+    assert(energy_step_target_capacity(ordinary,4,180,0,128,1024,8) == 180);
 
     for (k = 0; k < sizeof(limits)/sizeof(limits[0]); k++) {
         unsigned long low = limits[k][0], high = limits[k][1];
@@ -67,7 +70,7 @@ int main(void)
         assert(env.cap_idx < 4);
         if (env.cap_idx < 3) assert(ordinary[env.cap_idx].cap >= util);
     }
-    puts("PASS: power costs change selection; zero/full load and policy caps");
+    puts("PASS: light load skips boost; heavy load retains headroom and power steps");
     puts("PASS: monotonic capacity across load/current/thermal-limit combinations");
     puts("PASS: actual EAS capacity-index search cannot overrun the model");
     return 0;
@@ -117,15 +120,15 @@ int main(void)
     struct cpufreq_policy policy = {0,128000,1024000,256000,15,{1024000},&governor};
     unsigned int cpu;
     for (cpu=0; cpu<4; cpu++) sge_array[cpu][0] = &model;
-    assert(energy_step_cpu_capacity(0,180) == 180);
+    assert(energy_step_cpu_capacity(0,512) == 512);
     esgov_publish_capacity(&policy,true);
-    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,180) == 360);
-    assert(energy_step_cpu_capacity(4,180) == 180);
+    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,512) == 576);
+    assert(energy_step_cpu_capacity(4,512) == 512);
     policy.max = 200000;
     esgov_publish_capacity(&policy,true);
     for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,1000) == 200);
     esgov_publish_capacity(&policy,false);
-    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,180) == 180);
+    for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,512) == 512);
     assert(!governor.update_lock);
     puts("PASS: actual shared-policy snapshots publish limits, disable on stop, and tolerate kernel current macro");
     return 0;

@@ -1,7 +1,7 @@
-# V12R5T ESG1: Energy Step and legacy EAS experiment
+# V12R5T ESG2 with Energy Step, ZSTD and LMKD
 
-This branch starts at V12R5T commit
-`3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3`. The supplied reference boot is
+This branch builds on the ESG1 commit
+`f7f411468a27d812a6ea239e8143c1ae0526d14b`. The supplied reference boot is
 `V12R5T-Enforcing-BOOT.img`, SHA-256
 `80c3f368ac934725aa1bae01529646c339ade3b88b656e4f98670ba71a850043`.
 It contains WALT, SchedTune, energy-aware scheduling and the legacy DT
@@ -24,8 +24,10 @@ frequency-invariant utilization divided by current capacity, capped at 100%.
 This replaces the newer Samsung PART history dependency; it is an estimate,
 not a measurement of active time or battery power.
 
-The target is the greater of the baseline 25% utilization headroom and the
-power-step capacity scaled by that busy estimate, clamped to policy limits.
+At up to 25% of the policy capacity limit, the governor requests enough
+capacity for the observed load. Between 25% and 75% it gradually adds the
+boost from utilization headroom and the power model. At 75% and above it
+applies the full boost within the policy's frequency limits.
 The same calculation feeds legacy EAS's capacity prediction. A sequence-counted
 snapshot contains only the immutable boot-time energy-table pointer and scalar
 policy values, never a pointer to an allocation freed when switching governor.
@@ -34,13 +36,23 @@ schedutil then uses the original EAS prediction path.
 
 Frequency requests go through the existing Exynos ACME slow path and driver
 resolution. Thermal/QoS ceilings remain authoritative. CI selects energy_step
-as the boot default and also compiles schedutil for comparison. The repository
-defconfig stays at its original default so other builds do not silently change.
+as the boot default and also compiles schedutil for comparison.
+
+## ZRAM and memory pressure
+
+ZRAM defaults to Zstandard level 1 with a workspace sized for page compression.
+The library and xxHash come from Linux 4.19.325 at
+`a67e7cdde7cc7984ae24c3c81a70dc1aa34424b1`. The adapter uses the synchronous
+compression API in this 4.4 kernel.
+
+The kernel provides memory cgroups, PSI triggers and pidfd syscalls for
+Android's LMKD service. Both kernel LMK drivers are disabled. The ROM's
+userspace service and PSI settings determine the active policy after boot.
 
 ## Model limits
 
 The legacy DT tables contain capacity/power pairs, not explicit frequency or
-voltage pairs. ESG1 maps normalized capacity to the driver's maximum frequency
+voltage pairs. Energy Step maps normalized capacity to the driver's maximum frequency
 and resolves the resulting request to a supported OPP. This is an approximation.
 In particular, existing overclocked OPPs are not independently power-calibrated.
 EAS still rounds to its legacy capacity states, while hardware follows the
@@ -72,6 +84,10 @@ Useful read-only checks after boot:
 
 ```sh
 uname -a
+cat /sys/block/zram0/comp_algorithm /proc/swaps
+getprop init.svc.lmkd
+getprop ro.lmk.use_psi
+cat /proc/pressure/memory
 cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
 cat /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor
 cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors

@@ -1,10 +1,10 @@
-name: Build V12R5T ESG1 Energy Step + EAS (experimental)
+name: Build V12R5T ESG2 Energy Step + ZSTD + LMKD
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r5t-energy-step-eas-ci
+      - agent/v12r5t-energy-step-zstd-lmkd-ci
 
 permissions:
   contents: read
@@ -75,12 +75,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5T-ESG1-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-ZSTD-LMKD-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5T-ESG1-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-ZSTD-LMKD-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" \
             --disable LOCALVERSION_AUTO \
@@ -99,8 +99,11 @@ jobs:
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$OUT/.config"
           grep -q '^CONFIG_PSI=y$' "$OUT/.config"
           grep -q '^# CONFIG_PSI_DEFAULT_DISABLED is not set$' "$OUT/.config"
-          ! grep -q '^CONFIG_CRYPTO_ZSTD=y$' "$OUT/.config"
+          for config in ZRAM_DEF_COMP_ZSTD CRYPTO_ZSTD ZSTD_COMPRESS ZSTD_DECOMPRESS XXHASH; do
+            grep -q "^CONFIG_${config}=y$" "$OUT/.config"
+          done
           grep -q '^CONFIG_MEMCG=y$' "$OUT/.config"
+          grep -q '^CONFIG_MEMCG_SWAP=y$' "$OUT/.config"
           grep -q '^CONFIG_CMA=y$' "$OUT/.config"
           grep -q '^CONFIG_DMA_CMA=y$' "$OUT/.config"
           grep -q '^CONFIG_ZRAM=y$' "$OUT/.config"
@@ -185,11 +188,13 @@ jobs:
             grep -q '^CONFIG_SECURITY_SELINUX_DEVELOP=y$' "$OUT/.config"
           fi
 
-      - name: Compile scheduler objects first
+      - name: Compile changed scheduler and ZSTD objects
         run: |
           set -o pipefail
           OUT="out-${{ matrix.variant }}"
-          make O="$OUT" -j"$(nproc)" kernel/sched/cpufreq_energy_step.o kernel/sched/fair.o 2>&1 | tee "build-${{ matrix.variant }}.log"
+          make O="$OUT" -j"$(nproc)" kernel/sched/cpufreq_energy_step.o kernel/sched/fair.o \
+            crypto/zstd.o drivers/block/zram/zram_drv.o lib/xxhash.o \
+            lib/zstd/compress.o lib/zstd/decompress.o 2>&1 | tee "build-${{ matrix.variant }}.log"
 
       - name: Build kernel and DTB
         run: |
@@ -201,7 +206,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5t-energy-step-eas-esg1-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-esg2-zstd-lmkd-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -227,6 +232,10 @@ jobs:
           check_map_symbol cpufreq_gov_energy_step
           check_map_symbol energy_step_cpu_capacity
           check_image_string energy_step
+          check_map_symbol ZSTD_compressCCtx
+          check_map_symbol ZSTD_decompressDCtx
+          check_map_symbol xxh64
+          check_image_string zstd-generic
           check_map_symbol zs_page_isolate
           check_map_symbol zs_page_migrate
           check_map_symbol isolate_movable_page
@@ -241,6 +250,8 @@ jobs:
           check_map_symbol psi_init
           check_map_symbol psi_memstall_enter
           check_map_symbol psi_trigger_create
+          check_map_symbol sys_pidfd_open
+          check_map_symbol sys_pidfd_send_signal
           check_map_symbol vpu_device_init
           check_map_symbol vpu_system_resume
           # kbase_halo_npu_init_partition() is static and may be inlined by GCC.
@@ -264,9 +275,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG1-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-ZSTD-LMKD-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG1-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-ZSTD-LMKD-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -285,6 +296,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5t-energy-step-eas-esg1-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-esg2-zstd-lmkd-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error
