@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="MGLRU Diag"
+        android:label="MGLRU Diag HALO"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
