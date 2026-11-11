@@ -1,4 +1,4 @@
-# V12R5T ESG2 with Energy Step, ZSTD and LMKD
+# V12R5T ESG2 AFC A/B test
 
 This branch builds on the ESG1 commit
 `f7f411468a27d812a6ea239e8143c1ae0526d14b`. The supplied reference boot is
@@ -24,10 +24,12 @@ frequency-invariant utilization divided by current capacity, capped at 100%.
 This replaces the newer Samsung PART history dependency; it is an estimate,
 not a measurement of active time or battery power.
 
-At up to 25% of the policy capacity limit, the governor requests enough
-capacity for the observed load. Between 25% and 75% it gradually adds the
-boost from utilization headroom and the power model. At 75% and above it
-applies the full boost within the policy's frequency limits.
+This build uses the ESG1 Energy Step capacity calculation with the ESG2
+Zstandard configuration. Energy Step applies the ESG1 utilization headroom
+and power-model boost whenever utilization is positive, within the current
+policy limits. This isolates the scheduler change for a device charging test.
+Compare VBUS and battery current after charging settles with the same adapter,
+cable, battery level, temperature and screen state.
 The same calculation feeds legacy EAS's capacity prediction. A sequence-counted
 snapshot contains only the immutable boot-time energy-table pointer and scalar
 policy values, never a pointer to an allocation freed when switching governor.

@@ -19,7 +19,6 @@ energy_step_target_capacity(const struct capacity_state *states,
 		unsigned long ceiling, unsigned int steps)
 {
 	unsigned long target, budget, power, allowed, busy_base;
-	unsigned long light_load, heavy_load;
 	unsigned int i;
 
 	if (floor > ceiling)
@@ -29,13 +28,7 @@ energy_step_target_capacity(const struct capacity_state *states,
 	if (!util)
 		return floor;
 
-	/* With spare capacity, request only the capacity needed by the load. */
-	light_load = ceiling >> 2;
-	heavy_load = ceiling - light_load;
-	if (util <= light_load)
-		return util > floor ? util : floor;
-
-	/* Keep the existing headroom and power step available at heavy load. */
+	/* Retain the baseline's 25% utilization headroom. */
 	target = util + (util >> 2);
 	if (states && count && steps) {
 		for (i = 0; i + 1 < count; i++)
@@ -57,15 +50,9 @@ energy_step_target_capacity(const struct capacity_state *states,
 		if (allowed > target)
 			target = allowed;
 	}
-	if (target > ceiling)
-		target = ceiling;
-	/* Blend the boost between 25% and 75% of the current policy limit. */
-	if (util < heavy_load)
-		target = util + (unsigned long long)(target - util) *
-			 (util - light_load) / (heavy_load - light_load);
 	if (target < floor)
 		target = floor;
-	return target;
+	return target > ceiling ? ceiling : target;
 }
 
 #endif
