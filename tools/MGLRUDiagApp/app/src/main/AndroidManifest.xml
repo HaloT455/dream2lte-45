@@ -15,6 +15,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".HaloProbeActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:hardwareAccelerated="false"
+            android:launchMode="singleTop"
+            android:process=":halo_probe" />
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

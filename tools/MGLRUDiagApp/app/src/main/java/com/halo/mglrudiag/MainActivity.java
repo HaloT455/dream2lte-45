@@ -1,6 +1,7 @@
 package com.halo.mglrudiag;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Environment;
 import android.graphics.Color;
@@ -8,6 +9,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,6 +26,9 @@ import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends Activity {
     private TextView status;
+    private TextView cpuStatus;
+    private TextView gpuStatus;
+    private TextView haloStatus;
     private Button startButton;
     private Button stopButton;
 
@@ -37,9 +42,8 @@ public class MainActivity extends Activity {
         if (active != null) {
             status.setText("Phát hiện phiên log chưa kết thúc. Nếu máy vừa reboot, bấm KẾT THÚC & XUẤT LOG.");
             capturePostBoot(active);
-        } else {
-            updateRuntimeStatus();
         }
+        updateRuntimeStatus();
     }
 
     private int dp(int v) {
@@ -58,6 +62,16 @@ public class MainActivity extends Activity {
         title.setTextColor(Color.BLACK);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        cpuStatus = addHardwareRow(root, "CPU");
+        gpuStatus = addHardwareRow(root, "GPU");
+        haloStatus = addHardwareRow(root, "NPU ảo HALO");
+
+        Button probeButton = new Button(this);
+        probeButton.setText("THỬ NÉN TRÊN GPU");
+        probeButton.setOnClickListener(v -> startActivity(new Intent(this, HaloProbeActivity.class)));
+        root.addView(probeButton, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         status = new TextView(this);
@@ -87,7 +101,21 @@ public class MainActivity extends Activity {
         root.addView(stopButton, stopLp);
         stopButton.setOnClickListener(v -> stopAndExport());
 
-        setContentView(root);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(root);
+        setContentView(scroll);
+    }
+
+    private TextView addHardwareRow(LinearLayout root, String name) {
+        TextView row = new TextView(this);
+        row.setText(name + " · Đang đọc");
+        row.setTextSize(15f);
+        row.setTextColor(Color.DKGRAY);
+        row.setPadding(0, dp(6), 0, dp(6));
+        root.addView(row, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return row;
     }
 
     private void refreshState() {
@@ -102,11 +130,18 @@ public class MainActivity extends Activity {
                     "K=/sys/kernel/mm/lru_gen; " +
                     "echo enabled=$(cat $K/enabled 2>/dev/null); " +
                     "echo scan_around=$(cat $K/scan_around 2>/dev/null); " +
-                    "echo diag=$(cat $K/diag 2>/dev/null)");
+                    "echo diag=$(cat $K/diag 2>/dev/null); " + HardwareStatus.COMMAND);
+            int separator = result.output.indexOf(HardwareStatus.MARKER);
+            HardwareStatus hardware = new HardwareStatus(separator < 0 ? ""
+                    : result.output.substring(separator + HardwareStatus.MARKER.length()));
+            String runtime = separator < 0 ? result.output : result.output.substring(0, separator);
             runOnUiThread(() -> {
+                cpuStatus.setText(hardware.cpu);
+                gpuStatus.setText(hardware.gpu);
+                haloStatus.setText(hardware.halo);
                 if (RootUtil.readActiveSession(this) == null) {
                     if (result.code == 0)
-                        status.setText("Sẵn sàng\n" + result.output.trim());
+                        status.setText("Sẵn sàng\n" + runtime.trim());
                     else
                         status.setText("Cần cấp quyền root KernelSU cho APK.");
                 }

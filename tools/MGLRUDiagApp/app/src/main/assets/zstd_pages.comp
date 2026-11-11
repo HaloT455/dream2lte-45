@@ -1,0 +1,116 @@
+#version 310 es
+precision highp int;
+
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer InputPages {
+    uint inputWords[];
+};
+layout(std430, binding = 1) buffer OutputFrames {
+    uint outputWords[];
+};
+layout(std430, binding = 2) writeonly buffer FrameLengths {
+    uint lengths[];
+};
+
+const uint PAGE_BYTES = 4096u;
+const uint PAGE_WORDS = PAGE_BYTES / 4u;
+const uint TILE_BYTES = 64u;
+const uint TILE_WORDS = TILE_BYTES / 4u;
+const uint TILES = PAGE_BYTES / TILE_BYTES;
+const uint RAW = 256u;
+shared uint tileType[TILES];
+
+uint run_end(uint first)
+{
+    uint end = first + 1u;
+    while (end < TILES) {
+        if (tileType[end] != tileType[first])
+            break;
+        ++end;
+    }
+    return end;
+}
+
+void put_byte(uint base, inout uint pos, uint value)
+{
+    uint index = base + pos / 4u;
+    uint shift = (pos % 4u) * 8u;
+    if (shift == 0u)
+        outputWords[index] = value & 255u;
+    else
+        outputWords[index] |= (value & 255u) << shift;
+    ++pos;
+}
+
+void put_word(uint base, inout uint pos, uint word)
+{
+    uint index = base + pos / 4u;
+    uint shift = (pos % 4u) * 8u;
+    if (shift == 0u) {
+        outputWords[index] = word;
+    } else {
+        outputWords[index] |= word << shift;
+        outputWords[index + 1u] = word >> (32u - shift);
+    }
+    pos += 4u;
+}
+
+void main()
+{
+    uint page = gl_WorkGroupID.x;
+    uint base = page * PAGE_WORDS;
+    uint tile = gl_LocalInvocationID.x;
+    uint firstWord = base + tile * TILE_WORDS;
+    uint value = inputWords[firstWord] & 255u;
+    uint repeated = value * 0x01010101u;
+    uint type = value;
+
+    for (uint i = 0u; i < TILE_WORDS; ++i) {
+        if (inputWords[firstWord + i] != repeated) {
+            type = RAW;
+            break;
+        }
+    }
+    tileType[tile] = type;
+    barrier();
+
+    if (tile != 0u)
+        return;
+
+    uint length = 7u;
+    for (uint first = 0u; first < TILES;) {
+        uint end = run_end(first);
+        length += 3u + (tileType[first] == RAW ? (end - first) * TILE_BYTES : 1u);
+        first = end;
+    }
+    // A zero length asks the caller to use CPU ZSTD for this page.
+    if (length >= PAGE_BYTES) {
+        lengths[page] = 0u;
+        return;
+    }
+
+    uint pos = 0u;
+    put_word(base, pos, 0xFD2FB528u);
+    // Single-segment frame with a 2-byte content size (4096 - 256).
+    put_byte(base, pos, 0x60u);
+    put_byte(base, pos, 0u);
+    put_byte(base, pos, 15u);
+
+    for (uint first = 0u; first < TILES;) {
+        uint end = run_end(first);
+        uint size = (end - first) * TILE_BYTES;
+        bool raw = tileType[first] == RAW;
+        uint header = (size << 3u) | (raw ? 0u : 2u) | (end == TILES ? 1u : 0u);
+        put_byte(base, pos, header);
+        put_byte(base, pos, header >> 8u);
+        put_byte(base, pos, header >> 16u);
+        if (raw) {
+            for (uint i = first * TILE_WORDS; i < end * TILE_WORDS; ++i)
+                put_word(base, pos, inputWords[base + i]);
+        } else {
+            put_byte(base, pos, tileType[first]);
+        }
+        first = end;
+    }
+    lengths[page] = pos;
+}

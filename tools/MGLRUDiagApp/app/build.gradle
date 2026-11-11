@@ -10,8 +10,8 @@ android {
         applicationId "com.halo.mglrudiag"
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName "1.0-L"
+        versionCode 2
+        versionName "1.1-HALO"
     }
 
     buildTypes {
@@ -22,4 +22,8 @@ android {
             minifyEnabled false
         }
     }
+}
+
+dependencies {
+    implementation 'com.github.luben:zstd-jni:1.5.7-12@aar'
 }
