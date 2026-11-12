@@ -741,6 +741,9 @@ bool jd_submit_atom(struct kbase_context *kctx, const struct base_jd_atom_v2 *us
 	katom->device_nr = user_atom->device_nr;
 	katom->jc = user_atom->jc;
 	katom->core_req = user_atom->core_req;
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	kbase_js_halo_tag_atom(kbdev, katom);
+#endif
 	katom->atom_flags = 0;
 	katom->retry_count = 0;
 	katom->need_cache_flush_cores_retained = 0;

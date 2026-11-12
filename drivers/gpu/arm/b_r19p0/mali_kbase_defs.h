@@ -721,6 +721,11 @@ struct kbase_jd_atom {
 	/* Note: refer to kbasep_js_atom_retained_state, which will take a copy of some of the following members */
 	enum base_jd_event_code event_code;
 	base_jd_core_req core_req;
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	/* Set at submission so dependencies and retries keep the same slot. */
+	u64 halo_probe_generation;
+	bool halo_probe_js2;
+#endif
 
 	u32 ticks;
 	int sched_priority;
@@ -2249,10 +2254,6 @@ struct kbase_context {
 	wait_queue_head_t event_queue;
 	pid_t tgid;
 	pid_t pid;
-#ifdef CONFIG_MALI_HALO_NPU_PARTITION
-	/* Set at context creation so a queued job keeps its slot. */
-	u64 halo_probe_generation;
-#endif
 
 	struct kbase_jd_context jctx;
 	atomic_t used_pages;

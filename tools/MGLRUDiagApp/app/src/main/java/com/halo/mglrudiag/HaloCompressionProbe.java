@@ -57,7 +57,7 @@ final class HaloCompressionProbe {
             cpuBytes += Zstd.compress(page, 1).length;
         double cpuMs = elapsedMs(cpuStart);
 
-        try (SlotProbe slot = new SlotProbe(); ProbeContext egl = new ProbeContext()) {
+        try (ProbeContext egl = new ProbeContext()) {
             egl.initialize();
             String renderer = glGetString(GL_RENDERER);
             if (renderer == null || !renderer.contains("Mali"))
@@ -67,23 +67,32 @@ final class HaloCompressionProbe {
             glUseProgram(program);
             int[] buffers = new int[3];
             glGenBuffers(buffers.length, buffers, 0);
-            SlotSample before = slot.read();
             long gpuStart = SystemClock.elapsedRealtimeNanos();
             storage(buffers[0], 0, BYTES, input, GL_STREAM_DRAW);
             storage(buffers[1], 1, BYTES, null, GL_STREAM_READ);
             storage(buffers[2], 2, PAGES * Integer.BYTES, null, GL_STREAM_READ);
-            glDispatchCompute(PAGES, 1, 1);
-            glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-            checkGl("Gửi job nén");
+            checkGl("Chuẩn bị bộ đệm");
             awaitCompute();
+            double gpuMs = elapsedMs(gpuStart);
+
+            SlotSample after;
+            long jobs;
+            try (SlotProbe slot = new SlotProbe()) {
+                SlotSample before = slot.read();
+                gpuStart = SystemClock.elapsedRealtimeNanos();
+                glDispatchCompute(PAGES, 1, 1);
+                glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+                checkGl("Gửi job nén");
+                awaitCompute();
+                gpuMs += elapsedMs(gpuStart);
+                after = slot.read();
+                jobs = after.verifyDispatch(before);
+            }
+
+            gpuStart = SystemClock.elapsedRealtimeNanos();
             ByteBuffer lengths = download(buffers[2], PAGES * Integer.BYTES);
             ByteBuffer output = download(buffers[1], BYTES);
-            double gpuMs = elapsedMs(gpuStart);
-            SlotSample after = slot.read();
-            long jobs = after.js2 - before.js2;
-            if (before.generation != after.generation || jobs <= 0
-                    || before.other != after.other || Long.bitCount(after.affinity) != 5)
-                throw new IOException("Chưa xác nhận được job JS2 với mặt nạ 5 shader.");
+            gpuMs += elapsedMs(gpuStart);
             glDeleteBuffers(buffers.length, buffers, 0);
             glDeleteProgram(program);
 
@@ -113,11 +122,12 @@ final class HaloCompressionProbe {
             }
 
             return String.format(Locale.ROOT,
-                    "%s\nJS2 · %d job · Mặt nạ 5 shader"
+                    "%s\nJS2 · %d job · %d/5 shader trong affinity (0x%x)"
                     + "\n\nGiải nén khớp %d/%d trang 4 KiB\nGPU nén %d trang · CPU dự phòng %d trang"
                     + "\nGPU gồm tải và đọc %.2f ms · CPU dự phòng %.2f ms · CPU toàn bộ %.2f ms"
                     + "\nGPU + CPU %d byte · CPU toàn bộ %d byte",
-                    renderer, jobs, PAGES, PAGES, gpuPages, PAGES - gpuPages,
+                    renderer, jobs, Long.bitCount(after.affinity), after.affinity,
+                    PAGES, PAGES, gpuPages, PAGES - gpuPages,
                     gpuMs, fallbackMs, cpuMs, hybridBytes, cpuBytes);
         }
     }
@@ -208,12 +218,29 @@ final class HaloCompressionProbe {
         final long js2;
         final long other;
         final long affinity;
+        final long reserved;
 
-        SlotSample(String[] fields) {
+        SlotSample(String[] fields, long reserved) {
             generation = Long.parseUnsignedLong(fields[1]);
             js2 = Long.parseUnsignedLong(fields[2]);
             other = Long.parseUnsignedLong(fields[3]);
             affinity = Long.parseUnsignedLong(fields[4].substring(2), 16);
+            this.reserved = reserved;
+        }
+
+        long verifyDispatch(SlotSample before) throws IOException {
+            if (generation != before.generation || reserved != before.reserved)
+                throw new IOException("Phiên HALO hoặc phân vùng shader đã đổi giữa bài thử.");
+            long jobs = js2 - before.js2;
+            long otherJobs = other - before.other;
+            if (jobs <= 0 || otherJobs != 0 || Long.bitCount(reserved) != 5
+                    || affinity == 0 || (affinity & ~reserved) != 0) {
+                throw new IOException(String.format(Locale.ROOT,
+                        "Chưa xác nhận được JS2 · job JS2=%d · compute khác=%d"
+                        + " · affinity=0x%x · phân vùng=0x%x",
+                        jobs, otherJobs, affinity, reserved));
+            }
+            return jobs;
         }
     }
 
@@ -224,16 +251,18 @@ final class HaloCompressionProbe {
         SlotProbe() throws IOException {
             RootUtil.Result result = RootUtil.execRoot("echo " + pid + " > " + NODE);
             if (result.code != 0)
-                throw new IOException("Cần boot thử HALO JS2 và quyền KernelSU.\n" + result.output.trim());
+                throw new IOException("Không bật được HALO JS2. Kiểm tra boot thử và quyền KernelSU.\n"
+                        + result.output.trim());
         }
 
         SlotSample read() throws IOException {
-            RootUtil.Result result = RootUtil.execRoot("cat " + NODE);
-            String[] fields = result.output.trim().split("\\s+");
-            if (result.code != 0 || fields.length != 5
+            RootUtil.Result result = RootUtil.execRoot("cat " + NODE + " " + HardwareStatus.MALI + "/core_mask");
+            String[] lines = result.output.trim().split("\n", 2);
+            String[] fields = lines[0].trim().split("\\s+");
+            if (result.code != 0 || lines.length != 2 || fields.length != 5
                     || !fields[0].equals(Integer.toString(pid)) || !fields[4].startsWith("0x"))
-                throw new IOException("Không đọc được bộ đếm JS2.");
-            return new SlotSample(fields);
+                throw new IOException("Không đọc được bộ đếm JS2.\n" + result.output.trim());
+            return new SlotSample(fields, HardwareStatus.mask(lines[1], "Current core mask (JS2)"));
         }
 
         @Override

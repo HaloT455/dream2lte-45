@@ -1704,6 +1704,9 @@ int fimc_is_video_s_ctrl(struct file *file,
 		break;
 	case V4L2_CID_IS_INTENT:
 		device->group_3aa.intent_ctl.captureIntent = ctrl->value;
+#ifdef CONFIG_CAMERA_DREAM2
+		fimc_is_camera_boost_capture(ctrl->value);
+#endif
 		minfo("[3AA:V] s_ctrl intent(%d)\n", vctx, ctrl->value);
 		break;
 	case V4L2_CID_IS_CAMERA_TYPE:

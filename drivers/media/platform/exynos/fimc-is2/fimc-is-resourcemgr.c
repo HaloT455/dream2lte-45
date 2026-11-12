@@ -14,6 +14,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
+#include <linux/jiffies.h>
 #include <linux/version.h>
 #include <linux/gpio.h>
 #include <linux/clk.h>
@@ -86,39 +87,76 @@ struct pm_qos_request exynos_isp_qos_cpu_online_min;
 #define C1MAX_QOS_UPDATE(freq) pm_qos_update_request(&exynos_isp_qos_cluster1_max, freq * 1000)
 
 #ifdef CONFIG_CAMERA_DREAM2
-/* The little-cluster floor matches the Dream2 touch booster OPP. */
-#define CAMERA_BOOST_KHZ	832000
+/* Match the Dream2 touch booster OPPs. */
+#define CAMERA_LITTLE_BOOST_KHZ	832000
+#define CAMERA_BIG_BOOST_KHZ	1066000
 #define CAMERA_OPEN_BOOST_US	300000
 #define CAMERA_SHOT_BOOST_US	150000
+#define CAMERA_SHOT_INTERVAL_MS	300
 
 static DEFINE_MUTEX(camera_boost_lock);
-static struct pm_qos_request camera_boost_qos;
+static struct pm_qos_request camera_open_qos;
+static struct pm_qos_request camera_shot_little_qos;
+static struct pm_qos_request camera_shot_big_qos;
+static unsigned long camera_next_shot_boost;
 
-void fimc_is_camera_boost(bool opening)
+static void camera_qos_boost(struct pm_qos_request *req, int qos_class,
+			     s32 freq, unsigned long duration)
+{
+	if (pm_qos_request_active(req))
+		cancel_delayed_work_sync(&req->work);
+	else
+		pm_qos_add_request(req, qos_class, PM_QOS_DEFAULT_VALUE);
+
+	pm_qos_update_request_timeout(req, freq, duration);
+}
+
+void fimc_is_camera_boost_open(void)
 {
 	mutex_lock(&camera_boost_lock);
-	if (pm_qos_request_active(&camera_boost_qos)) {
-		cancel_delayed_work_sync(&camera_boost_qos.work);
-	} else if (opening) {
-		pm_qos_add_request(&camera_boost_qos, PM_QOS_CLUSTER0_FREQ_MIN,
-				   PM_QOS_DEFAULT_VALUE);
-	} else {
+	camera_qos_boost(&camera_open_qos, PM_QOS_CLUSTER0_FREQ_MIN,
+			 CAMERA_LITTLE_BOOST_KHZ, CAMERA_OPEN_BOOST_US);
+	mutex_unlock(&camera_boost_lock);
+}
+
+void fimc_is_camera_boost_capture(u32 intent)
+{
+	if (intent != AA_CAPTURE_INTENT_STILL_CAPTURE &&
+	    (intent < AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_SINGLE ||
+	     intent >= AA_CAPTURE_INTENT_STILL_CAPTURE_CANCEL))
+		return;
+
+	mutex_lock(&camera_boost_lock);
+	/* A still request can arrive through both the ioctl and the queue. */
+	if (!pm_qos_request_active(&camera_open_qos) ||
+	    (pm_qos_request_active(&camera_shot_little_qos) &&
+	     time_before(jiffies, camera_next_shot_boost)))
 		goto unlock;
-	}
-	pm_qos_update_request_timeout(&camera_boost_qos, CAMERA_BOOST_KHZ,
-				      opening ? CAMERA_OPEN_BOOST_US :
-						CAMERA_SHOT_BOOST_US);
+
+	camera_qos_boost(&camera_shot_little_qos, PM_QOS_CLUSTER0_FREQ_MIN,
+			 CAMERA_LITTLE_BOOST_KHZ, CAMERA_SHOT_BOOST_US);
+	camera_qos_boost(&camera_shot_big_qos, PM_QOS_CLUSTER1_FREQ_MIN,
+			 CAMERA_BIG_BOOST_KHZ, CAMERA_SHOT_BOOST_US);
+	camera_next_shot_boost = jiffies + msecs_to_jiffies(CAMERA_SHOT_INTERVAL_MS);
+	pr_info_ratelimited("fimc-is: still capture boost intent=%u\n", intent);
 unlock:
 	mutex_unlock(&camera_boost_lock);
+}
+
+static void camera_qos_remove(struct pm_qos_request *req)
+{
+	if (pm_qos_request_active(req)) {
+		cancel_delayed_work_sync(&req->work);
+		pm_qos_remove_request(req);
+	}
 }
 
 void fimc_is_camera_boost_stop(void)
 {
 	mutex_lock(&camera_boost_lock);
-	if (pm_qos_request_active(&camera_boost_qos)) {
-		cancel_delayed_work_sync(&camera_boost_qos.work);
-		pm_qos_remove_request(&camera_boost_qos);
-	}
+	camera_qos_remove(&camera_shot_big_qos);
+	camera_qos_remove(&camera_shot_little_qos);
+	camera_qos_remove(&camera_open_qos);
 	mutex_unlock(&camera_boost_lock);
 }
 #endif /* CONFIG_CAMERA_DREAM2 */
@@ -999,7 +1037,7 @@ int fimc_is_resource_get(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type)
 		pm_stay_awake(&core->pdev->dev);
 
 #ifdef CONFIG_CAMERA_DREAM2
-		fimc_is_camera_boost(true);
+		fimc_is_camera_boost_open();
 #endif
 		resourcemgr->cluster0 = 0;
 		resourcemgr->cluster1 = 0;

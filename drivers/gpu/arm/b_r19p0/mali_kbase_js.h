@@ -586,6 +586,11 @@ void kbase_js_zap_context(struct kbase_context *kctx);
 bool kbase_js_is_atom_valid(struct kbase_device *kbdev,
 				struct kbase_jd_atom *katom);
 
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+void kbase_js_halo_tag_atom(struct kbase_device *kbdev,
+			   struct kbase_jd_atom *katom);
+#endif
+
 /**
  * kbase_js_set_timeouts - update all JS timeouts with user specified data
  * @kbdev: Device pointer

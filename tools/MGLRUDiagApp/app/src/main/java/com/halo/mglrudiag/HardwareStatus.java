@@ -81,7 +81,7 @@ final class HardwareStatus {
         }
     }
 
-    private static long mask(String text, String label) {
+    static long mask(String text, String label) {
         Matcher m = Pattern.compile("(?m)^" + Pattern.quote(label) + " : 0x([0-9a-fA-F]{1,16})$")
                 .matcher(text);
         return m.find() ? Long.parseUnsignedLong(m.group(1), 16) : 0;

@@ -2012,8 +2012,6 @@ static DEVICE_ATTR(core_mask, S_IRUGO | S_IWUSR, show_core_mask, set_core_mask);
 #ifdef CONFIG_MALI_HALO_NPU_PARTITION
 static bool halo_probe_available(struct kbase_device *kbdev)
 {
-	const struct mali_base_gpu_coherent_group_info *groups =
-		&kbdev->gpu_props.props.coherency_info;
 	u64 compute = kbdev->pm.debug_core_mask[2];
 	u64 graphics = kbdev->pm.debug_core_mask[0];
 
@@ -2024,9 +2022,7 @@ static bool halo_probe_available(struct kbase_device *kbdev)
 		graphics == kbdev->pm.debug_core_mask[1] &&
 		hweight64(graphics) == 15 && hweight64(compute) == 5 &&
 		!(compute & graphics) &&
-		(compute | graphics) == kbdev->gpu_props.props.raw_props.shader_present &&
-		(kbdev->gpu_props.num_core_groups <= 1 ||
-		 (compute & groups->group[1].core_mask) == compute);
+		(compute | graphics) == kbdev->gpu_props.props.raw_props.shader_present;
 }
 
 static ssize_t halo_probe_show(struct device *dev,
@@ -2088,7 +2084,7 @@ static ssize_t halo_probe_store(struct device *dev,
 		return -EOPNOTSUPP;
 	}
 	old = kbdev->halo_probe.tgid;
-	kbdev->halo_probe.tgid = tgid;
+	WRITE_ONCE(kbdev->halo_probe.tgid, tgid);
 	kbdev->halo_probe.generation++;
 	kbdev->halo_probe.js2_jobs = 0;
 	kbdev->halo_probe.other_jobs = 0;
@@ -4115,7 +4111,7 @@ static int kbase_platform_device_remove(struct platform_device *pdev)
 
 			spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
 			tgid = kbdev->halo_probe.tgid;
-			kbdev->halo_probe.tgid = NULL;
+			WRITE_ONCE(kbdev->halo_probe.tgid, NULL);
 			kbdev->halo_probe.generation++;
 			spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 			put_pid(tgid);

@@ -2363,6 +2363,9 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 	cis_shared_data *cis_data = NULL;
 #endif
 	u32 orientation;
+#ifdef CONFIG_CAMERA_DREAM2
+	u32 capture_intent = AA_CAPTURE_INTENT_CUSTOM;
+#endif
 
 	BUG_ON(!groupmgr);
 	BUG_ON(!group);
@@ -2424,6 +2427,9 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 		orientation = frame->shot->uctl.scalerUd.orientation;
 		memset(&frame->shot->uctl.scalerUd, 0, sizeof(struct camera2_scaler_uctl));
 		frame->shot->uctl.scalerUd.orientation = orientation;
+#ifdef CONFIG_CAMERA_DREAM2
+		capture_intent = frame->shot->ctl.aa.captureIntent;
+#endif
 
 		frame->lindex = 0;
 		frame->hindex = 0;
@@ -2464,6 +2470,10 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 	}
 
 	framemgr_x_barrier_irqr(framemgr, FMGR_IDX_22, flags);
+
+#ifdef CONFIG_CAMERA_DREAM2
+	fimc_is_camera_boost_capture(capture_intent);
+#endif
 
 #ifdef CONFIG_COMPANION_DIRECT_USE
 	if (test_bit(FIMC_IS_SENSOR_PREPROCESSOR_AVAILABLE, &sensor_peri->peri_state)) {

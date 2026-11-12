@@ -7,6 +7,7 @@ on:
       - agent/v12r5t-halo-zram-probe
       - agent/v12r5t-halo-range-test
       - agent/v12r5t-halo-readonly-logger
+      - agent/v12r5t-halo-capture-test
     paths:
       - 'tools/MGLRUDiagApp/**'
       - 'scripts/test_halo_zstd_compute.py'
@@ -63,11 +64,11 @@ jobs:
       - name: Rename APK
         run: |
           cp tools/MGLRUDiagApp/app/build/outputs/apk/debug/app-debug.apk \
-             MGLRU-Diag-JS2-Logger.apk
+             HALO-Diag-JS2-TEST.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MGLRU-Diag-JS2-Logger-${{ github.sha }}
-          path: MGLRU-Diag-JS2-Logger.apk
+          name: HALO-Diag-JS2-TEST-${{ github.sha }}
+          path: HALO-Diag-JS2-TEST.apk
           if-no-files-found: error

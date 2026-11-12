@@ -168,11 +168,6 @@ kbase_create_context(struct kbase_device *kbdev, bool is_compat,
 	mutex_lock(&js_kctx_info->ctx.jsctx_mutex);
 	spin_lock_irqsave(&kctx->kbdev->hwaccess_lock, irq_flags);
 
-#ifdef CONFIG_MALI_HALO_NPU_PARTITION
-	if (task_tgid(current) == kbdev->halo_probe.tgid)
-		kctx->halo_probe_generation = kbdev->halo_probe.generation;
-#endif
-
 	/* Translate the flags */
 	if ((flags & BASE_CONTEXT_SYSTEM_MONITOR_SUBMIT_DISABLED) == 0)
 		kbase_ctx_flag_clear(kctx, KCTX_SUBMIT_DISABLED);

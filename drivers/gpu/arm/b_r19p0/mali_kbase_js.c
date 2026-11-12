@@ -2038,17 +2038,50 @@ bool kbase_js_is_atom_valid(struct kbase_device *kbdev,
 static bool kbase_halo_probe_uses_js2(struct kbase_device *kbdev,
 				     struct kbase_jd_atom *katom)
 {
+	const struct mali_base_gpu_coherent_group_info *groups =
+		&kbdev->gpu_props.props.coherency_info;
 	base_jd_core_req req = katom->core_req;
+	base_jd_core_req js2_req = BASE_JD_REQ_CS |
+		(req & (BASE_JD_REQ_CF | BASE_JD_REQ_V));
 	unsigned int group = kbdev->gpu_props.num_core_groups > 1 ? 1 : 0;
+	u64 mask = kbdev->pm.debug_core_mask[2];
 
-	if (!katom->kctx->halo_probe_generation ||
-	    !(req & (BASE_JD_REQ_ONLY_COMPUTE | BASE_JD_REQ_CS)) ||
-	    (req & (BASE_JD_REQ_FS | BASE_JD_REQ_T | BASE_JD_REQ_V |
-		    BASE_JD_REQ_SOFT_JOB)))
+	lockdep_assert_held(&kbdev->hwaccess_lock);
+	if ((req & (BASE_JD_REQ_FS | BASE_JD_REQ_T)) ||
+	    (js2_req & ~kbdev->js_data.js_reqs[2]))
 		return false;
 
-	return !(req & BASE_JD_REQ_SPECIFIC_COHERENT_GROUP) ||
-	       katom->device_nr == group;
+	if ((req & BASE_JD_REQ_SPECIFIC_COHERENT_GROUP) &&
+	    katom->device_nr != group)
+		return false;
+
+	if (req & (BASE_JD_REQ_COHERENT_GROUP |
+		   BASE_JD_REQ_SPECIFIC_COHERENT_GROUP))
+		mask &= groups->group[group].core_mask;
+
+	return mask != 0;
+}
+
+void kbase_js_halo_tag_atom(struct kbase_device *kbdev,
+			   struct kbase_jd_atom *katom)
+{
+	struct pid *tgid = task_tgid(current);
+	base_jd_core_req req = katom->core_req;
+	unsigned long flags;
+
+	katom->halo_probe_generation = 0;
+	katom->halo_probe_js2 = false;
+	if (!(req & (BASE_JD_REQ_ONLY_COMPUTE | BASE_JD_REQ_CS)) ||
+	    (req & BASE_JD_REQ_SOFT_JOB) ||
+	    tgid != READ_ONCE(kbdev->halo_probe.tgid))
+		return;
+
+	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+	if (tgid == kbdev->halo_probe.tgid) {
+		katom->halo_probe_generation = kbdev->halo_probe.generation;
+		katom->halo_probe_js2 = kbase_halo_probe_uses_js2(kbdev, katom);
+	}
+	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
 }
 #endif
 
@@ -2059,7 +2092,7 @@ static int kbase_js_get_slot(struct kbase_device *kbdev,
 		return 0;
 
 #ifdef CONFIG_MALI_HALO_NPU_PARTITION
-	if (kbase_halo_probe_uses_js2(kbdev, katom))
+	if (katom->halo_probe_js2)
 		return 2;
 #endif
 

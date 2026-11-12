@@ -237,11 +237,9 @@ void kbase_job_hw_submit(struct kbase_device *kbdev,
 						JS_COMMAND_START);
 #ifdef CONFIG_MALI_HALO_NPU_PARTITION
 	lockdep_assert_held(&kbdev->hwaccess_lock);
-	if (kctx->halo_probe_generation &&
-	    kctx->halo_probe_generation == kbdev->halo_probe.generation &&
-	    (katom->core_req & (BASE_JD_REQ_ONLY_COMPUTE | BASE_JD_REQ_CS |
-			       BASE_JD_REQ_T | BASE_JD_REQ_FS))) {
-		if (js == 2) {
+	if (katom->halo_probe_generation &&
+	    katom->halo_probe_generation == kbdev->halo_probe.generation) {
+		if (js == 2 && katom->halo_probe_js2) {
 			kbdev->halo_probe.js2_jobs++;
 			kbdev->halo_probe.affinity = affinity;
 		} else {

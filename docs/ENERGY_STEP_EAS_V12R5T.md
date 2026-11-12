@@ -1,4 +1,4 @@
-# V12R5T ESG2 Wi-Fi, HALO JS2 and camera test
+# V12R5T ESG2 HALO JS2 and shutter test
 
 This branch builds on the ESG1 commit
 `f7f411468a27d812a6ea239e8143c1ae0526d14b`. The supplied reference boot is
@@ -54,24 +54,26 @@ userspace service and PSI settings determine the active policy after boot.
 
 ## Device controls and camera
 
-MGLRU Diag JS2 can select 2.4 GHz for distance and return the station to
+HALO Diag JS2 can select 2.4 GHz for distance and return the station to
 automatic band selection. The BCM4361 control uses the existing firmware
 band operation, which can reconnect the station. The root-only
 `/sys/wifi/station_band` accepts 2 for 2.4 GHz and 0 for automatic.
 
-For the Dream2 camera, the resource open and still-capture control request
-a temporary 832 MHz cluster0 minimum for 300 ms and 150 ms respectively.
-The Exynos frequency policy applies the thermal ceiling. Samsung HAL
-still controls sensor initialization, focus, exposure and capture.
+Opening the Dream2 camera requests an 832 MHz little-cluster minimum for
+300 ms. Still-capture controls and queued still frames request 832 MHz on
+the little cluster and 1066 MHz on the big cluster for 150 ms, at most
+once every 300 ms. The Exynos frequency policy applies the thermal ceiling.
+The `fimc-is: still capture boost` kernel log entry marks the request.
 
 ## HALO test
 
-The root-only Mali `halo_probe` node takes the test process PID before it
-creates an EGL context. Only the marked context's eligible shader jobs go
-to JS2. The test app verifies the hardware submission counters and the
-five-shader affinity during its sample workload. ZRAM system compression
-uses the CPU ZSTD backend. The probe uses synthetic pages and measures the
-CPU fallback for pages outside its GPU encoder's supported patterns.
+The root-only Mali `halo_probe` node takes the test process PID. The driver
+classifies each compute atom at submission and routes compatible atoms to JS2.
+The app opens EGL and prepares the buffers before registering. It verifies
+that compute went to JS2 with a nonempty affinity inside the five reserved
+shaders, then checks the decompressed data. ZRAM system compression uses
+the CPU ZSTD backend. The probe uses synthetic pages and measures the CPU
+fallback for pages outside its GPU encoder's supported patterns.
 
 ## Model limits
 

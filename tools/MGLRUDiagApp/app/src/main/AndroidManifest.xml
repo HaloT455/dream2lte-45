@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="HALO Diag Log"
+        android:label="HALO Diag JS2"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
