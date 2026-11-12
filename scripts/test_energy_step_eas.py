@@ -84,16 +84,25 @@ SNAPSHOT_PREAMBLE = r'''
 #include <stdio.h>
 #define current get_current()
 typedef uint64_t u64;
+typedef int64_t s64;
 typedef struct { unsigned int sequence; } seqcount_t;
 struct capacity_state { unsigned long cap, power; };
 #include "energy_step_math.h"
 struct sched_group_energy { unsigned int nr_cap_states; struct capacity_state *cap_states; };
-struct esgov_policy { int update_lock; };
+struct esgov_policy { int update_lock; struct cpufreq_policy *policy; };
 struct cpufreq_policy {
     unsigned int cpu, min, max, cur, related_cpus;
     struct { unsigned int max_freq; } cpuinfo;
     void *governor_data;
 };
+struct esgov_cpu {
+    struct esgov_policy *sg_policy;
+    bool iowait_boost_pending;
+    unsigned int iowait_boost, iowait_boost_max;
+    u64 last_update;
+};
+#define TICK_NSEC 1000
+#define SCHED_CPUFREQ_IOWAIT 1U
 static struct sched_group_energy *sge_array[8][8];
 #define SD_LEVEL0 0
 #define ESGOV_POWER_STEPS 8U
@@ -112,6 +121,45 @@ static bool read_seqcount_retry(seqcount_t *s, unsigned int old) { return old !=
 '''
 
 SNAPSHOT_TESTS = r'''
+static void test_iowait(void)
+{
+    struct cpufreq_policy policy = {.min = 200000};
+    struct esgov_policy governor = {.policy = &policy};
+    struct esgov_cpu cpu = {
+        .sg_policy = &governor, .iowait_boost_pending = true,
+        .iowait_boost = 1000000, .iowait_boost_max = 1000000, .last_update = 1,
+    };
+    u64 now = cpu.last_update + TICK_NSEC + 1;
+    unsigned long util = 32, max = 1024;
+
+    /* A delayed update can leave both an old boost and its pending bit. */
+    esgov_set_iowait_boost(&cpu, now, SCHED_CPUFREQ_IOWAIT);
+    assert(cpu.iowait_boost == policy.min && cpu.iowait_boost_pending);
+    cpu.last_update = now;
+    esgov_iowait_boost(&cpu, now, &util, &max);
+    assert(util == policy.min && max == cpu.iowait_boost_max);
+    assert(!cpu.iowait_boost_pending);
+
+    /* A sustained burst still doubles the boost up to the hardware cap. */
+    for (int i = 0; i < 3; i++) {
+        esgov_set_iowait_boost(&cpu, ++now, SCHED_CPUFREQ_IOWAIT);
+        cpu.last_update = now;
+        unsigned int queued = cpu.iowait_boost;
+        esgov_set_iowait_boost(&cpu, now, SCHED_CPUFREQ_IOWAIT);
+        assert(cpu.iowait_boost == queued);
+        esgov_iowait_boost(&cpu, now, &util, &max);
+    }
+    assert(cpu.iowait_boost == cpu.iowait_boost_max);
+
+    /* The shared policy can examine a peer before that peer wakes. */
+    util = 100;
+    max = 1024;
+    esgov_iowait_boost(&cpu, now + TICK_NSEC + 1, &util, &max);
+    assert(!cpu.iowait_boost && !cpu.iowait_boost_pending);
+    assert(util == 100 && max == 1024);
+    puts("PASS: idle I/O wakes restart at min, sustained I/O boosts, stale peer boost expires");
+}
+
 int main(void)
 {
     struct capacity_state states[] = {{128,10},{256,20},{512,50},{1024,130}};
@@ -131,6 +179,7 @@ int main(void)
     for (cpu=0; cpu<4; cpu++) assert(energy_step_cpu_capacity(cpu,512) == 512);
     assert(!governor.update_lock);
     puts("PASS: actual shared-policy snapshots publish limits, disable on stop, and tolerate kernel current macro");
+    test_iowait();
     return 0;
 }
 '''
@@ -163,6 +212,9 @@ def main():
                           "\nstatic struct esgov_capacity_snapshot esgov_capacity[8];\n" +
                           c_function(governor, "static void esgov_publish_capacity(") +
                           c_function(governor, "unsigned long energy_step_cpu_capacity(") +
+                          c_function(governor, "static bool esgov_iowait_reset(") +
+                          c_function(governor, "static void esgov_set_iowait_boost(") +
+                          c_function(governor, "static void esgov_iowait_boost(") +
                           SNAPSHOT_TESTS)
         subprocess.run(cc + ["-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror",
                             "-fsanitize=undefined", "-fno-sanitize-recover=all",

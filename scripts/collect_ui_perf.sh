@@ -34,11 +34,13 @@ snapshot() {
     printf '\n=== %s ===\n' "$1"
     date +%s
     for node in /proc/uptime /proc/stat /proc/meminfo /proc/vmstat \
-        /proc/swaps /proc/sys/vm/swappiness \
+        /proc/swaps /proc/sys/vm/swappiness /proc/pressure/memory \
         /proc/sys/kernel/sched_cpu_ui_hints \
         /sys/devices/system/cpu/online \
         /sys/class/power_supply/battery/status \
-        /sys/class/power_supply/battery/temp; do
+        /sys/class/power_supply/battery/temp \
+        /sys/class/power_supply/battery/batt_current_ua_now \
+        /sys/class/power_supply/battery/capacity; do
         read_node "$node"
     done
     for cpu in 0 4; do
@@ -46,6 +48,7 @@ snapshot() {
         for name in scaling_governor scaling_cur_freq scaling_min_freq \
             scaling_max_freq cpuinfo_min_freq cpuinfo_max_freq \
             schedutil/up_rate_limit_us schedutil/down_rate_limit_us \
+            energy_step/up_rate_limit_us energy_step/down_rate_limit_us \
             stats/time_in_state; do
             read_node "$policy/$name"
         done
@@ -58,6 +61,8 @@ snapshot() {
         /dev/cpuctl/*/cpu.ui_hint_prefer_idle \
         /sys/class/thermal/thermal_zone*/type \
         /sys/class/thermal/thermal_zone*/temp \
+        /sys/block/zram*/comp_algorithm \
+        /sys/block/zram*/io_stat \
         /sys/block/zram*/mm_stat \
         /sys/class/devfreq/*/name \
         /sys/class/devfreq/*/governor \
@@ -90,7 +95,7 @@ uname -r
 printf '\n[cgroup mounts]\n'
 awk '$3 == "cgroup" || $3 == "cgroup2" { print }' /proc/mounts
 for prop in ro.product.device ro.build.version.release ro.build.version.sdk \
-    ro.build.display.id; do
+    ro.build.display.id init.svc.lmkd ro.lmk.use_psi; do
     printf '%s=' "$prop"
     getprop "$prop"
 done

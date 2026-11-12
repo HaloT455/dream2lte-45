@@ -28,6 +28,9 @@ At up to 25% of the policy capacity limit, the governor requests enough
 capacity for the observed load. Between 25% and 75% it gradually adds the
 boost from utilization headroom and the power model. At 75% and above it
 applies the full boost within the policy's frequency limits.
+I/O wakes that follow a gap longer than a scheduler tick start at the
+policy minimum. The shared policy also expires the old I/O boost of an
+idle peer. Closely spaced I/O wakes can still build boost.
 The same calculation feeds legacy EAS's capacity prediction. A sequence-counted
 snapshot contains only the immutable boot-time energy-table pointer and scalar
 policy values, never a pointer to an allocation freed when switching governor.
