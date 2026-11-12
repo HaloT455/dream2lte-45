@@ -20,6 +20,8 @@
  *
  */
 
+#include <linux/capability.h>
+#include <linux/pid.h>
 #include <mali_kbase.h>
 #include <mali_kbase_config_defaults.h>
 #include <mali_midg_regmap.h>
@@ -2007,6 +2009,98 @@ end:
  */
 static DEVICE_ATTR(core_mask, S_IRUGO | S_IWUSR, show_core_mask, set_core_mask);
 
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+static bool halo_probe_available(struct kbase_device *kbdev)
+{
+	const struct mali_base_gpu_coherent_group_info *groups =
+		&kbdev->gpu_props.props.coherency_info;
+	u64 compute = kbdev->pm.debug_core_mask[2];
+	u64 graphics = kbdev->pm.debug_core_mask[0];
+
+	lockdep_assert_held(&kbdev->hwaccess_lock);
+	return (kbdev->gpu_props.props.raw_props.js_present & BIT(2)) &&
+		(kbdev->gpu_props.props.raw_props.js_features[2] &
+		 JS_FEATURE_COMPUTE_JOB) &&
+		graphics == kbdev->pm.debug_core_mask[1] &&
+		hweight64(graphics) == 15 && hweight64(compute) == 5 &&
+		!(compute & graphics) &&
+		(compute | graphics) == kbdev->gpu_props.props.raw_props.shader_present &&
+		(kbdev->gpu_props.num_core_groups <= 1 ||
+		 (compute & groups->group[1].core_mask) == compute);
+}
+
+static ssize_t halo_probe_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kbase_device *kbdev = to_kbase_device(dev);
+	unsigned long flags;
+	u64 generation, js2, other, affinity;
+	pid_t pid;
+
+	if (!kbdev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+	pid = pid_nr(kbdev->halo_probe.tgid);
+	generation = kbdev->halo_probe.generation;
+	js2 = kbdev->halo_probe.js2_jobs;
+	other = kbdev->halo_probe.other_jobs;
+	affinity = kbdev->halo_probe.affinity;
+	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+
+	return scnprintf(buf, PAGE_SIZE, "%d %llu %llu %llu 0x%llx\n",
+			 pid, generation, js2, other, affinity);
+}
+
+static ssize_t halo_probe_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct kbase_device *kbdev = to_kbase_device(dev);
+	struct pid *tgid = NULL, *old;
+	struct task_struct *task;
+	unsigned long flags;
+	int pid, ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (!kbdev)
+		return -ENODEV;
+	ret = kstrtoint(buf, 10, &pid);
+	if (ret || pid < 0)
+		return -EINVAL;
+	if (pid) {
+		tgid = find_get_pid(pid);
+		task = get_pid_task(tgid, PIDTYPE_PID);
+		if (!task || task_tgid(task) != tgid) {
+			if (task)
+				put_task_struct(task);
+			put_pid(tgid);
+			return -ESRCH;
+		}
+		put_task_struct(task);
+	}
+
+	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+	if (tgid && !halo_probe_available(kbdev)) {
+		spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+		put_pid(tgid);
+		return -EOPNOTSUPP;
+	}
+	old = kbdev->halo_probe.tgid;
+	kbdev->halo_probe.tgid = tgid;
+	kbdev->halo_probe.generation++;
+	kbdev->halo_probe.js2_jobs = 0;
+	kbdev->halo_probe.other_jobs = 0;
+	kbdev->halo_probe.affinity = 0;
+	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+	put_pid(old);
+	return count;
+}
+
+static DEVICE_ATTR(halo_probe, 0600, halo_probe_show, halo_probe_store);
+#endif /* CONFIG_MALI_HALO_NPU_PARTITION */
+
 /**
  * set_soft_job_timeout - Store callback for the soft_job_timeout sysfs
  * file.
@@ -3966,6 +4060,9 @@ static struct attribute *kbase_attrs[] = {
 	&dev_attr_js_scheduling_period.attr,
 	&dev_attr_power_policy.attr,
 	&dev_attr_core_mask.attr,
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	&dev_attr_halo_probe.attr,
+#endif
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	&dev_attr_mem_pool_size.attr,
 	&dev_attr_mem_pool_max_size.attr,
@@ -4011,6 +4108,19 @@ static int kbase_platform_device_remove(struct platform_device *pdev)
 
 	if (kbdev->inited_subsys & inited_sysfs_group) {
 		sysfs_remove_group(&kbdev->dev->kobj, &kbase_attr_group);
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+		{
+			struct pid *tgid;
+			unsigned long flags;
+
+			spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+			tgid = kbdev->halo_probe.tgid;
+			kbdev->halo_probe.tgid = NULL;
+			kbdev->halo_probe.generation++;
+			spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+			put_pid(tgid);
+		}
+#endif
 		kbdev->inited_subsys &= ~inited_sysfs_group;
 	}
 

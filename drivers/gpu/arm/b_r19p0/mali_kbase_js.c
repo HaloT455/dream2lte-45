@@ -2034,11 +2034,34 @@ bool kbase_js_is_atom_valid(struct kbase_device *kbdev,
 	return true;
 }
 
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+static bool kbase_halo_probe_uses_js2(struct kbase_device *kbdev,
+				     struct kbase_jd_atom *katom)
+{
+	base_jd_core_req req = katom->core_req;
+	unsigned int group = kbdev->gpu_props.num_core_groups > 1 ? 1 : 0;
+
+	if (!katom->kctx->halo_probe_generation ||
+	    !(req & (BASE_JD_REQ_ONLY_COMPUTE | BASE_JD_REQ_CS)) ||
+	    (req & (BASE_JD_REQ_FS | BASE_JD_REQ_T | BASE_JD_REQ_V |
+		    BASE_JD_REQ_SOFT_JOB)))
+		return false;
+
+	return !(req & BASE_JD_REQ_SPECIFIC_COHERENT_GROUP) ||
+	       katom->device_nr == group;
+}
+#endif
+
 static int kbase_js_get_slot(struct kbase_device *kbdev,
 				struct kbase_jd_atom *katom)
 {
 	if (katom->core_req & BASE_JD_REQ_FS)
 		return 0;
+
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	if (kbase_halo_probe_uses_js2(kbdev, katom))
+		return 2;
+#endif
 
 	if (katom->core_req & BASE_JD_REQ_ONLY_COMPUTE) {
 		if (katom->device_nr == 1 &&

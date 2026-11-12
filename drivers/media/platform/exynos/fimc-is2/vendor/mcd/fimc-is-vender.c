@@ -1812,6 +1812,12 @@ int fimc_is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 		}
 		device->group_3aa.intent_ctl.captureIntent = captureIntent;
 		device->group_3aa.intent_ctl.vendor_captureCount = captureCount;
+#ifdef CONFIG_CAMERA_DREAM2
+		if (captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE ||
+		    (captureIntent >= AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_SINGLE &&
+		     captureIntent < AA_CAPTURE_INTENT_STILL_CAPTURE_CANCEL))
+			fimc_is_camera_boost(false);
+#endif
 		minfo("[VENDER] s_ctrl intent(%d) count(%d)\n", device, captureIntent, captureCount);
 		break;
 	case V4L2_CID_IS_CAPTURE_EXPOSURETIME:

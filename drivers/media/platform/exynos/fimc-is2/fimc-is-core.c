@@ -1445,6 +1445,9 @@ p_err1:
 
 static int fimc_is_remove(struct platform_device *pdev)
 {
+#ifdef CONFIG_CAMERA_DREAM2
+	fimc_is_camera_boost_stop();
+#endif
 	return 0;
 }
 

@@ -143,6 +143,10 @@ struct fimc_is_resourcemgr {
 int fimc_is_resourcemgr_probe(struct fimc_is_resourcemgr *resourcemgr, void *private_data);
 int fimc_is_resource_open(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type, void **device);
 int fimc_is_resource_get(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type);
+#ifdef CONFIG_CAMERA_DREAM2
+void fimc_is_camera_boost(bool opening);
+void fimc_is_camera_boost_stop(void);
+#endif
 int fimc_is_resource_put(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type);
 int fimc_is_resource_count(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type);
 int fimc_is_resource_ioctl(struct fimc_is_resourcemgr *resourcemgr, struct v4l2_control *ctrl);

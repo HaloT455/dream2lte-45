@@ -4,8 +4,11 @@ on:
   push:
     branches:
       - agent/v12r5l-mglru-runtime-diagnostics
+      - agent/v12r5t-halo-zram-probe
+      - agent/v12r5t-halo-range-test
     paths:
       - 'tools/MGLRUDiagApp/**'
+      - 'scripts/test_halo_zstd_compute.py'
       - '.github/workflows/build-mglru-diag-apk.yml'
   workflow_dispatch:
 
@@ -21,6 +24,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Validate compute shader and ZSTD frames
+        env:
+          EGL_PLATFORM: surfaceless
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libzstd1
+          python3 scripts/test_halo_zstd_compute.py
 
       - name: Verify Android SDK
         shell: bash
@@ -49,11 +61,11 @@ jobs:
       - name: Rename APK
         run: |
           cp tools/MGLRUDiagApp/app/build/outputs/apk/debug/app-debug.apk \
-             MGLRU-Diag-V12R5L.apk
+             MGLRU-Diag-WIFI-HALO-TEST.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MGLRU-Diag-V12R5L-${{ github.sha }}
-          path: MGLRU-Diag-V12R5L.apk
+          name: MGLRU-Diag-WIFI-HALO-TEST-${{ github.sha }}
+          path: MGLRU-Diag-WIFI-HALO-TEST.apk
           if-no-files-found: error

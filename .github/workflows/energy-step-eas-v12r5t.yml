@@ -1,10 +1,10 @@
-name: Build V12R5T ESG2 I/O wait test
+name: Build V12R5T ESG2 Wi-Fi, HALO JS2 and camera test
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - agent/v12r5t-esg2-iowait-test
+      - agent/v12r5t-halo-range-test
 
 permissions:
   contents: read
@@ -75,12 +75,12 @@ jobs:
             scripts/config --file "$OUT/.config" \
               --disable ALWAYS_PERMISSIVE \
               --disable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-IOWAIT-KSU32590-Enf"
+              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-WIFI-HALO-KSU32590-Enf"
           else
             scripts/config --file "$OUT/.config" \
               --enable ALWAYS_PERMISSIVE \
               --enable SECURITY_SELINUX_DEVELOP \
-              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-IOWAIT-KSU32590-Perm"
+              --set-str LOCALVERSION "-Alice-V12R5T-ESG2-WIFI-HALO-KSU32590-Perm"
           fi
           scripts/config --file "$OUT/.config" \
             --disable LOCALVERSION_AUTO \
@@ -121,6 +121,8 @@ jobs:
           grep -q '^CONFIG_NR_LRU_GENS=7$' "$OUT/.config"
           grep -q '^CONFIG_TIERS_PER_GEN=4$' "$OUT/.config"
           grep -q '^CONFIG_MALI_HALO_NPU_PARTITION=y$' "$OUT/.config"
+          grep -q '^CONFIG_BCM4361=y$' "$OUT/.config"
+          grep -q '^CONFIG_CAMERA_DREAM2=y$' "$OUT/.config"
           grep -q 'static ssize_t lru_gen_enabled_store' mm/vmscan.c
           grep -q '__ATTR(enabled, 0644, lru_gen_enabled_show, lru_gen_enabled_store)' mm/vmscan.c
           grep -q 'sysfs_create_group(mm_kobj, &lru_gen_attr_group)' mm/vmscan.c
@@ -206,7 +208,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5t-esg2-iowait-build-log-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-esg2-wifi-halo-build-log-${{ matrix.variant }}-${{ github.sha }}
           path: build-${{ matrix.variant }}.log
           if-no-files-found: error
 
@@ -258,6 +260,9 @@ jobs:
           # The config check plus this embedded log string proves the partition
           # code was compiled into the final Image without relying on a static symbol.
           check_image_string 'HALO NPU: Mali partition active'
+          check_image_string halo_probe
+          check_image_string station_band
+          check_map_symbol fimc_is_camera_boost
           if strings -a "$OUT/arch/arm64/boot/Image" | grep -q 'simple_lmk:'; then
             echo "::error::SimpleLMK must not be linked in LMKD+PSI builds"
             exit 1
@@ -275,9 +280,9 @@ jobs:
             grep -q " $sym$" "$OUT/System.map"
           done
           if [ "${{ matrix.variant }}" = "enforcing" ]; then
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-IOWAIT-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-WIFI-HALO-KSU32590-Enf' "$OUT/arch/arm64/boot/Image"
           else
-            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-IOWAIT-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
+            grep -a -q 'Linux version 4.4.302-Alice-V12R5T-ESG2-WIFI-HALO-KSU32590-Perm' "$OUT/arch/arm64/boot/Image"
           fi
 
       - name: Package output
@@ -296,6 +301,6 @@ jobs:
       - name: Upload ${{ matrix.variant }} kernel
         uses: actions/upload-artifact@v4
         with:
-          name: dream2lte-v12r5t-esg2-iowait-${{ matrix.variant }}-${{ github.sha }}
+          name: dream2lte-v12r5t-esg2-wifi-halo-${{ matrix.variant }}-${{ github.sha }}
           path: output-${{ matrix.variant }}/
           if-no-files-found: error

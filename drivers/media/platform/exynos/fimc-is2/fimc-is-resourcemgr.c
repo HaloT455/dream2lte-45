@@ -85,6 +85,44 @@ struct pm_qos_request exynos_isp_qos_cpu_online_min;
 #define C1MAX_QOS_DEL() pm_qos_remove_request(&exynos_isp_qos_cluster1_max)
 #define C1MAX_QOS_UPDATE(freq) pm_qos_update_request(&exynos_isp_qos_cluster1_max, freq * 1000)
 
+#ifdef CONFIG_CAMERA_DREAM2
+/* The little-cluster floor matches the Dream2 touch booster OPP. */
+#define CAMERA_BOOST_KHZ	832000
+#define CAMERA_OPEN_BOOST_US	300000
+#define CAMERA_SHOT_BOOST_US	150000
+
+static DEFINE_MUTEX(camera_boost_lock);
+static struct pm_qos_request camera_boost_qos;
+
+void fimc_is_camera_boost(bool opening)
+{
+	mutex_lock(&camera_boost_lock);
+	if (pm_qos_request_active(&camera_boost_qos)) {
+		cancel_delayed_work_sync(&camera_boost_qos.work);
+	} else if (opening) {
+		pm_qos_add_request(&camera_boost_qos, PM_QOS_CLUSTER0_FREQ_MIN,
+				   PM_QOS_DEFAULT_VALUE);
+	} else {
+		goto unlock;
+	}
+	pm_qos_update_request_timeout(&camera_boost_qos, CAMERA_BOOST_KHZ,
+				      opening ? CAMERA_OPEN_BOOST_US :
+						CAMERA_SHOT_BOOST_US);
+unlock:
+	mutex_unlock(&camera_boost_lock);
+}
+
+void fimc_is_camera_boost_stop(void)
+{
+	mutex_lock(&camera_boost_lock);
+	if (pm_qos_request_active(&camera_boost_qos)) {
+		cancel_delayed_work_sync(&camera_boost_qos.work);
+		pm_qos_remove_request(&camera_boost_qos);
+	}
+	mutex_unlock(&camera_boost_lock);
+}
+#endif /* CONFIG_CAMERA_DREAM2 */
+
 extern struct fimc_is_sysfs_debug sysfs_debug;
 extern int fimc_is_sensor_runtime_suspend(struct device *dev);
 extern int fimc_is_sensor_runtime_resume(struct device *dev);
@@ -960,6 +998,9 @@ int fimc_is_resource_get(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type)
 	if (rsccount == 0) {
 		pm_stay_awake(&core->pdev->dev);
 
+#ifdef CONFIG_CAMERA_DREAM2
+		fimc_is_camera_boost(true);
+#endif
 		resourcemgr->cluster0 = 0;
 		resourcemgr->cluster1 = 0;
 
@@ -1286,6 +1327,9 @@ int fimc_is_resource_put(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type)
 	if (atomic_read(&core->rsccount) == 1) {
 		u32 current_min, current_max;
 
+#ifdef CONFIG_CAMERA_DREAM2
+		fimc_is_camera_boost_stop();
+#endif
 		current_min = (resourcemgr->cluster0 & CLUSTER_MIN_MASK) >> CLUSTER_MIN_SHIFT;
 		current_max = (resourcemgr->cluster0 & CLUSTER_MAX_MASK) >> CLUSTER_MAX_SHIFT;
 		if (current_min) {

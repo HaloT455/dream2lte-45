@@ -10,16 +10,21 @@ android {
         applicationId "com.halo.mglrudiag"
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName "1.0-L"
+        versionCode 2
+        versionName "1.2-HALO-JS2"
     }
 
     buildTypes {
         debug {
+            applicationIdSuffix ".halorange"
             debuggable true
         }
         release {
             minifyEnabled false
         }
     }
+}
+
+dependencies {
+    implementation 'com.github.luben:zstd-jni:1.5.7-12@aar'
 }

@@ -1599,6 +1599,16 @@ struct kbase_device {
 #endif	/* CONFIG_MALI_NO_MALI */
 
 	struct kbase_pm_device_data pm;
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	/* Accessed under hwaccess_lock. */
+	struct {
+		struct pid *tgid;
+		u64 generation;
+		u64 js2_jobs;
+		u64 other_jobs;
+		u64 affinity;
+	} halo_probe;
+#endif
 	struct kbasep_js_device_data js_data;
 	struct kbase_mem_pool_group mem_pools;
 	struct kbasep_mem_device memdev;
@@ -2239,6 +2249,10 @@ struct kbase_context {
 	wait_queue_head_t event_queue;
 	pid_t tgid;
 	pid_t pid;
+#ifdef CONFIG_MALI_HALO_NPU_PARTITION
+	/* Set at context creation so a queued job keeps its slot. */
+	u64 halo_probe_generation;
+#endif
 
 	struct kbase_jd_context jctx;
 	atomic_t used_pages;

@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="MGLRU Diag"
+        android:label="MGLRU Diag JS2"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
@@ -14,6 +14,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".HaloProbeActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:hardwareAccelerated="false"
+            android:launchMode="singleTop"
+            android:process=":halo_probe" />
 
         <receiver
             android:name=".BootReceiver"

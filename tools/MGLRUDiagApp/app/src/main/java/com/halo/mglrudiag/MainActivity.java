@@ -1,6 +1,7 @@
 package com.halo.mglrudiag;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Environment;
 import android.graphics.Color;
@@ -8,6 +9,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,6 +26,13 @@ import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends Activity {
     private TextView status;
+    private TextView cpuStatus;
+    private TextView gpuStatus;
+    private TextView haloStatus;
+    private TextView wifiStatus;
+    private Button wifiRange;
+    private Button wifiAuto;
+    private int wifiUpdates;
     private Button startButton;
     private Button stopButton;
 
@@ -37,9 +46,8 @@ public class MainActivity extends Activity {
         if (active != null) {
             status.setText("Phát hiện phiên log chưa kết thúc. Nếu máy vừa reboot, bấm KẾT THÚC & XUẤT LOG.");
             capturePostBoot(active);
-        } else {
-            updateRuntimeStatus();
         }
+        updateRuntimeStatus();
     }
 
     private int dp(int v) {
@@ -58,6 +66,30 @@ public class MainActivity extends Activity {
         title.setTextColor(Color.BLACK);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        cpuStatus = addHardwareRow(root, "CPU");
+        gpuStatus = addHardwareRow(root, "GPU");
+        haloStatus = addHardwareRow(root, "NPU ảo HALO");
+        wifiStatus = addHardwareRow(root, "Wi‑Fi");
+
+        LinearLayout bands = new LinearLayout(this);
+        wifiRange = new Button(this);
+        wifiRange.setText("Ở xa · 2,4 GHz");
+        wifiRange.setOnClickListener(v -> setWifiBand(2));
+        bands.addView(wifiRange, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        wifiAuto = new Button(this);
+        wifiAuto.setText("Tự động");
+        wifiAuto.setOnClickListener(v -> setWifiBand(0));
+        bands.addView(wifiAuto, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        root.addView(bands);
+
+        Button probeButton = new Button(this);
+        probeButton.setText("Thử nén trên HALO JS2");
+        probeButton.setOnClickListener(v -> startActivity(new Intent(this, HaloProbeActivity.class)));
+        root.addView(probeButton, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         status = new TextView(this);
@@ -87,7 +119,46 @@ public class MainActivity extends Activity {
         root.addView(stopButton, stopLp);
         stopButton.setOnClickListener(v -> stopAndExport());
 
-        setContentView(root);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(root);
+        setContentView(scroll);
+    }
+
+    private TextView addHardwareRow(LinearLayout root, String name) {
+        TextView row = new TextView(this);
+        row.setText(name + " · Đang đọc");
+        row.setTextSize(15f);
+        row.setTextColor(Color.DKGRAY);
+        row.setPadding(0, dp(6), 0, dp(6));
+        root.addView(row, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private void setWifiBand(int band) {
+        wifiUpdates++;
+        wifiRange.setEnabled(false);
+        wifiAuto.setEnabled(false);
+        wifiStatus.setText("Wi‑Fi · Đang đổi băng tần");
+        new Thread(() -> {
+            String node = HardwareStatus.STATION_BAND;
+            RootUtil.Result result = RootUtil.execRoot(
+                    "echo " + band + " > " + node
+                    + " && (cat " + node + " 2>/dev/null || true)");
+            runOnUiThread(() -> {
+                if (isDestroyed())
+                    return;
+                wifiRange.setEnabled(true);
+                wifiAuto.setEnabled(true);
+                if (result.code != 0)
+                    wifiStatus.setText("Wi‑Fi · Không đổi được băng tần\n" + result.output.trim());
+                else if (result.output.trim().isEmpty())
+                    wifiStatus.setText("Wi‑Fi · Đã gửi chế độ, chờ kết nối lại");
+                else
+                    wifiStatus.setText(HardwareStatus.wifiBand(result.output.trim()));
+            });
+        }, "wifi-band").start();
     }
 
     private void refreshState() {
@@ -97,16 +168,26 @@ public class MainActivity extends Activity {
     }
 
     private void updateRuntimeStatus() {
+        int wifiUpdate = wifiUpdates;
         new Thread(() -> {
             RootUtil.Result result = RootUtil.execRoot(
                     "K=/sys/kernel/mm/lru_gen; " +
                     "echo enabled=$(cat $K/enabled 2>/dev/null); " +
                     "echo scan_around=$(cat $K/scan_around 2>/dev/null); " +
-                    "echo diag=$(cat $K/diag 2>/dev/null)");
+                    "echo diag=$(cat $K/diag 2>/dev/null); " + HardwareStatus.COMMAND);
+            int separator = result.output.indexOf(HardwareStatus.MARKER);
+            HardwareStatus hardware = new HardwareStatus(separator < 0 ? ""
+                    : result.output.substring(separator + HardwareStatus.MARKER.length()));
+            String runtime = separator < 0 ? result.output : result.output.substring(0, separator);
             runOnUiThread(() -> {
+                cpuStatus.setText(hardware.cpu);
+                gpuStatus.setText(hardware.gpu);
+                haloStatus.setText(hardware.halo);
+                if (wifiUpdate == wifiUpdates && wifiRange.isEnabled())
+                    wifiStatus.setText(hardware.wifi);
                 if (RootUtil.readActiveSession(this) == null) {
                     if (result.code == 0)
-                        status.setText("Sẵn sàng\n" + result.output.trim());
+                        status.setText("Sẵn sàng\n" + runtime.trim());
                     else
                         status.setText("Cần cấp quyền root KernelSU cho APK.");
                 }

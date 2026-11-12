@@ -23,8 +23,10 @@
  *
  * $Id$
  */
+#include <linux/capability.h>
 #include <linux/kobject.h>
 #include <linux/proc_fs.h>
+#include <linux/rtnetlink.h>
 #include <linux/sysfs.h>
 #include <osl.h>
 #include <dhd.h>
@@ -35,6 +37,7 @@
 #endif	/* DHD_ADPS_BAM_EXPORT && WL_BAM */
 #ifdef WL_CFG80211
 #include <wl_cfg80211.h>
+#include <wldev_common.h>
 #endif /* WL_CFG80211 */
 
 #ifdef SHOW_LOGTRACE
@@ -1589,8 +1592,84 @@ __ATTR(dump_in_progress, 0660, show_dhd_dump_in_progress, set_dhd_dump_in_progre
 #endif /* DHD_FILE_DUMP_EVENT */
 #endif /* WL_CFG80211 */
 
+#ifdef WL_CFG80211
+/* Use the same firmware operations as Android's band commands. */
+static int dhd_station_band(struct dhd_info *dhd, uint *band, bool set)
+{
+	struct net_device *ndev;
+	s32 fw_band;
+	int ret = -ENETDOWN;
+
+	if (!rtnl_trylock())
+		return -EAGAIN;
+
+	if (!dhd->iflist[0] || !dhd->pub.up || dhd->pub.busstate != DHD_BUS_DATA)
+		goto unlock;
+	ndev = dhd->iflist[0]->net;
+	if (!ndev || !netif_running(ndev) || !ndev->ieee80211_ptr)
+		goto unlock;
+	if (ndev->ieee80211_ptr->iftype != NL80211_IFTYPE_STATION ||
+	    (set && wl_cfg80211_is_concurrent_mode(ndev))) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	DHD_OS_WAKE_LOCK(&dhd->pub);
+	if (set) {
+		ret = wl_cfg80211_set_if_band(ndev, *band);
+	} else {
+		ret = wldev_iovar_getint(ndev, "if_band", &fw_band);
+		if (ret == BCME_UNSUPPORTED)
+			ret = wldev_get_band(ndev, band);
+		else if (!ret)
+			*band = fw_band;
+	}
+	DHD_OS_WAKE_UNLOCK(&dhd->pub);
+	if (ret)
+		ret = ret == BCME_UNSUPPORTED ? -EOPNOTSUPP : -EIO;
+unlock:
+	rtnl_unlock();
+	return ret;
+}
+
+static ssize_t show_station_band(struct dhd_info *dhd, char *buf)
+{
+	uint band;
+	int ret = dhd_station_band(dhd, &band, false);
+
+	if (ret)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%u\n", band);
+}
+
+static ssize_t set_station_band(struct dhd_info *dhd, const char *buf,
+				size_t count)
+{
+	uint band;
+	int ret;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+	ret = kstrtouint(buf, 10, &band);
+	if (ret)
+		return ret;
+	if (band != WLC_BAND_AUTO && band != WLC_BAND_2G)
+		return -EINVAL;
+	ret = dhd_station_band(dhd, &band, true);
+	if (ret)
+		return ret;
+	return count;
+}
+
+static struct dhd_attr dhd_attr_station_band =
+__ATTR(station_band, 0600, show_station_band, set_station_band);
+#endif /* WL_CFG80211 */
+
 /* Attribute object that gets registered with "wifi" kobject tree */
 static struct attribute *default_file_attrs[] = {
+#ifdef WL_CFG80211
+	&dhd_attr_station_band.attr,
+#endif
 #ifdef DHD_MAC_ADDR_EXPORT
 	&dhd_attr_macaddr.attr,
 #endif /* DHD_MAC_ADDR_EXPORT */
