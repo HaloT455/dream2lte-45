@@ -4,7 +4,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="MGLRU Diag JS2"
+        android:label="HALO Diag Log"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
@@ -26,7 +26,7 @@
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />

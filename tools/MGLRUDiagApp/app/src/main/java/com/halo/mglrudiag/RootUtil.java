@@ -52,7 +52,7 @@ final class RootUtil {
         marker(context).delete();
     }
 
-    static File ensureLoggerScript(Context context) throws IOException {
+    static synchronized File ensureLoggerScript(Context context) throws IOException {
         File outFile = new File(context.getFilesDir(), "mglru_logger.sh");
         try (InputStream in = context.getAssets().open("logger.sh");
              OutputStream out = new FileOutputStream(outFile, false)) {
@@ -70,7 +70,7 @@ final class RootUtil {
         return "'" + value.replace("'", "'\\''") + "'";
     }
 
-    static Result execRoot(String command) {
+    static synchronized Result execRoot(String command) {
         StringBuilder output = new StringBuilder();
         try {
             Process p = new ProcessBuilder("su", "-c", command)

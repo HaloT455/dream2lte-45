@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Environment;
+import android.util.Log;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
@@ -102,7 +103,7 @@ public class MainActivity extends Activity {
         root.addView(status, statusLp);
 
         startButton = new Button(this);
-        startButton.setText("BẮT ĐẦU");
+        startButton.setText("BẮT ĐẦU GHI LOG");
         startButton.setTextSize(20f);
         startButton.setMinHeight(dp(72));
         startButton.setOnClickListener(v -> startSession());
@@ -146,6 +147,9 @@ public class MainActivity extends Activity {
             RootUtil.Result result = RootUtil.execRoot(
                     "echo " + band + " > " + node
                     + " && (cat " + node + " 2>/dev/null || true)");
+            String readback = result.output.trim();
+            Log.i("HaloWifiBand", "requested=" + band + " status=" + result.code
+                    + " readback=" + (readback.matches("[012]") ? readback : "unknown"));
             runOnUiThread(() -> {
                 if (isDestroyed())
                     return;
@@ -208,7 +212,7 @@ public class MainActivity extends Activity {
     private void startSession() {
         startButton.setEnabled(false);
         stopButton.setEnabled(false);
-        status.setText("Đang khởi động logger và bật MGLRU...");
+        status.setText("Đang bắt đầu ghi log...");
 
         new Thread(() -> {
             try {
@@ -230,7 +234,7 @@ public class MainActivity extends Activity {
                 }
 
                 runOnUiThread(() -> {
-                    status.setText("ĐANG GHI LOG\nMGLRU đã bật. Có thể test app ngay.");
+                    status.setText("ĐANG GHI LOG\nCó thể thử Wi‑Fi, camera hoặc HALO JS2.");
                     refreshState();
                 });
             } catch (Exception e) {
@@ -263,18 +267,16 @@ public class MainActivity extends Activity {
 
         startButton.setEnabled(false);
         stopButton.setEnabled(false);
-        status.setText("Đang dừng MGLRU, gom crash log và đóng ZIP...");
+        status.setText("Đang dừng ghi log và đóng ZIP...");
 
         new Thread(() -> {
             try {
                 File script = RootUtil.ensureLoggerScript(this);
                 String stopCmd = "sh " + RootUtil.shQuote(script.getAbsolutePath()) +
                         " stop " + RootUtil.shQuote(sessionPath);
-                RootUtil.execRoot(stopCmd);
-
-                String postCmd = "sh " + RootUtil.shQuote(script.getAbsolutePath()) +
-                        " postboot " + RootUtil.shQuote(sessionPath);
-                RootUtil.execRoot(postCmd);
+                RootUtil.Result stop = RootUtil.execRoot(stopCmd);
+                if (stop.code != 0)
+                    throw new Exception("Dừng ghi log lỗi: " + stop.output.trim());
 
                 File session = new File(sessionPath);
                 File exportDir = new File(session.getParentFile().getParentFile(), "exports");
@@ -288,9 +290,9 @@ public class MainActivity extends Activity {
                 String downloadPath = Environment.getExternalStorageDirectory().getAbsolutePath()
                         + "/Download/" + zipName;
                 RootUtil.Result copy = RootUtil.execRoot(
-                        "mkdir -p /sdcard/Download; cp -f " + RootUtil.shQuote(zip.getAbsolutePath()) +
+                        "mkdir -p /sdcard/Download && cp -f " + RootUtil.shQuote(zip.getAbsolutePath()) +
                         " " + RootUtil.shQuote(downloadPath) +
-                        "; chmod 0644 " + RootUtil.shQuote(downloadPath) + "; sync");
+                        " && chmod 0644 " + RootUtil.shQuote(downloadPath));
 
                 RootUtil.clearActiveSession(this);
 
@@ -302,7 +304,6 @@ public class MainActivity extends Activity {
                     status.setText(message);
                     Toast.makeText(this, "MGLRU log đã được đóng gói", Toast.LENGTH_LONG).show();
                     refreshState();
-                    updateRuntimeStatus();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {

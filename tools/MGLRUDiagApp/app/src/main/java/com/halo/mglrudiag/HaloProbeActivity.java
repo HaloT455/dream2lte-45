@@ -2,6 +2,7 @@ package com.halo.mglrudiag;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -22,8 +23,10 @@ public final class HaloProbeActivity extends Activity {
             String message;
             try {
                 message = HaloCompressionProbe.run(this);
+                Log.i("HaloProbe", message.replace('\n', ' '));
             } catch (Exception | LinkageError e) {
                 message = "Thử nén GPU gặp lỗi\n" + e.getMessage();
+                Log.w("HaloProbe", e.toString());
             }
             String text = message;
             runOnUiThread(() -> {

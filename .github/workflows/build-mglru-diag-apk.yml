@@ -6,6 +6,7 @@ on:
       - agent/v12r5l-mglru-runtime-diagnostics
       - agent/v12r5t-halo-zram-probe
       - agent/v12r5t-halo-range-test
+      - agent/v12r5t-halo-readonly-logger
     paths:
       - 'tools/MGLRUDiagApp/**'
       - 'scripts/test_halo_zstd_compute.py'
@@ -33,6 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libzstd1
           python3 scripts/test_halo_zstd_compute.py
+          sh -n tools/MGLRUDiagApp/app/src/main/assets/logger.sh
 
       - name: Verify Android SDK
         shell: bash
@@ -61,11 +63,11 @@ jobs:
       - name: Rename APK
         run: |
           cp tools/MGLRUDiagApp/app/build/outputs/apk/debug/app-debug.apk \
-             MGLRU-Diag-WIFI-HALO-TEST.apk
+             MGLRU-Diag-JS2-Logger.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MGLRU-Diag-WIFI-HALO-TEST-${{ github.sha }}
-          path: MGLRU-Diag-WIFI-HALO-TEST.apk
+          name: MGLRU-Diag-JS2-Logger-${{ github.sha }}
+          path: MGLRU-Diag-JS2-Logger.apk
           if-no-files-found: error
