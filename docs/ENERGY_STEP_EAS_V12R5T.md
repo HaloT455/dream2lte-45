@@ -1,11 +1,28 @@
-# V12R5T ESG1: Energy Step and legacy EAS experiment
+# V12R5T ESG1 LZ4KD recovery test
 
-This branch starts at V12R5T commit
-`3ea6f1b4341c0bd9e0e020567fa334da4a1a24c3`. The supplied reference boot is
-`V12R5T-Enforcing-BOOT.img`, SHA-256
-`80c3f368ac934725aa1bae01529646c339ade3b88b656e4f98670ba71a850043`.
-It contains WALT, SchedTune, energy-aware scheduling and the legacy DT
-`sched-energy-costs` tables. Its default governor is schedutil.
+This kernel builds from ESG1 commit
+`f7f411468a27d812a6ea239e8143c1ae0526d14b`. Repack it with
+`V12R5T-ESG1-EnergyStep-EAS-Enforcing-TEST.img`, SHA-256
+`ecd162faf3bec9e9b9380b818e4abf2ac05ea2a30edc02967a16338c0f92d95b`.
+ESG1 uses WALT, SchedTune, Energy Step and legacy EAS.
+
+## Memory and accelerators
+
+The CPU compresses and decompresses ZRAM pages with LZ4KD. Its existing
+per-CPU stream, same-filled-page and full-page storage paths handle swap.
+This port uses the Huawei codec from the [HarmonyOS source
+import](https://github.com/tew080/android_kernel_ginkgo/commit/03c3cfeb904aea43991d4a828b2bc7621e934380).
+The adapter uses a bounded workspace and rejects malformed compressed pages.
+
+The kernel exposes PSI, memcg, swap accounting and pidfds for Android LMKD.
+The ROM starts and configures the daemon. Both kernel LMK implementations
+are disabled. The earlier watchdog log showed generation-list inconsistencies
+after enabling MGLRU. This build uses classic reclaim so runtime scripts
+cannot re-enable that path. The existing ZRAM CMA migration remains enabled.
+
+The Mali driver uses its normal shader masks and DVFS. The Exynos VPU retains
+its VS4L interface for compatible vision workloads. Dispatching an AI model
+to the VPU requires a userspace client that supplies a supported graph.
 
 ## Implementation and provenance
 
@@ -60,7 +77,7 @@ suite and the baseline integration checks. It then builds Image/DTB and checks
 the new governor/predictor symbols in System.map. CI output includes the exact
 config, map, build log and SHA-256 checksums. CI success is compilation evidence.
 
-Repack Image/DTB into the supplied reference boot with the existing
+Repack Image/DTB into the ESG1 reference boot with the existing
 `scripts/repack_boot_v0.py`; retain that original boot for comparison. Physical
 checks should establish both clusters' governor selection, driver-applied
 min/max, thermal behavior, display suspend/resume, camera, repeated app launch
@@ -72,6 +89,12 @@ Useful read-only checks after boot:
 
 ```sh
 uname -a
+getprop init.svc.lmkd
+getprop ro.lmk.use_psi
+getprop sys.boot.reason
+cat /proc/pressure/memory /proc/swaps /proc/sys/vm/swappiness
+cat /sys/block/zram0/comp_algorithm /sys/block/zram0/io_stat /sys/block/zram0/mm_stat
+cat /sys/bus/platform/devices/13900000.mali/core_mask
 cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
 cat /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor
 cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors

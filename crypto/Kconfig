@@ -1561,6 +1561,15 @@ config CRYPTO_LZ4HC
 	help
 	  This is the LZ4 high compression mode algorithm.
 
+config CRYPTO_LZ4KD
+	tristate "LZ4KD page compression"
+	depends on ARM64_4K_PAGES && !CPU_BIG_ENDIAN
+	select CRYPTO_ALGAPI
+	select LZ4KD_COMPRESS
+	select LZ4KD_DECOMPRESS
+	help
+	  Provide LZ4KD through the synchronous compression API for 4 KiB pages.
+
 comment "Random Number Generation"
 
 config CRYPTO_ANSI_CPRNG

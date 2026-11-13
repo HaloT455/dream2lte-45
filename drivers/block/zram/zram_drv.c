@@ -40,7 +40,8 @@ static DEFINE_IDR(zram_index_idr);
 static DEFINE_MUTEX(zram_index_mutex);
 
 static int zram_major;
-static const char *default_compressor = "lz4";
+static const char *default_compressor =
+	IS_ENABLED(CONFIG_ZRAM_DEF_COMP_LZ4KD) ? "lz4kd" : "lz4";
 
 /* Module params (documentation at end) */
 static unsigned int num_devices = 1;

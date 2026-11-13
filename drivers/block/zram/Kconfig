@@ -14,6 +14,13 @@ config ZRAM
 
 	  See Documentation/blockdev/zram.txt for more information.
 
+config ZRAM_DEF_COMP_LZ4KD
+	bool "Use LZ4KD as the default zram compressor"
+	depends on ZRAM && ARM64_4K_PAGES && !CPU_BIG_ENDIAN
+	select CRYPTO_LZ4KD
+	help
+	  Start new zram devices with LZ4KD selected on 4 KiB systems.
+
 config ZRAM_WRITEBACK
        bool "Write back incompressible page to backing device"
        depends on ZRAM

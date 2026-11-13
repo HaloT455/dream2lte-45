@@ -23,6 +23,9 @@ static const char * const backends[] = {
 #if IS_ENABLED(CONFIG_CRYPTO_LZ4)
 	"lz4",
 #endif
+#if IS_ENABLED(CONFIG_CRYPTO_LZ4KD)
+	"lz4kd",
+#endif
 #if IS_ENABLED(CONFIG_CRYPTO_DEFLATE)
 	"deflate",
 #endif
@@ -226,6 +229,7 @@ cleanup:
 	for_each_online_cpu(cpu)
 		__zcomp_cpu_notifier(comp, CPU_UP_CANCELED, cpu);
 	cpu_notifier_register_done();
+	free_percpu(comp->stream);
 	return -ENOMEM;
 }
 
