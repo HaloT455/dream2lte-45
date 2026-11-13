@@ -1,0 +1,136 @@
+#version 310 es
+precision highp int;
+
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer InputPages {
+    uint inputWords[];
+};
+layout(std430, binding = 1) buffer OutputBlocks {
+    uint outputWords[];
+};
+layout(std430, binding = 2) writeonly buffer BlockLengths {
+    uint lengths[];
+};
+
+const uint PAGE_BYTES = 4096u;
+const uint TILE_BYTES = 64u;
+const uint TILE_WORDS = TILE_BYTES / 4u;
+const uint TILES = PAGE_BYTES / TILE_BYTES;
+const uint PATTERN_BYTES = 8u;
+const uint LENGTH_MASK = 63u;
+shared bool repeated[TILES];
+
+void put_byte(uint base, inout uint pos, uint value)
+{
+    uint index = base + pos / 4u;
+    uint shift = (pos % 4u) * 8u;
+    if (shift == 0u)
+        outputWords[index] = value & 255u;
+    else
+        outputWords[index] |= (value & 255u) << shift;
+    ++pos;
+}
+
+void put_word(uint base, inout uint pos, uint word)
+{
+    uint index = base + pos / 4u;
+    uint shift = (pos % 4u) * 8u;
+    outputWords[index] = shift == 0u ? word :
+        outputWords[index] | (word << shift);
+    if (shift != 0u)
+        outputWords[index + 1u] = word >> (32u - shift);
+    pos += 4u;
+}
+
+uint length_bytes(uint value)
+{
+    return value >= LENGTH_MASK ? 1u + (value - LENGTH_MASK) / 255u : 0u;
+}
+
+void put_length(uint base, inout uint pos, uint value)
+{
+    if (value < LENGTH_MASK)
+        return;
+    uint remaining = value - LENGTH_MASK;
+    while (remaining >= 255u) {
+        put_byte(base, pos, 255u);
+        remaining -= 255u;
+    }
+    put_byte(base, pos, remaining);
+}
+
+bool put_sequence(uint base, inout uint pos, uint first, uint last, uint match)
+{
+    uint literals = last - first;
+    uint offset = match == 0u ? 0u : PATTERN_BYTES;
+    uint repeat_length = match == 0u ? 0u : match - 4u;
+    uint size = 3u + length_bytes(literals) + literals + length_bytes(repeat_length);
+    if (pos + size >= PAGE_BYTES)
+        return false;
+
+    uint tag = (min(literals, LENGTH_MASK) << 18u)
+        | (min(repeat_length, LENGTH_MASK) << 12u) | offset;
+    put_byte(base, pos, tag);
+    put_byte(base, pos, tag >> 8u);
+    put_byte(base, pos, tag >> 16u);
+    put_length(base, pos, literals);
+    for (uint word = first / 4u; word < last / 4u; ++word)
+        put_word(base, pos, inputWords[base + word]);
+    put_length(base, pos, repeat_length);
+    return true;
+}
+
+void main()
+{
+    uint page = gl_WorkGroupID.x;
+    uint base = page * (PAGE_BYTES / 4u);
+    uint tile = gl_LocalInvocationID.x;
+    uint first_word = base + tile * TILE_WORDS;
+    uint a = inputWords[first_word];
+    uint b = inputWords[first_word + 1u];
+    bool matches = true;
+    for (uint word = 2u; word < TILE_WORDS; word += 2u) {
+        if (inputWords[first_word + word] != a ||
+            inputWords[first_word + word + 1u] != b) {
+            matches = false;
+            break;
+        }
+    }
+    repeated[tile] = matches;
+    barrier();
+    if (tile != 0u)
+        return;
+
+    uint pos = 0u;
+    put_byte(base, pos, 0u);
+    uint first_literal = 0u;
+    for (uint first = 0u; first < TILES;) {
+        if (!repeated[first]) {
+            ++first;
+            continue;
+        }
+        uint word = base + first * TILE_WORDS;
+        uint end = first + 1u;
+        while (end < TILES && repeated[end]) {
+            uint next = base + end * TILE_WORDS;
+            if (inputWords[next] != inputWords[word] ||
+                inputWords[next + 1u] != inputWords[word + 1u])
+                break;
+            ++end;
+        }
+        uint match_start = first * TILE_BYTES + PATTERN_BYTES;
+        uint match_end = end * TILE_BYTES;
+        if (!put_sequence(base, pos, first_literal, match_start, match_end - match_start)) {
+            lengths[page] = 0u;
+            return;
+        }
+        first_literal = match_end;
+        first = end;
+    }
+
+    if (first_literal < PAGE_BYTES && !put_sequence(base, pos, first_literal, PAGE_BYTES, 0u)) {
+        lengths[page] = 0u;
+        return;
+    }
+    lengths[page] = pos;
+}

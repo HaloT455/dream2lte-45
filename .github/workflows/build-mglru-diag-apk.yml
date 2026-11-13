@@ -8,9 +8,14 @@ on:
       - agent/v12r5t-halo-range-test
       - agent/v12r5t-halo-readonly-logger
       - agent/v12r5t-halo-capture-test
+      - agent/v12r5t-lz4kd-halo-camera
     paths:
       - 'tools/MGLRUDiagApp/**'
-      - 'scripts/test_halo_zstd_compute.py'
+      - 'scripts/test_halo_lz4kd_compute.py'
+      - 'scripts/test_lz4kd_zram.py'
+      - 'lib/lz4kd/**'
+      - 'include/linux/lz4kd.h'
+      - 'crypto/lz4kd.c'
       - '.github/workflows/build-mglru-diag-apk.yml'
   workflow_dispatch:
 
@@ -27,14 +32,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Validate compute shader and ZSTD frames
+      - name: Validate compute shader and LZ4KD blocks
         env:
           EGL_PLATFORM: surfaceless
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libzstd1
-          python3 scripts/test_halo_zstd_compute.py
+          sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri
+          python3 scripts/test_halo_lz4kd_compute.py
           sh -n tools/MGLRUDiagApp/app/src/main/assets/logger.sh
 
       - name: Verify Android SDK
@@ -52,6 +57,12 @@ jobs:
           if [ ! -d "$SDKROOT/build-tools/35.0.0" ]; then
             yes | sdkmanager "build-tools;35.0.0"
           fi
+          if [ ! -d "$SDKROOT/ndk/27.2.12479018" ]; then
+            yes | sdkmanager "ndk;27.2.12479018"
+          fi
+          if [ ! -d "$SDKROOT/cmake/3.22.1" ]; then
+            yes | sdkmanager "cmake;3.22.1"
+          fi
 
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -64,11 +75,11 @@ jobs:
       - name: Rename APK
         run: |
           cp tools/MGLRUDiagApp/app/build/outputs/apk/debug/app-debug.apk \
-             HALO-Diag-JS2-TEST.apk
+             HALO-Diag-LZ4KD-TEST.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: HALO-Diag-JS2-TEST-${{ github.sha }}
-          path: HALO-Diag-JS2-TEST.apk
+          name: HALO-Diag-LZ4KD-TEST-${{ github.sha }}
+          path: HALO-Diag-LZ4KD-TEST.apk
           if-no-files-found: error

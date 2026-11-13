@@ -89,9 +89,19 @@ capture_state() {
         echo "===== MALI ====="
         read_node "$M/core_mask"
         read_node "$M/halo_probe"
+        echo "===== CAMERA VENDOR ====="
+        for f in /vendor/etc/alice-test7/camera-feature.xml \
+            /vendor/lib64/hw/camera.universal8895.so; do
+            [ ! -r "$f" ] || sha256sum "$f" 2>/dev/null
+        done
+        if [ -r /vendor/etc/alice-test7/camera-feature.xml ]; then
+            grep -E 'name="SUPPORT_(SCENE_OPTIMIZER|PHOTO_NIGHT)"' \
+                /vendor/etc/alice-test7/camera-feature.xml 2>/dev/null
+        fi
         echo "===== PROPS ====="
         for key in ro.build.version.release ro.build.version.sdk \
-            sys.boot_completed sys.boot.reason init.svc.lmkd ro.lmk.use_psi; do
+            ro.vendor.build.fingerprint sys.boot_completed sys.boot.reason \
+            init.svc.lmkd ro.lmk.use_psi; do
             printf '%s=%s\n' "$key" "$(getprop "$key" 2>/dev/null)"
         done
     } > "$OUT" 2>&1

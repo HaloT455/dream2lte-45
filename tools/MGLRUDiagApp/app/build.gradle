@@ -5,26 +5,33 @@ plugins {
 android {
     namespace 'com.halo.mglrudiag'
     compileSdk 35
+    ndkVersion '27.2.12479018'
 
     defaultConfig {
         applicationId "com.halo.mglrudiag"
         minSdk 26
         targetSdk 35
-        versionCode 3
-        versionName "1.4-HALO-JS2"
+        versionCode 4
+        versionName "1.5-HALO-LZ4KD"
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix ".halocapture"
+            applicationIdSuffix ".halolz4kd"
             debuggable true
         }
         release {
             minifyEnabled false
         }
     }
-}
-
-dependencies {
-    implementation 'com.github.luben:zstd-jni:1.5.7-12@aar'
 }

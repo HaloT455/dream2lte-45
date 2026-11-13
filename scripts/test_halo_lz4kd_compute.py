@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Run the Android compute shader with headless Mesa and decode each frame."""
+"""Run the Android compute shader with Mesa and decode using the kernel codec."""
 
 import ctypes as ct
 from pathlib import Path
 import random
 import struct
+import tempfile
+
+from test_lz4kd_zram import build_codec
 
 PAGE_BYTES = 4096
 SHADER = (Path(__file__).resolve().parents[1] /
-          "tools/MGLRUDiagApp/app/src/main/assets/zstd_pages.comp")
+          "tools/MGLRUDiagApp/app/src/main/assets/lz4kd_pages.comp")
 
 EGL_NONE = 0x3038
 GL_SHADER_STORAGE_BUFFER = 0x90D2
@@ -108,7 +111,7 @@ def main():
     noisy = rng.randbytes(PAGE_BYTES)
     pages = [noisy, bytes(PAGE_BYTES), b"\xff" * PAGE_BYTES,
              b"\xa5" * 64 + noisy[64:], noisy[:-64] + b"\x5a" * 64,
-             b"ABCD" * (PAGE_BYTES // 4)]
+             b"ABCD" * (PAGE_BYTES // 4), b"12345678" * (PAGE_BYTES // 8)]
     for rate in range(1, 8):
         for _ in range(12):
             tiles = [bytes([rng.randrange(256)]) * 64 if rng.randrange(8) < rate
@@ -116,20 +119,24 @@ def main():
             pages.append(b"".join(tiles))
     lengths, output = compute(pages)
 
-    zstd = ct.CDLL("libzstd.so.1")
-    size, ptr = ct.c_size_t, ct.c_void_p
-    decompress = function(zstd, "ZSTD_decompress", size, ptr, size, ptr, size)
-    dest = ct.create_string_buffer(PAGE_BYTES)
-    for index, (page, length) in enumerate(zip(pages, lengths)):
-        has_rle = any(page[i:i + 64] == bytes([page[i]]) * 64
-                      for i in range(0, PAGE_BYTES, 64))
-        assert (0 < length < PAGE_BYTES) if has_rle else length == 0, (index, length)
-        if length:
-            start = index * PAGE_BYTES
-            frame = output[start:start + length]
-            assert decompress(dest, PAGE_BYTES, frame, length) == PAGE_BYTES, index
-            assert dest.raw == page, index
-    print(f"ZSTD round-trip: {sum(bool(n) for n in lengths)} GPU frames, "
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        library = work / "codec.so"
+        build_codec(work, library)
+        codec = ct.CDLL(str(library))
+        ptr, size = ct.c_void_p, ct.c_uint
+        decompress = function(codec, "probe_decompress", ct.c_int, ptr, size, ptr, size)
+        dest = ct.create_string_buffer(PAGE_BYTES)
+        for index, (page, length) in enumerate(zip(pages, lengths)):
+            repeated_tile = any(page[i:i + 64] == page[i:i + 8] * 8
+                                for i in range(0, PAGE_BYTES, 64))
+            assert (0 < length < PAGE_BYTES) if repeated_tile else length == 0, (index, length)
+            if length:
+                start = index * PAGE_BYTES
+                block = output[start:start + length]
+                assert decompress(block, length, dest, PAGE_BYTES) == PAGE_BYTES, index
+                assert dest.raw == page, index
+    print(f"LZ4KD round-trip: {sum(bool(n) for n in lengths)} GPU blocks, "
           f"{sum(n == 0 for n in lengths)} CPU fallbacks")
 
 

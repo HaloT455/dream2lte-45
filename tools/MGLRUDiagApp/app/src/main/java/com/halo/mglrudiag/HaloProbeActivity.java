@@ -14,7 +14,7 @@ public final class HaloProbeActivity extends Activity {
         int padding = Math.round(24 * getResources().getDisplayMetrics().density);
         result.setPadding(padding, padding, padding, padding);
         result.setTextSize(17f);
-        result.setText("Đang thử nén ZSTD trên dữ liệu mẫu...");
+        result.setText("Đang thử nén LZ4KD trên dữ liệu mẫu...");
         ScrollView scroll = new ScrollView(this);
         scroll.addView(result);
         setContentView(scroll);

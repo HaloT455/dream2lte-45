@@ -10,8 +10,6 @@ import android.opengl.EGLSurface;
 import android.os.Process;
 import android.os.SystemClock;
 
-import com.github.luben.zstd.Zstd;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,7 +38,7 @@ final class HaloCompressionProbe {
             input.put(page);
         input.flip();
         String source;
-        try (InputStream shader = context.getAssets().open("zstd_pages.comp")) {
+        try (InputStream shader = context.getAssets().open("lz4kd_pages.comp")) {
             ByteArrayOutputStream sourceBytes = new ByteArrayOutputStream();
             byte[] bytes = new byte[4096];
             int read;
@@ -50,11 +48,11 @@ final class HaloCompressionProbe {
         }
 
         // Load the JNI codec before timing CPU compression.
-        Zstd.compress(pages[0], 1);
+        compressOnCpu(pages[0]);
         int cpuBytes = 0;
         long cpuStart = SystemClock.elapsedRealtimeNanos();
         for (byte[] page : pages)
-            cpuBytes += Zstd.compress(page, 1).length;
+            cpuBytes += compressOnCpu(page).length;
         double cpuMs = elapsedMs(cpuStart);
 
         try (ProbeContext egl = new ProbeContext()) {
@@ -106,7 +104,7 @@ final class HaloCompressionProbe {
                 byte[] frame;
                 if (size == 0) {
                     long start = SystemClock.elapsedRealtimeNanos();
-                    frame = Zstd.compress(pages[i], 1);
+                    frame = compressOnCpu(pages[i]);
                     fallbackMs += elapsedMs(start);
                 } else {
                     if (size < 0 || size >= PAGE_SIZE)
@@ -116,13 +114,13 @@ final class HaloCompressionProbe {
                     output.get(frame);
                     gpuPages++;
                 }
-                if (!Arrays.equals(pages[i], Zstd.decompress(frame, PAGE_SIZE)))
+                if (!Arrays.equals(pages[i], HaloLz4kd.decompress(frame)))
                     throw new IOException("Giải nén sai ở trang " + i);
                 hybridBytes += frame.length;
             }
 
             return String.format(Locale.ROOT,
-                    "%s\nJS2 · %d job · %d/5 shader trong affinity (0x%x)"
+                    "%s\nLZ4KD · JS2 · %d job · %d/5 shader trong affinity (0x%x)"
                     + "\n\nGiải nén khớp %d/%d trang 4 KiB\nGPU nén %d trang · CPU dự phòng %d trang"
                     + "\nGPU gồm tải và đọc %.2f ms · CPU dự phòng %.2f ms · CPU toàn bộ %.2f ms"
                     + "\nGPU + CPU %d byte · CPU toàn bộ %d byte",
@@ -130,6 +128,13 @@ final class HaloCompressionProbe {
                     PAGES, PAGES, gpuPages, PAGES - gpuPages,
                     gpuMs, fallbackMs, cpuMs, hybridBytes, cpuBytes);
         }
+    }
+
+    private static byte[] compressOnCpu(byte[] page) throws IOException {
+        byte[] block = HaloLz4kd.compress(page);
+        if (block == null)
+            throw new IOException("CPU không nén được trang LZ4KD mẫu.");
+        return block;
     }
 
     private static byte[][] samplePages() {
