@@ -51,18 +51,13 @@ jobs:
           test -d "$SDKROOT"
           export PATH="$SDKROOT/cmdline-tools/latest/bin:$SDKROOT/platform-tools:$PATH"
           sdkmanager --version
-          if [ ! -d "$SDKROOT/platforms/android-35" ]; then
-            yes | sdkmanager "platforms;android-35"
-          fi
-          if [ ! -d "$SDKROOT/build-tools/35.0.0" ]; then
-            yes | sdkmanager "build-tools;35.0.0"
-          fi
-          if [ ! -d "$SDKROOT/ndk/27.2.12479018" ]; then
-            yes | sdkmanager "ndk;27.2.12479018"
-          fi
-          if [ ! -d "$SDKROOT/cmake/3.22.1" ]; then
-            yes | sdkmanager "cmake;3.22.1"
-          fi
+          # sdkmanager may stop reading after it has installed the packages.
+          set +o pipefail
+          yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" \
+              "ndk;27.2.12479018" "cmake;3.22.1"
+          set -o pipefail
+          test -x "$SDKROOT/ndk/27.2.12479018/ndk-build"
+          test -x "$SDKROOT/cmake/3.22.1/bin/cmake"
 
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
