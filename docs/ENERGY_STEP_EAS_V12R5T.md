@@ -1,4 +1,4 @@
-# V12R5T ESG2 HALO JS2 and shutter test
+# V12R5T ESG2 LZ4KD, HALO JS2 and shutter test
 
 This branch builds on the ESG1 commit
 `f7f411468a27d812a6ea239e8143c1ae0526d14b`. The supplied reference boot is
@@ -43,10 +43,11 @@ as the boot default and also compiles schedutil for comparison.
 
 ## ZRAM and memory pressure
 
-ZRAM defaults to Zstandard level 1 with a workspace sized for page compression.
-The library and xxHash come from Linux 4.19.325 at
-`a67e7cdde7cc7984ae24c3c81a70dc1aa34424b1`. The adapter uses the synchronous
-compression API in this 4.4 kernel.
+ZRAM defaults to LZ4KD on the 4 KiB little-endian Dream2 kernel. The Huawei
+codec comes from the HarmonyOS source import at
+[`03c3cfe`](https://github.com/tew080/android_kernel_ginkgo/commit/03c3cfeb904aea43991d4a828b2bc7621e934380).
+The synchronous crypto adapter uses the existing per-CPU ZRAM workspace and
+allows incompressible pages to use the normal full-page storage path.
 
 The kernel provides memory cgroups, PSI triggers and pidfd syscalls for
 Android's LMKD service. Both kernel LMK drivers are disabled. The ROM's
@@ -72,8 +73,7 @@ classifies each compute atom at submission and routes compatible atoms to JS2.
 The app opens EGL and prepares the buffers before registering. It verifies
 that compute went to JS2 with a nonempty affinity inside the five reserved
 shaders, then checks the decompressed data. ZRAM system compression uses
-the CPU ZSTD backend. The probe uses synthetic pages and measures the CPU
-fallback for pages outside its GPU encoder's supported patterns.
+the CPU LZ4KD backend. The probe uses synthetic pages.
 
 ## Model limits
 

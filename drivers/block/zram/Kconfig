@@ -14,13 +14,30 @@ config ZRAM
 
 	  See Documentation/blockdev/zram.txt for more information.
 
+choice
+	prompt "Default zram compressor"
+	depends on ZRAM
+	default ZRAM_DEF_COMP_LZ4
+
+config ZRAM_DEF_COMP_LZ4
+	bool "LZ4"
+	select CRYPTO_LZ4
+
 config ZRAM_DEF_COMP_ZSTD
 	bool "Use Zstandard as the default zram compressor"
-	depends on ZRAM
 	select CRYPTO_ZSTD
 	help
 	  Start new zram devices with Zstandard selected. Userspace can
 	  select a different compressor before setting the disk size.
+
+config ZRAM_DEF_COMP_LZ4KD
+	bool "LZ4KD"
+	depends on ARM64_4K_PAGES && !CPU_BIG_ENDIAN
+	select CRYPTO_LZ4KD
+	help
+	  Start new zram devices with the LZ4KD compressor on 4 KiB systems.
+
+endchoice
 
 config ZRAM_WRITEBACK
        bool "Write back incompressible page to backing device"
