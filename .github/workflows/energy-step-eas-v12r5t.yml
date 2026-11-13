@@ -181,7 +181,7 @@ jobs:
           set -o pipefail
           OUT="out-${{ matrix.variant }}"
           make O="$OUT" -j"$(nproc)" kernel/sched/cpufreq_energy_step.o kernel/sched/fair.o \
-            mm/vmscan.o drivers/block/zram/zram_drv.o drivers/block/zram/zcomp.o \
+            mm/vmscan.o mm/rmap.o drivers/block/zram/zram_drv.o drivers/block/zram/zcomp.o \
             crypto/lz4kd.o lib/lz4kd/lz4kd_encode.o lib/lz4kd/lz4kd_decode.o \
             2>&1 | tee "build-${{ matrix.variant }}.log"
 
