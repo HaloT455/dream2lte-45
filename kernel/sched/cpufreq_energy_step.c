@@ -204,6 +204,50 @@ static unsigned int esgov_step_target(struct cpufreq_policy *policy,
 	return cpufreq_driver_resolve_freq(policy, min(ceiling, target));
 }
 
+/*
+ * Reverse-step policy for Exynos8895: start with the cheapest OPP that
+ * can satisfy the measured demand, then add headroom only when needed.
+ *
+ * - A53 (CPU0-3) and M2 (CPU4-7) have independent CPUFreq policies.
+ * - Short, light tasks may run at the lowest sufficient step.
+ * - An already-sufficient clock is retained at medium load to avoid
+ *   oscillation and unnecessary jumps while loading a game.
+ * - High utilization uses headroom and the original quick up-rate path.
+ * - RT/DL and IOWAIT handling still run before this function.
+ * No timer, thermal sysfs changes, GPU partition, or polling loop.
+ */
+static unsigned int esgov_reverse_energy_target(struct esgov_policy *sg_policy,
+						unsigned long util,
+						unsigned long max,
+						unsigned int base,
+						unsigned int headroom_raw)
+{
+	struct cpufreq_policy *policy = sg_policy->policy;
+	unsigned int minimum_raw, minimum_op, headroom_op;
+	unsigned int previous = sg_policy->next_freq;
+
+	minimum_raw = div64_u64((u64)base * util, max);
+	minimum_op = esgov_step_target(policy, minimum_raw);
+	headroom_op = esgov_step_target(policy, headroom_raw);
+
+	/* Prefer energy on near-idle CPUs; the stronger M2 cluster gets
+	 * a wider economy band because it costs more to wake aggressively.
+	 */
+	if (util <= max / 6 || (policy->cpu >= 4 && util <= max / 4))
+		return minimum_op;
+
+	/* Hold the lowest already-sufficient OPP at moderate load.
+	 * For high / game-entry load, immediately select the protected
+	 * headroom step, still subject to the kernel's rate limit.
+	 */
+	if (util < max - max / 4 &&
+	    previous != UINT_MAX &&
+	    previous >= minimum_op && previous <= headroom_op)
+		return previous;
+
+	return headroom_op;
+}
+
 static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 				  unsigned long util, unsigned long max)
 {
@@ -223,7 +267,7 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 
 	sg_policy->need_freq_update = false;
 	sg_policy->cached_raw_freq = raw;
-	return esgov_step_target(policy, raw);
+	return esgov_reverse_energy_target(sg_policy, util, max, base, raw);
 }
 
 static inline bool use_pelt(void)
