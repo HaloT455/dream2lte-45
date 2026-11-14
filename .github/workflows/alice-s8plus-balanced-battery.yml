@@ -67,66 +67,7 @@ jobs:
         run: |
           set -eux
           C=out-reverse/.config
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y
-          grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$C"
-          grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$C"
-          grep -q '^CONFIG_ZRAM=y$' "$C"
-          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' "$C"
-          grep -q '^CONFIG_CRYPTO_LZ4KD=y$' "$C"
-          grep -q '^CONFIG_LZ4KD_COMPRESS=y$' "$C"
-          grep -q '^CONFIG_LZ4KD_DECOMPRESS=y$' "$C"
-          grep -q '^CONFIG_PSI=y$' "$C"
-          grep -q '^CONFIG_MEMCG=y$' "$C"
-          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$C"
-          grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set$' "$C"
-          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set$' "$C"
-          grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$C"
-          grep -q '^CONFIG_MALI_TMIX_R19P0=y$' "$C"
-          grep -q '^CONFIG_LRU_GEN=y$' "$C"
-          test -f crypto/lz4kd.c
-          test -f lib/lz4kd/lz4kd_encode.c
-          test -f lib/lz4kd/lz4kd_decode.c
-
-      - name: Build S8Plus kernel and DTBs
-        run: |
-          set -o pipefail
-          make O=out-reverse -j"$(nproc)" Image dtb.img 2>&1 | tee build-s8plus-reverse.log
-
-      - name: Verify compiled source and assemble artifacts
-        run: |
-          set -eux
-          IMAGE=out-reverse/arch/arm64/boot/Image
-          DTB=out-reverse/arch/arm64/boot/dtb.img
-          test -s "$IMAGE"
-          test -s "$DTB"
-          grep -Eq ' [a-zA-Z] cpufreq_gov_energy_step$' out-reverse/System.map
-          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-reverse/System.map
-          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-reverse/System.map
-          mkdir -p artifacts
-          cp "$IMAGE" artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD_Image
-          cp "$DTB" artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD_dtb.img
-          cp out-reverse/.config artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD.config
-          cp docs/S8PLUS_V12R69_REVERSE_ENERGY_GAME_LZ4KD.md artifacts/
-          cp docs/S8PLUS_BALANCED_SUSTAINED_BATTERY.md artifacts/
-          cp scripts/collect_s8plus_game_perf.sh artifacts/
-          (cd artifacts && sha256sum * > SHA256SUMS)
-
-      - name: Upload reproducible kernel artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: S8Plus-V12R69-BalancedSustainedBattery-LZ4KD-Kernel-WIP
-          path: artifacts/
-          if-no-files-found: error
-
-      - name: Upload log for failed build
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: S8Plus-V12R69-BalancedSustainedBattery-Failed-Build-Log
-          path: build-s8plus-reverse.log
-          if-no-files-found: ignore
- "$C"
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y$' "$C"
           grep -q 'base + (base >> 4)' kernel/sched/cpufreq_energy_step.c
           grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$C"
           grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$C"
@@ -167,6 +108,7 @@ jobs:
           cp "$DTB" artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD_dtb.img
           cp out-reverse/.config artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD.config
           cp docs/S8PLUS_V12R69_REVERSE_ENERGY_GAME_LZ4KD.md artifacts/
+          cp docs/S8PLUS_BALANCED_SUSTAINED_BATTERY.md artifacts/
           cp scripts/collect_s8plus_game_perf.sh artifacts/
           (cd artifacts && sha256sum * > SHA256SUMS)
 
