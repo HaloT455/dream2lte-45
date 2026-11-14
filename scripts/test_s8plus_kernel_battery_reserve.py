@@ -67,7 +67,9 @@ assert 'full_charge_seen_show' in src
 gov=Path("kernel/sched/cpufreq_energy_step.c").read_text()
 assert 'if (alice_battery_reserve_emergency())' in gov
 assert 'policy->cpuinfo.max_freq * 7 / 10' in gov
-assert 'sg_policy->cached_raw_freq = UINT_MAX;' in gov
+assert 'cache_key = raw | (emergency ? (1U << 31) : 0);' in gov
+assert 'sg_policy->cached_raw_freq = cache_key;' in gov
+assert 'if (cache_key == sg_policy->cached_raw_freq &&' in gov
 assert 'return esgov_reverse_energy_target(sg_policy, util, max, base, raw);' in gov
 print("PASS: real 24%=normal 5% triggers real 24% emergency display (not 25%)")
 print("PASS: reserve display follows real capacity without changing Samsung fuel gauge")

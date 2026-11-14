@@ -267,7 +267,8 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 	struct cpufreq_policy *policy = sg_policy->policy;
 	unsigned int base = arch_scale_freq_invariant() ?
 				policy->cpuinfo.max_freq : policy->cur;
-	unsigned int raw;
+	unsigned int raw, cache_key;
+	bool emergency;
 
 	if (unlikely(!max))
 		return policy->min;
@@ -276,27 +277,33 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 	raw = div64_u64((u64)(base + (base >> 3)) * util, max);
 
 	/*
-	 * Kernel-only emergency DVFS: no Magisk/KernelSU or userspace watcher.
-	 * Outside emergency the original Balanced Energy Step is untouched.
-	 * During reserve, avoid burst headroom and request at most 70% of the
-	 * hardware peak; the driver/thermal QoS still chooses the actual OPP.
+	 * High cache bit distinguishes emergency/normal modes without any
+	 * extra daemon, locks or idle polling. All supported raw frequencies
+	 * are well below 2^31 kHz. Recompute immediately on a mode transition.
 	 */
-	if (alice_battery_reserve_emergency()) {
+	emergency = alice_battery_reserve_emergency();
+	cache_key = raw | (emergency ? (1U << 31) : 0);
+	if (cache_key == sg_policy->cached_raw_freq &&
+	    !sg_policy->need_freq_update)
+		return sg_policy->next_freq;
+
+	sg_policy->need_freq_update = false;
+	sg_policy->cached_raw_freq = cache_key;
+
+	/*
+	 * Kernel-only emergency DVFS: no Magisk/KernelSU module required.
+	 * During reserve, remove burst headroom and request at most 70% of
+	 * hardware peak. Driver/thermal QoS remains authoritative.
+	 */
+	if (emergency) {
 		unsigned int required = div64_u64((u64)base * util, max);
 		unsigned int capped = min(required,
 				policy->cpuinfo.max_freq * 7 / 10);
 
-		/* Invalidate cache so leaving emergency restores normal DVFS. */
-		sg_policy->cached_raw_freq = UINT_MAX;
-		sg_policy->need_freq_update = false;
 		return esgov_step_target(policy, capped);
 	}
 
-	if (raw == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
-		return sg_policy->next_freq;
-
-	sg_policy->need_freq_update = false;
-	sg_policy->cached_raw_freq = raw;
+	/* Standard Balanced Energy Step is unchanged outside emergency. */
 	return esgov_reverse_energy_target(sg_policy, util, max, base, raw);
 }
 

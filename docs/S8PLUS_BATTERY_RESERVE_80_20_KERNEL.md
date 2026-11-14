@@ -51,3 +51,5 @@ Requires matching boot/ramdisk and device verification before daily use.
 
 ### Boot partition size protection
 This special S8+ test build disables only **embedded IKCONFIG** (`CONFIG_IKCONFIG`, `CONFIG_IKCONFIG_PROC`) to reclaim approximately 33 KiB and help fit the *original Samsung BOOT partition*. The exact resulting `.config` is preserved in the GitHub Actions artifact and accompanies the test kit. No CPU scheduler, AFC, thermal, modem, GPU, VPU or LMKD features are removed for this size adjustment. The repacking tool rejects any Image that is too large for the source BOOT size.
+
+CPUFreq optimization: cache key includes an emergency/normal mode bit; the kernel recalculates immediately on mode transitions but avoids unnecessary OPP resolution on stable utilization. No extra polling thread or background daemon is needed.
