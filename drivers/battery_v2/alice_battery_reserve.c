@@ -57,11 +57,13 @@ void alice_battery_reserve_update(int actual, bool charging)
 	char *env_enter[] = {
 		"ALICE_BATTERY_EMERGENCY=1",
 		"ALICE_BATTERY_UPSM_REQUEST=1",
+		"ALICE_BATTERY_UPSM_LOCKED=1",
 		NULL
 	};
 	char *env_exit[] = {
 		"ALICE_BATTERY_EMERGENCY=0",
 		"ALICE_BATTERY_UPSM_REQUEST=0",
+		"ALICE_BATTERY_UPSM_LOCKED=0",
 		NULL
 	};
 
@@ -76,7 +78,7 @@ void alice_battery_reserve_update(int actual, bool charging)
 	else if (!emergency && !charging && virtual <= 5)
 		emergency = true;
 
-	changed = reserve_state.valid &&
+	changed = !reserve_state.valid ||
 			(emergency != reserve_state.emergency);
 	reserve_state.real_percent = real;
 	reserve_state.normal_percent = virtual;
@@ -94,6 +96,7 @@ void alice_battery_reserve_update(int actual, bool charging)
 	if (changed) {
 		sysfs_notify(kobj, NULL, "emergency_active");
 		sysfs_notify(kobj, NULL, "upsm_requested");
+		sysfs_notify(kobj, NULL, "upsm_locked");
 		/* OneUI/vendor userspace must implement the real UPSM switch. */
 		kobject_uevent_env(kobj, KOBJ_CHANGE,
 				   emergency ? env_enter : env_exit);
@@ -151,6 +154,28 @@ static ssize_t upsm_requested_show(struct kobject *kobj,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", s.emergency ? 1 : 0);
 }
 
+/*
+ * Read-only lock intended for Samsung's trusted UPSM/PowerManager bridge.
+ * Kernel never writes the real battery capacity and never tries to invoke
+ * proprietary Android services from atomic battery/driver contexts.
+ */
+static ssize_t upsm_locked_show(struct kobject *kobj,
+				struct kobj_attribute *attr, char *buf)
+{
+	struct alice_reserve_snapshot s = alice_read_snapshot();
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", s.emergency ? 1 : 0);
+}
+
+static ssize_t normal_unrestricted_show(struct kobject *kobj,
+					struct kobj_attribute *attr, char *buf)
+{
+	struct alice_reserve_snapshot s = alice_read_snapshot();
+
+	/* No additional CPU/GPU throttle is applied by this reserve monitor. */
+	return scnprintf(buf, PAGE_SIZE, "%d\n", s.emergency ? 0 : 1);
+}
+
 static ssize_t actual_charging_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
 {
@@ -165,6 +190,8 @@ static struct kobj_attribute display_percent_attr = __ATTR_RO(display_percent);
 static struct kobj_attribute emergency_active_attr = __ATTR_RO(emergency_active);
 static struct kobj_attribute upsm_requested_attr = __ATTR_RO(upsm_requested);
 static struct kobj_attribute actual_charging_attr = __ATTR_RO(actual_charging);
+static struct kobj_attribute upsm_locked_attr = __ATTR_RO(upsm_locked);
+static struct kobj_attribute normal_unrestricted_attr = __ATTR_RO(normal_unrestricted);
 
 static struct attribute *alice_reserve_attrs[] = {
 	&real_percent_attr.attr,
@@ -172,6 +199,8 @@ static struct attribute *alice_reserve_attrs[] = {
 	&display_percent_attr.attr,
 	&emergency_active_attr.attr,
 	&upsm_requested_attr.attr,
+	&upsm_locked_attr.attr,
+	&normal_unrestricted_attr.attr,
 	&actual_charging_attr.attr,
 	NULL
 };
