@@ -47,6 +47,8 @@ jobs:
           set -eux
           python3 scripts/test_s8plus_reverse_energy.py
           python3 scripts/test_s8plus_balanced_energy.py
+          python3 scripts/test_s8plus_afc.py
+          sh -n scripts/collect_s8plus_afc.sh
           python3 scripts/test_v12r68_energy_step.py
           python3 scripts/test_v12r69_energy_step_worker.py
           python3 scripts/test_schedutil_work.py
@@ -84,6 +86,14 @@ jobs:
           grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$C"
           grep -q '^CONFIG_MALI_TMIX_R19P0=y$' "$C"
           grep -q '^CONFIG_LRU_GEN=y$' "$C"
+          grep -q '^CONFIG_MUIC_UNIVERSAL_MAX77865=y$' "$C"
+          grep -q '^CONFIG_MUIC_HV=y$' "$C"
+          grep -q '^CONFIG_MUIC_HV_MAX77865=y$' "$C"
+          grep -q '^# CONFIG_MUIC_HV_12V is not set$' "$C"
+          grep -q '^CONFIG_AFC_CHARGER_MODE=y$' "$C"
+          grep -q '^CONFIG_AFC_CURR_CONTROL_BY_TEMP=y$' "$C"
+          grep -q '^CONFIG_CHARGER_MAX77865=y$' "$C"
+          grep -q '^CONFIG_FUELGAUGE_MAX77865=y$' "$C"
           test -f crypto/lz4kd.c
           test -f lib/lz4kd/lz4kd_encode.c
           test -f lib/lz4kd/lz4kd_decode.c
@@ -109,6 +119,8 @@ jobs:
           cp out-reverse/.config artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD.config
           cp docs/S8PLUS_V12R69_REVERSE_ENERGY_GAME_LZ4KD.md artifacts/
           cp docs/S8PLUS_BALANCED_SUSTAINED_BATTERY.md artifacts/
+          cp docs/S8PLUS_AFC_BALANCED_CHARGING.md artifacts/
+          cp scripts/collect_s8plus_afc.sh artifacts/
           cp scripts/collect_s8plus_game_perf.sh artifacts/
           (cd artifacts && sha256sum * > SHA256SUMS)
 
