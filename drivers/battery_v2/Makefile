@@ -1,4 +1,5 @@
 obj-$(CONFIG_BATTERY_SAMSUNG)	+= sec_battery.o
+obj-$(CONFIG_ALICE_BATTERY_RESERVE) += alice_battery_reserve.o
 obj-$(CONFIG_OF)		+= sec_adc.o
 obj-$(CONFIG_BATTERY_CISD)	+= sec_cisd.o
 obj-$(CONFIG_BATTERY_SBM_DATA)	+= sec_battery_sbm.o

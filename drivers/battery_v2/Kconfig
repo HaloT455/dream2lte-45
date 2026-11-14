@@ -7,6 +7,16 @@ config BATTERY_SAMSUNG
 	 To see battery-related functions,
 	 refer to sec_charging_common.h
 
+config ALICE_BATTERY_RESERVE
+	bool "ALICE S8+ read-only 80/20 battery reserve display"
+	depends on BATTERY_SAMSUNG_V2
+	default n
+	help
+	  Export a non-invasive normal and emergency battery percentage via
+	  /sys/kernel/alice_battery_reserve. Real SOC, charger, fuel gauge,
+	  thermal and Android battery reporting remain untouched.
+	  Requires vendor userspace to enter Samsung Ultra Power Saving Mode.
+
 config BATTERY_SAMSUNG_V2
 	tristate "samsung battery driver version 2"
 	default n

@@ -12,6 +12,7 @@
 #include "include/sec_battery.h"
 #include <linux/sec_ext.h>
 #include <linux/sec_debug.h>
+#include <linux/alice_battery_reserve.h>
 
 #if defined(CONFIG_SEC_ABC)
 #include <linux/sti/abc_common.h>
@@ -2840,6 +2841,9 @@ static void sec_bat_get_battery_info(
 	/* if the battery status was full, and SOC wasn't 100% yet,
 		then ignore FG SOC, and report (previous SOC +1)% */
 	battery->capacity = value.intval;
+	alice_battery_reserve_update(battery->capacity,
+		battery->status == POWER_SUPPLY_STATUS_CHARGING ||
+		battery->status == POWER_SUPPLY_STATUS_FULL);
 
 	dev_info(battery->dev,
 		"%s:Vnow(%dmV),Vavg(%dmV),Inow(%dmA),Imax(%dmA),Ichg(%dmA),SOC(%d%%),"
