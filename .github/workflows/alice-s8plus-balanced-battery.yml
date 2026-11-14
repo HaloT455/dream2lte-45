@@ -167,7 +167,6 @@ jobs:
           cp "$DTB" artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD_dtb.img
           cp out-reverse/.config artifacts/S8Plus_V12R69_BalancedBattery_LZ4KD.config
           cp docs/S8PLUS_V12R69_REVERSE_ENERGY_GAME_LZ4KD.md artifacts/
-          cp docs/S8PLUS_BALANCED_SUSTAINED_BATTERY.md artifacts/
           cp scripts/collect_s8plus_game_perf.sh artifacts/
           (cd artifacts && sha256sum * > SHA256SUMS)
 
