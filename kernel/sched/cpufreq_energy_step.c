@@ -228,7 +228,19 @@ static unsigned int esgov_reverse_energy_target(struct esgov_policy *sg_policy,
 
 	minimum_raw = div64_u64((u64)base * util, max);
 	minimum_op = esgov_step_target(policy, minimum_raw);
-	headroom_op = esgov_step_target(policy, headroom_raw);
+
+	/*
+	 * Sustained-efficiency bias: cap moderate utilization to 6.25%
+	 * frequency headroom instead of the full 12.5% burst headroom.
+	 * For high load (>= 75% of CPU capacity), immediately retain the
+	 * original burst target so game-entry/render spikes respond quickly.
+	 * These are utilization bands, not thermal or voltage overrides.
+	 */
+	if (util < max - max / 4)
+		headroom_op = esgov_step_target(policy,
+		div64_u64((u64)(base + (base >> 4)) * util, max));
+	else
+		headroom_op = esgov_step_target(policy, headroom_raw);
 
 	/* Prefer energy on near-idle CPUs; the stronger M2 cluster gets
 	 * a wider economy band because it costs more to wake aggressively.
