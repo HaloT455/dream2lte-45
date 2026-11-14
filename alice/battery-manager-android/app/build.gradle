@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.halot455.alice.battery'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.halot455.alice.battery'
+        minSdk 26
+        targetSdk 32
+        versionCode 101
+        versionName '1.0-ESG1-TEST'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
