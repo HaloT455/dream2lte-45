@@ -32,3 +32,11 @@ adb shell cat /sys/class/power_supply/battery/capacity
 ```
 
 Requires matching boot/ramdisk and device verification before daily use.
+
+## Locked emergency policy (requested)
+
+- **Normal virtual 100% through 6%:** kernel reserve monitor does not impose a CPU/GPU frequency limit. Existing Balanced Energy Step still controls CPU DVFS as before; no battery life or FPS improvement is guaranteed without device measurements.
+- **Normal virtual reaches 5% at real 24%:** kernel sets `emergency_active=1`, `upsm_requested=1`, **`upsm_locked=1`**, and `display_percent=24` in its read-only interface. A One UI privileged bridge must update SystemUI battery display; the actual fuel-gauge reading is never spoofed.
+- While locked, `upsm_locked` is read-only; the ordinary UI cannot clear the *kernel request*. It is maintained until the gauge reaches real 100% while charging. Unlock occurs automatically then. Emergency calls, charging protections, physical power-off and recovery remain functional.
+- Optional KernelSU/Magisk `service.sh` companion may re-enable **standard Android Battery Saver** at 15-second intervals if disabled. It does nothing to normal CPU/GPU clocks. The proprietary Samsung **Limit apps and Home screen** mode from the screenshot cannot be forced or its toggle hidden without a ROM-specific privileged One UI integration. In Samsung Settings configure the desired saver options **before** triggering reserve.
+- If the guardian prevents the desired phone use, uninstall the module from KernelSU/Magisk or recovery; it is a TEST module.
