@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/s8plus-v12r69-battery-reserve-80-20-20261114
+    paths-ignore:
+      - 'alice/battery-manager-android/**'
+      - '.github/workflows/alice-s8plus-battery-apk.yml'
   workflow_dispatch:
 
 concurrency:
