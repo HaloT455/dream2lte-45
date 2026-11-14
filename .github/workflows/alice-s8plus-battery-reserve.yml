@@ -45,8 +45,7 @@ jobs:
       - name: Host safety tests
         run: |
           set -eux
-          python3 scripts/test_s8plus_reverse_energy.py
-          python3 scripts/test_s8plus_balanced_energy.py
+          # Normal ESG1 Energy Step, not earlier experimental Reverse Energy
           python3 scripts/test_s8plus_afc.py
           python3 scripts/test_s8plus_kernel_battery_reserve.py
           sh -n scripts/collect_s8plus_afc.sh
@@ -72,7 +71,7 @@ jobs:
           set -eux
           C=out-reverse/.config
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y$' "$C"
-          grep -q 'base + (base >> 4)' kernel/sched/cpufreq_energy_step.c
+          grep -q 'return esgov_step_target(policy, raw);' kernel/sched/cpufreq_energy_step.c
           grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$C"
           grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$C"
           grep -q '^CONFIG_ZRAM=y$' "$C"
@@ -137,7 +136,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: S8Plus-V12R69-Reserve80-20-AFC-LZ4KD-Kernel-WIP
+          name: S8Plus-ESG1-Normal-EnergyStep-Reserve80-20-AFC-Kernel-TEST
           path: artifacts/
           if-no-files-found: error
 
