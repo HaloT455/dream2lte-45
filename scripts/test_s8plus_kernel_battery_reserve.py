@@ -65,7 +65,7 @@ assert 'full_charge_seen && !charging' in src
 assert 'reserve_state.full_charge_seen = full_charge_seen;' in src
 assert 'full_charge_seen_show' in src
 gov=Path("kernel/sched/cpufreq_energy_step.c").read_text()
-assert 'if (alice_battery_reserve_emergency())' in gov
+assert 'emergency = alice_battery_reserve_emergency();' in gov
 assert 'policy->cpuinfo.max_freq * 7 / 10' in gov
 assert 'cache_key = raw | (emergency ? (1U << 31) : 0);' in gov
 assert 'sg_policy->cached_raw_freq = cache_key;' in gov
