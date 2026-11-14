@@ -22,3 +22,7 @@ that protection. No promise of physical battery partitioning or extra energy.
 Build: `gradle :app:assembleDebug` with JDK17, AGP 8.7.3, Android SDK35.
 Root permission must be explicitly granted in Magisk/KernelSU/SuperSU when
 the app attempts `su`. This is a test, not phone-verified software.
+
+## First install / auto-start (ESG1 v1.1)
+
+The 80/20 kernel interface is read-only; **LZ4KD is the kernel's default ZRAM compressor** (build config `CONFIG_ZRAM_DEF_COMP_LZ4KD=y`), and Samsung's ESG1 ramdisk fstab does not override its compressor. The APK enables AUTO, monitoring and notifications on **first application launch**, and registers a BOOT_COMPLETED receiver to restart monitoring after later reboots. Android requires opening an installed app at least once and explicitly approving SU in Magisk/KernelSU/SuperSU; installing an APK and immediately rebooting before ever opening it cannot bypass these security restrictions. To control Android standard Battery Saver, click the one-time root prompt. No Samsung status-bar rewrite, Samsung-specific UPSM, or physical battery capacity manipulation is claimed. Disable Samsung battery optimization for this app if the ROM stops foreground monitoring.

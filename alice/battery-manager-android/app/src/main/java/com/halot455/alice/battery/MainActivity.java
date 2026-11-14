@@ -46,7 +46,24 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         p=getSharedPreferences(MonitorService.PREFS,MODE_PRIVATE);
+        // First app launch: automatic monitoring and notifications are ON.
+        // Android blocks boot receivers before an installed app is first opened.
+        boolean firstStart=!p.getBoolean("initialized",false);
+        if (firstStart) {
+            p.edit().putBoolean("initialized",true)
+                    .putBoolean("automatic",true)
+                    .putBoolean("notifications",true)
+                    .putBoolean("monitor",true).apply();
+        }
         buildUi();
+        if (p.getBoolean("monitor",true)) startMonitor();
+        if (firstStart) {
+            new AlertDialog.Builder(this).setTitle("ALice ESG1 80/20 đã sẵn sàng")
+                    .setMessage("Giám sát pin và chế độ Tự động đã bật. Để điều khiển Battery Saver Android, bạn cần cấp root một lần. Các lần khởi động lại sẽ tự chạy. Phần trăm thanh trạng thái Samsung vẫn là pin thật.")
+                    .setPositiveButton("Cấp ROOT", (dialog,which)->requestRoot())
+                    .setNegativeButton("Xem pin không root",null)
+                    .show();
+        }
         if (Build.VERSION.SDK_INT>=33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},200);
@@ -179,14 +196,7 @@ public final class MainActivity extends Activity {
         access.addView(rootStatus);
         Button requestRoot=button("Kiểm tra / cấp quyền ROOT");
         addButton(access,requestRoot);
-        requestRoot.setOnClickListener(v -> new Thread(() -> {
-            boolean ok=RootShell.isRootGranted();
-            p.edit().putBoolean("rootApproved",ok).apply();
-            runOnUiThread(() -> {
-                showMessage(ok?"Đã có quyền root":"Chưa có root — kiểm tra ứng dụng quản lý su");
-                updateUi();
-            });
-        },"ALice-Root-Check").start());
+        requestRoot.setOnClickListener(v -> requestRoot());
         notificationSwitch=new Switch(this);
         notificationSwitch.setText("Cảnh báo chuyển chế độ / sạc (thông báo giám sát luôn hiện)");
         notificationSwitch.setTextColor(WHITE);
@@ -200,15 +210,8 @@ public final class MainActivity extends Activity {
             boolean enabled=!p.getBoolean("monitor",false);
             p.edit().putBoolean("monitor",enabled).apply();
             Intent service=new Intent(this,MonitorService.class);
-            if (enabled) {
-                try {
-                    if (Build.VERSION.SDK_INT>=26) startForegroundService(service);
-                    else startService(service);
-                } catch (Exception e) {
-                    p.edit().putBoolean("monitor",false).apply();
-                    showMessage("Không bật được giám sát: "+e.getClass().getSimpleName());
-                }
-            } else stopService(service);
+            if (enabled) startMonitor();
+            else stopService(service);
             updateUi();
         });
 
@@ -223,6 +226,27 @@ public final class MainActivity extends Activity {
         Button refresh=button("Đọc lại pin ngay");
         addButton(body,refresh);
         refresh.setOnClickListener(v -> updateUi());
+    }
+    private void startMonitor() {
+        try {
+            Intent service=new Intent(this,MonitorService.class);
+            if (Build.VERSION.SDK_INT>=26) startForegroundService(service);
+            else startService(service);
+        } catch (Exception e) {
+            p.edit().putBoolean("monitor",false).apply();
+            showMessage("Không bật được giám sát: "+e.getClass().getSimpleName());
+        }
+    }
+    private void requestRoot() {
+        new Thread(() -> {
+            boolean ok=RootShell.isRootGranted();
+            p.edit().putBoolean("rootApproved",ok).apply();
+            runOnUiThread(() -> {
+                showMessage(ok?"Đã cấp ROOT: theo dõi và tự động Battery Saver sau mỗi lần khởi động."
+                        :"Chưa cấp ROOT. Bạn vẫn xem pin; muốn bật Battery Saver tự động hãy cho quyền su.");
+                updateUi();
+            });
+        },"ALice-Root-Check").start();
     }
     private void manualSaver(boolean enabled) {
         if (!p.getBoolean("rootApproved",false)) {

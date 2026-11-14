@@ -12,12 +12,12 @@ public final class RootShell {
         public final String output;
         Result(boolean ok, String output) { this.success=ok; this.output=output; }
     }
-    private static Result execute(String constantCommand) {
+    private static Result execute(String constantCommand, long timeoutSeconds) {
         Process process=null;
         try {
             process=new ProcessBuilder("su","-c",constantCommand)
                     .redirectErrorStream(true).start();
-            boolean completed=process.waitFor(6,TimeUnit.SECONDS);
+            boolean completed=process.waitFor(timeoutSeconds,TimeUnit.SECONDS);
             if (!completed) {
                 process.destroyForcibly();
                 return new Result(false,"Không nhận được phản hồi từ su");
@@ -37,12 +37,12 @@ public final class RootShell {
         }
     }
     public static boolean isRootGranted() {
-        Result r=execute("id -u");
+        Result r=execute("id -u",30);
         return r.success && "0".equals(r.output.trim());
     }
     public static Result setStandardBatterySaver(boolean enabled) {
         // cmd power set-mode is the standard Android Battery Saver command.
         // Samsung-specific UPSM is deliberately NOT claimed or spoofed here.
-        return execute(enabled?"cmd power set-mode 1":"cmd power set-mode 0");
+        return execute(enabled?"cmd power set-mode 1":"cmd power set-mode 0",6);
     }
 }

@@ -9,7 +9,7 @@ public final class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
         if (!context.getSharedPreferences(MonitorService.PREFS,Context.MODE_PRIVATE)
-                .getBoolean("monitor",false)) return;
+                .getBoolean("monitor",true)) return;
         Intent service=new Intent(context,MonitorService.class);
         try {
             if (Build.VERSION.SDK_INT>=26) context.startForegroundService(service);
