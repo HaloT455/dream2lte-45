@@ -30,29 +30,48 @@ assert not any(term in src for term in ["POWER_SUPPLY_PROP_CAPACITY, value", "se
 def normal(actual):
     return max(0, min(100, (max(max(0,min(100,actual))-20,0)*100 + 40)//80))
 
-def sample(actual, charging, emergency):
+def sample(actual, charging, emergency, full_seen=False):
     virtual=normal(actual)
-    if emergency and charging and actual>=100:
-        emergency=False
-    elif not emergency and not charging and virtual<=5:
+    if emergency:
+        if charging and actual>=100:
+            full_seen=True
+        if full_seen and not charging:
+            emergency=False
+            full_seen=False
+    elif not charging and virtual<=5:
         emergency=True
-    return (actual if emergency else virtual), emergency
+        full_seen=False
+    if not emergency:
+        full_seen=False
+    return (actual if emergency else virtual), emergency, full_seen
 
 assert normal(100)==100
 assert normal(80)==75
 assert normal(60)==50
 assert normal(40)==25
 assert normal(24)==5
-assert sample(25,False,False)==(6,False)
-assert sample(24,False,False)==(24,True)
-assert sample(23,False,True)==(23,True)
-assert sample(12,False,True)==(12,True)
-assert sample(3,False,True)==(3,True)
-assert sample(24,True,True)==(24,True)
-assert sample(99,True,True)==(99,True)
-assert sample(100,True,True)==(100,False)
+assert sample(25,False,False)==(6,False,False)
+assert sample(24,False,False)==(24,True,False)
+assert sample(23,False,True)==(23,True,False)
+assert sample(12,False,True)==(12,True,False)
+assert sample(3,False,True)==(3,True,False)
+assert sample(24,True,True)==(24,True,False)
+assert sample(99,True,True)==(99,True,False)
+assert sample(100,True,True)==(100,True,True)
+assert sample(99,False,True,True)==(99,False,False)  # unplug, 99% gauge
+assert sample(100,False,True,False)==(100,True,False) # full not reached while plugged
+assert 'alice_battery_reserve_emergency(void)' in src
+assert 'full_charge_seen && !charging' in src
+assert 'reserve_state.full_charge_seen = full_charge_seen;' in src
+assert 'full_charge_seen_show' in src
+gov=Path("kernel/sched/cpufreq_energy_step.c").read_text()
+assert 'if (alice_battery_reserve_emergency())' in gov
+assert 'policy->cpuinfo.max_freq * 7 / 10' in gov
+assert 'sg_policy->cached_raw_freq = UINT_MAX;' in gov
+assert 'return esgov_reverse_energy_target(sg_policy, util, max, base, raw);' in gov
 print("PASS: real 24%=normal 5% triggers real 24% emergency display (not 25%)")
 print("PASS: reserve display follows real capacity without changing Samsung fuel gauge")
 print("PASS: read-only lock flag, first battery sample uevent and normal full-clock allowance")
 print("PASS: 5V/9V AFC, thermal/current safety and power supply report are untouched")
+print("PASS: full-charge latch: release only after unplug; emergency DVFS built into kernel, no root module")
 print("NOTE: a Samsung UPSM implementation in userspace is still required for actual UI/power-mode change")

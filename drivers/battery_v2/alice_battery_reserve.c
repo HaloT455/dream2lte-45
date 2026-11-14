@@ -24,6 +24,7 @@ struct alice_reserve_snapshot {
 	int display_percent;
 	bool charging;
 	bool emergency;
+	bool full_charge_seen;
 	bool valid;
 };
 
@@ -53,6 +54,7 @@ void alice_battery_reserve_update(int actual, bool charging)
 	int virtual = alice_normal_percent(real);
 	bool changed;
 	bool emergency;
+	bool full_charge_seen;
 	struct kobject *kobj;
 	char *env_enter[] = {
 		"ALICE_BATTERY_EMERGENCY=1",
@@ -69,14 +71,25 @@ void alice_battery_reserve_update(int actual, bool charging)
 
 	spin_lock_irqsave(&reserve_lock, flags);
 	emergency = reserve_state.emergency;
+	full_charge_seen = reserve_state.full_charge_seen;
 	/*
-	 * Emergency is sticky through recharge. At real 100% while
-	 * charging, display returns to normal 100% without a % jump.
+	 * Reserve mode is released ONLY AFTER a genuine full charge AND
+	 * removal of the charger. Some gauges drop to 99% on unplug, so
+	 * use the latched "was full" event, not the unplugged SOC value.
 	 */
-	if (emergency && charging && real >= 100)
-		emergency = false;
-	else if (!emergency && !charging && virtual <= 5)
+	if (emergency) {
+		if (charging && real >= 100)
+			full_charge_seen = true;
+		if (full_charge_seen && !charging) {
+			emergency = false;
+			full_charge_seen = false;
+		}
+	} else if (!charging && virtual <= 5) {
 		emergency = true;
+		full_charge_seen = false;
+	}
+	if (!emergency)
+		full_charge_seen = false;
 
 	changed = !reserve_state.valid ||
 			(emergency != reserve_state.emergency);
@@ -85,6 +98,7 @@ void alice_battery_reserve_update(int actual, bool charging)
 	reserve_state.display_percent = emergency ? real : virtual;
 	reserve_state.charging = charging;
 	reserve_state.emergency = emergency;
+	reserve_state.full_charge_seen = full_charge_seen;
 	reserve_state.valid = true;
 	kobj = reserve_kobj;
 	spin_unlock_irqrestore(&reserve_lock, flags);
@@ -101,6 +115,11 @@ void alice_battery_reserve_update(int actual, bool charging)
 		kobject_uevent_env(kobj, KOBJ_CHANGE,
 				   emergency ? env_enter : env_exit);
 	}
+}
+
+bool alice_battery_reserve_emergency(void)
+{
+	return READ_ONCE(reserve_state.emergency);
 }
 
 static struct alice_reserve_snapshot alice_read_snapshot(void)
@@ -176,6 +195,14 @@ static ssize_t normal_unrestricted_show(struct kobject *kobj,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", s.emergency ? 0 : 1);
 }
 
+static ssize_t full_charge_seen_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	struct alice_reserve_snapshot s = alice_read_snapshot();
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", s.full_charge_seen ? 1 : 0);
+}
+
 static ssize_t actual_charging_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
 {
@@ -192,6 +219,7 @@ static struct kobj_attribute upsm_requested_attr = __ATTR_RO(upsm_requested);
 static struct kobj_attribute actual_charging_attr = __ATTR_RO(actual_charging);
 static struct kobj_attribute upsm_locked_attr = __ATTR_RO(upsm_locked);
 static struct kobj_attribute normal_unrestricted_attr = __ATTR_RO(normal_unrestricted);
+static struct kobj_attribute full_charge_seen_attr = __ATTR_RO(full_charge_seen);
 
 static struct attribute *alice_reserve_attrs[] = {
 	&real_percent_attr.attr,
@@ -201,6 +229,7 @@ static struct attribute *alice_reserve_attrs[] = {
 	&upsm_requested_attr.attr,
 	&upsm_locked_attr.attr,
 	&normal_unrestricted_attr.attr,
+	&full_charge_seen_attr.attr,
 	&actual_charging_attr.attr,
 	NULL
 };

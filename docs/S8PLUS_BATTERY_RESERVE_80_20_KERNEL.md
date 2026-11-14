@@ -2,7 +2,7 @@
 
 Device: Galaxy S8+ Exynos 8895 (dream2lte).
 
-**At 24% real battery while discharging**, the virtual normal percentage is 5%, and the kernel switches to emergency mode whose display percentage is **24% real**, *not 25%*. Emergency state remains until the battery reaches real 100% while charging, preventing oscillations near the threshold.
+**At 24% real battery while discharging**, the virtual normal percentage is 5%, and the kernel switches to emergency mode whose display percentage is **24% real**, *not 25%*. Emergency state remains until the battery reaches real 100% while plugged in **and the cable is then unplugged**. The full-charge event is latched so a battery gauge drop from 100 to 99 on unplug still releases emergency without oscillation.
 
 | Real battery | Normal virtual | Kernel display |
 | ---: | ---: | --- |
@@ -37,6 +37,14 @@ Requires matching boot/ramdisk and device verification before daily use.
 
 - **Normal virtual 100% through 6%:** kernel reserve monitor does not impose a CPU/GPU frequency limit. Existing Balanced Energy Step still controls CPU DVFS as before; no battery life or FPS improvement is guaranteed without device measurements.
 - **Normal virtual reaches 5% at real 24%:** kernel sets `emergency_active=1`, `upsm_requested=1`, **`upsm_locked=1`**, and `display_percent=24` in its read-only interface. A One UI privileged bridge must update SystemUI battery display; the actual fuel-gauge reading is never spoofed.
-- While locked, `upsm_locked` is read-only; the ordinary UI cannot clear the *kernel request*. It is maintained until the gauge reaches real 100% while charging. Unlock occurs automatically then. Emergency calls, charging protections, physical power-off and recovery remain functional.
+- While locked, `upsm_locked` is read-only; the ordinary UI cannot clear the *kernel request*. It is maintained during charging even at real 100%, and unlocks only once the cable is unplugged **after a completed 100% charge**. Emergency calls, charging protections, physical power-off and recovery remain functional.
 - Optional KernelSU/Magisk `service.sh` companion may re-enable **standard Android Battery Saver** at 15-second intervals if disabled. It does nothing to normal CPU/GPU clocks. The proprietary Samsung **Limit apps and Home screen** mode from the screenshot cannot be forced or its toggle hidden without a ROM-specific privileged One UI integration. In Samsung Settings configure the desired saver options **before** triggering reserve.
 - If the guardian prevents the desired phone use, uninstall the module from KernelSU/Magisk or recovery; it is a TEST module.
+
+## 100% full-charge + unplug and kernel-only behavior
+
+- Charge to **100% real**, then unplug: kernel clears emergency mode and the next discharge session starts from the normal virtual 100% scale. Gauge 99% on disconnect is supported by a full-charge latch.
+- **No Magisk, KernelSU, daemon or module needed** for in-kernel reserve calculation, state machine, AFC protections, or emergency governor frequency reduction.
+- The Energy Step governor (when selected) leaves CPU/GPU policy unchanged in normal virtual mode. On reserve it disables extra CPU headroom and requests <=70% of CPU peak; vendor CPUFreq/thermal constraints remain in effect. The GPU partition and thermal driver are unchanged.
+- One UI proprietary UPSM activation, its non-disableable screen, and virtual percentage **on the Samsung status bar** are not capabilities the Linux kernel alone can provide. The kernel exposes a read-only lock/request to Android; achieving the screenshot exactly still requires modifying the ROM's privileged SystemUI/PowerManager components. This is not present in this BOOT/kernel-only output.
+- `/sys/kernel/alice_battery_reserve/full_charge_seen` reports whether 100% real has occurred while plugged in during the current emergency cycle.

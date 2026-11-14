@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/cpufreq.h>
+#include <linux/alice_battery_reserve.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <trace/events/power.h>
@@ -273,6 +274,23 @@ static unsigned int get_next_freq(struct esgov_policy *sg_policy,
 
 	/* Conservative headroom (112.5%, instead of schedutil's 125%). */
 	raw = div64_u64((u64)(base + (base >> 3)) * util, max);
+
+	/*
+	 * Kernel-only emergency DVFS: no Magisk/KernelSU or userspace watcher.
+	 * Outside emergency the original Balanced Energy Step is untouched.
+	 * During reserve, avoid burst headroom and request at most 70% of the
+	 * hardware peak; the driver/thermal QoS still chooses the actual OPP.
+	 */
+	if (alice_battery_reserve_emergency()) {
+		unsigned int required = div64_u64((u64)base * util, max);
+		unsigned int capped = min(required,
+				policy->cpuinfo.max_freq * 7 / 10);
+
+		/* Invalidate cache so leaving emergency restores normal DVFS. */
+		sg_policy->cached_raw_freq = UINT_MAX;
+		sg_policy->need_freq_update = false;
+		return esgov_step_target(policy, capped);
+	}
 
 	if (raw == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
 		return sg_policy->next_freq;
