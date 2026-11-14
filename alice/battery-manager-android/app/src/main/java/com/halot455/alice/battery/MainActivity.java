@@ -188,7 +188,7 @@ public final class MainActivity extends Activity {
             });
         },"ALice-Root-Check").start());
         notificationSwitch=new Switch(this);
-        notificationSwitch.setText("Thông báo chi tiết pin và cảnh báo");
+        notificationSwitch.setText("Cảnh báo chuyển chế độ / sạc (thông báo giám sát luôn hiện)");
         notificationSwitch.setTextColor(WHITE);
         access.addView(notificationSwitch);
         notificationSwitch.setOnCheckedChangeListener((CompoundButton b,boolean checked) -> {
@@ -253,7 +253,8 @@ public final class MainActivity extends Activity {
     private void updateUi() {
         if (percentage==null) return;
         settingUi=true;
-        boolean have=p.contains("lastSampleAt");
+        boolean have=p.contains("lastSampleAt") && p.getBoolean("monitor",false) &&
+                System.currentTimeMillis()-p.getLong("lastSampleAt",0L)<60000L;
         BatterySample fallback=null;
         if (!have) fallback=BatterySample.sample(this,
                 p.getBoolean("emergency",false),p.getBoolean("fullSeen",false));

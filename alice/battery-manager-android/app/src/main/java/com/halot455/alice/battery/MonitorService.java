@@ -154,7 +154,9 @@ public final class MonitorService extends Service {
             appendEvent(e,p,"Đã rút sạc");
         }
         e.apply();
-        String status=s.summary()+" · "+(s.emergency?"DỰ PHÒNG":"BÌNH THƯỜNG");
+        String status=s.summary()+" · "+(s.emergency?"DỰ PHÒNG":"BÌNH THƯỜNG")+
+                "\n"+s.powerText()+" · "+s.voltageMv+"mV"+
+                (s.currentMa==-999999?"":" · "+s.currentMa+"mA");
         if (!s.kernelAvailable) status+=" · APK tính toán";
         manager.notify(STATUS_ID,statusNotification(status));
     }
