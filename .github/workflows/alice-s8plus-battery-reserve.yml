@@ -89,6 +89,7 @@ jobs:
           grep -q '^CONFIG_MALI_TMIX_R19P0=y$' "$C"
           grep -q '^CONFIG_LRU_GEN=y$' "$C"
           grep -q '^CONFIG_ALICE_BATTERY_RESERVE=y$' "$C"
+          grep -q '^# CONFIG_IKCONFIG is not set$' "$C"
           grep -q '^CONFIG_MUIC_UNIVERSAL_MAX77865=y$' "$C"
           grep -q '^CONFIG_MUIC_HV=y$' "$C"
           grep -q '^CONFIG_MUIC_HV_MAX77865=y$' "$C"
