@@ -50,6 +50,9 @@ jobs:
           python3 scripts/test_s8plus_afc.py
           python3 scripts/test_s8plus_kernel_battery_reserve.py
           sh -n scripts/collect_s8plus_afc.sh
+          sh -n scripts/alice_s8plus_upsm_guardian.sh
+          grep -q 'read_lock' scripts/alice_s8plus_upsm_guardian.sh
+          grep -q 'cmd power set-mode 1' scripts/alice_s8plus_upsm_guardian.sh
           python3 scripts/test_v12r68_energy_step.py
           python3 scripts/test_v12r69_energy_step_worker.py
           python3 scripts/test_schedutil_work.py
@@ -126,6 +129,7 @@ jobs:
           cp docs/S8PLUS_BATTERY_RESERVE_80_20_KERNEL.md artifacts/
           cp scripts/collect_s8plus_afc.sh artifacts/
           cp scripts/test_s8plus_kernel_battery_reserve.py artifacts/
+          cp scripts/alice_s8plus_upsm_guardian.sh artifacts/
           cp scripts/collect_s8plus_game_perf.sh artifacts/
           (cd artifacts && sha256sum * > SHA256SUMS)
 
