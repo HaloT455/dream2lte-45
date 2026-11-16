@@ -168,7 +168,7 @@ public final class MonitorService extends Service {
     private void update() {
         SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
         BatterySample s=BatterySample.sample(this,
-                p.getBoolean("emergency",false),p.getBoolean("fullSeen",false));
+                p.getBoolean("emergency",false),p.getBoolean("fullSeen",false),true);
         boolean auto=p.getBoolean("automatic",true);
         int customThreshold=p.getInt("customThreshold",24);
         boolean customTrigger=!auto && p.getBoolean("customAuto",false) &&

@@ -43,6 +43,10 @@ public final class BatterySample {
 
     public static BatterySample sample(Context context, boolean lastEmergency,
                                        boolean lastFull) {
+        return sample(context,lastEmergency,lastFull,false);
+    }
+    public static BatterySample sample(Context context, boolean lastEmergency,
+                                       boolean lastFull, boolean allowRoot) {
         Intent batt = context.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         int pct=0, temp=0, volt=-1, source=0;
         if (batt!=null) {
@@ -63,7 +67,7 @@ public final class BatterySample {
                          kNormal>=0 && kNormal<=100 && kDisplay>=0 && kDisplay<=100;
         SharedPreferences preferences=context.getSharedPreferences(
                 MonitorService.PREFS,Context.MODE_PRIVATE);
-        if (!kernel && preferences.getBoolean("rootApproved",false)) {
+        if (allowRoot && !kernel && preferences.getBoolean("rootApproved",false)) {
             RootShell.KernelSnapshot root=RootShell.readKernelReserve();
             if (root.valid) {
                 kReal=root.real;
