@@ -44,7 +44,7 @@ public final class MonitorService extends Service {
             Thread t=new Thread(r,"ALice-Battery-Monitor");
             t.setDaemon(true);return t;
         });
-        worker.scheduleWithFixedDelay(this::updateSafely,0,20,TimeUnit.SECONDS);
+        worker.scheduleWithFixedDelay(this::updateSafely,0,60,TimeUnit.SECONDS);
     }
 
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
@@ -114,15 +114,21 @@ public final class MonitorService extends Service {
         boolean wasPlugged=p.getBoolean("plugged",false);
         boolean hadSample=p.contains("lastSampleAt");
         boolean rootApproved=p.getBoolean("rootApproved",false);
-        String rootResult="";
+        String rootResult=p.getString("rootLast","");
+        long now=System.currentTimeMillis();
+        long lastRootAttempt=p.getLong("lastRootAttemptAt",0L);
+        boolean canRetry=lastRootAttempt==0L || now-lastRootAttempt>=180000L;
+        boolean rootAttempted=false;
 
         // Root execution only after the user explicitly authorized su in UI.
         // No capacity, frequency, charging-current, SELinux or thermal writes.
-        if (rootApproved && shouldSave && !s.saver) {
+        if (rootApproved && canRetry && shouldSave && !s.saver) {
+            rootAttempted=true;
             RootShell.Result r=RootShell.setStandardBatterySaver(true);
             if (r.success) {owned=true; rootResult="Battery Saver đã yêu cầu bật";}
             else rootResult="Không bật được Battery Saver: "+r.output;
-        } else if (rootApproved && !shouldSave && owned) {
+        } else if (rootApproved && canRetry && !shouldSave && owned) {
+            rootAttempted=true;
             RootShell.Result r=RootShell.setStandardBatterySaver(false);
             if (r.success) {owned=false;rootResult="Đã yêu cầu thoát Battery Saver";}
             else rootResult="Không tắt được Battery Saver: "+r.output;
@@ -136,8 +142,9 @@ public final class MonitorService extends Service {
          .putBoolean("plugged",s.plugged).putBoolean("kernel",s.kernelAvailable)
          .putBoolean("saver",s.saver).putBoolean("saverOwned",owned)
          .putString("charge",s.powerText())
-         .putLong("lastSampleAt",System.currentTimeMillis())
+         .putLong("lastSampleAt",now)
          .putString("rootLast",rootResult);
+        if (rootAttempted) e.putLong("lastRootAttemptAt",now);
 
         if (s.emergency && (!hadSample || !wasEmergency)) {
             String event="VÀO DỰ PHÒNG: 5% ảo = 24% thật; yêu cầu tiết kiệm";

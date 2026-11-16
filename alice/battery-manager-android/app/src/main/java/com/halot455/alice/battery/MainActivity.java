@@ -320,9 +320,11 @@ public final class MainActivity extends Activity {
         customTrigger.setEnabled(!automatic);
         customTrigger.setChecked(p.getBoolean("customAuto",false));
         notificationSwitch.setChecked(p.getBoolean("notifications",true));
-        rootStatus.setText(p.getBoolean("rootApproved",false)
-                ?"ROOT đã cấp · lệnh chỉ dùng bật/tắt Battery Saver Android"
-                :"Chưa cấp ROOT · vẫn xem pin và thông báo được");
+        String rootLast=p.getString("rootLast","");
+        rootStatus.setText((p.getBoolean("rootApproved",false)
+                ?"ROOT đã cấp · điều khiển Battery Saver Android"
+                :"Chưa cấp ROOT · chỉ theo dõi, chưa điều khiển Battery Saver")
+                +(rootLast.isEmpty()?"":"\nLệnh gần nhất: "+rootLast));
         startButton.setText(monitor?"TẮT GIÁM SÁT PIN":"BẬT GIÁM SÁT PIN");
         history.setText(p.getString("events","Chưa có sự kiện."));
         settingUi=false;
