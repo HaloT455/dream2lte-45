@@ -8,8 +8,8 @@ android {
         applicationId 'com.halot455.alice.battery'
         minSdk 26
         targetSdk 32
-        versionCode 102
-        versionName '1.1-ESG2-ICON-EMERGENCY-TEST'
+        versionCode 103
+        versionName '1.2-ESG2-SystemUI-80-20-TEST'
     }
 
     compileOptions {
@@ -17,3 +17,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+// Xposed classes MUST remain compileOnly: runtime framework provides them.
+dependencies { compileOnly files('libs/xposed-api-stubs.jar') }

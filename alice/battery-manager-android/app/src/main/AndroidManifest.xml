@@ -7,6 +7,11 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- Legacy Xposed/LSPosed module; scoped ONLY to Samsung SystemUI. -->
+        <meta-data android:name="xposedmodule" android:value="true"/>
+        <meta-data android:name="xposeddescription" android:value="ALice pin ảo 80/20 trên biểu tượng pin SystemUI; không sửa pin thật"/>
+        <meta-data android:name="xposedminversion" android:value="82"/>
+        <meta-data android:name="xposedscope" android:value="com.android.systemui"/>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
