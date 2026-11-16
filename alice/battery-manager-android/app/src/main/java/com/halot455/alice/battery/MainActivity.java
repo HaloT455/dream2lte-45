@@ -194,6 +194,14 @@ public final class MainActivity extends Activity {
         access.addView(text("ROOT & THÔNG BÁO",17,WHITE,true));
         rootStatus=text("Root chưa xác nhận",14,MUTED,false);
         access.addView(rootStatus);
+        access.addView(text("Biểu tượng pin gốc Samsung: cần Xposed/LSPosed tương thích "
+                +"và bật phạm vi com.android.systemui. Không thay đổi dữ liệu sạc.",12,MUTED,false));
+        Button enableStock=button("Yêu cầu bật pin ảo trên biểu tượng Samsung (root)");
+        Button disableStock=button("Khôi phục biểu tượng pin thật Samsung (root)");
+        addButton(access,enableStock);
+        addButton(access,disableStock);
+        enableStock.setOnClickListener(v -> setStockIconHook(true));
+        disableStock.setOnClickListener(v -> setStockIconHook(false));
         Button requestRoot=button("Kiểm tra / cấp quyền ROOT");
         addButton(access,requestRoot);
         requestRoot.setOnClickListener(v -> requestRoot());
@@ -219,7 +227,9 @@ public final class MainActivity extends Activity {
         recent.addView(text("NHẬT KÝ HOẠT ĐỘNG",17,WHITE,true));
         history=text("Chưa có sự kiện.",13,MUTED,false);
         recent.addView(history);
-        recent.addView(text("Biểu tượng PIN ẢO hiển thị trên thanh THÔNG BÁO. "
+        recent.addView(text("Ứng dụng hỗ trợ hook vào biểu tượng pin gốc Samsung qua Xposed/LSPosed (tùy ROM). " +
+                "Nếu SystemUI không có lớp phù hợp thì chỉ hiện biểu tượng thông báo ALice. " +
+                "Biểu tượng PIN ẢO luôn có thể hiển thị trên thanh THÔNG BÁO. "
                 +"Vuốt xuống, sửa Cài đặt nhanh và thêm ô Pin ảo ALice để xem pin thật/ảo. "
                 +"Khi ảo còn 5% (thật 24%), biểu tượng chuyển sang hiển thị 24% thật. "
                 +"Đây là thông báo phụ, không thay biểu tượng pin hệ thống của Samsung. "
@@ -251,6 +261,18 @@ public final class MainActivity extends Activity {
                 updateUi();
             });
         },"ALice-Root-Check").start();
+    }
+    private void setStockIconHook(boolean enabled) {
+        if (!p.getBoolean("rootApproved",false)) {
+            showMessage("Anh cấp quyền root trước. Cần bật module ALice trong Xposed/LSPosed và chỉ chọn com.android.systemui.");
+            return;
+        }
+        new Thread(() -> {
+            RootShell.Result r=RootShell.setStockBatteryIconOverride(enabled);
+            runOnUiThread(() -> showMessage(r.success
+                    ? (enabled?"Đã đặt chế độ PIN ẢO. Cần kích hoạt module ALice trong Xposed/LSPosed và khởi động lại SystemUI/thiết bị.":"Đã yêu cầu SystemUI hiện pin THẬT, không sửa hệ thống sạc.")
+                    : "Không thực hiện được: "+r.output));
+        },"ALice-SystemUI-Root").start();
     }
     private void manualSaver(boolean enabled) {
         if (!p.getBoolean("rootApproved",false)) {
@@ -328,7 +350,8 @@ public final class MainActivity extends Activity {
         rootStatus.setText((p.getBoolean("rootApproved",false)
                 ?"ROOT đã cấp · điều khiển Battery Saver Android"
                 :"Chưa cấp ROOT · chỉ theo dõi, chưa điều khiển Battery Saver")
-                +(rootLast.isEmpty()?"":"\nLệnh gần nhất: "+rootLast));
+                +(rootLast.isEmpty()?"":"\nLệnh gần nhất: "+rootLast)
+                +"\n"+p.getString("uiSyncState","Chưa đồng bộ pin với SystemUI"));
         startButton.setText(monitor?"TẮT GIÁM SÁT PIN":"BẬT GIÁM SÁT PIN");
         history.setText(p.getString("events","Chưa có sự kiện."));
         settingUi=false;
