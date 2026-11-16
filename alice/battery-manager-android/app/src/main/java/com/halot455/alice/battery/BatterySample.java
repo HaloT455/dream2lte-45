@@ -3,6 +3,7 @@ package com.halot455.alice.battery;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.os.BatteryManager;
 import android.os.PowerManager;
 import java.io.BufferedReader;
@@ -59,14 +60,30 @@ public final class BatterySample {
         int kDisplay=sysInt("/sys/kernel/alice_battery_reserve/display_percent",-1);
         int kFull=sysInt("/sys/kernel/alice_battery_reserve/full_charge_seen",-1);
         boolean kernel = kReal>=0 && kReal<=100 && kEmergency>=0 &&
-                         kNormal>=0 && kDisplay>=0;
-        BatteryMath.State fallback=BatteryMath.advance(
-                kernel?kReal:pct,plugged,lastEmergency,lastFull);
+                         kNormal>=0 && kNormal<=100 && kDisplay>=0 && kDisplay<=100;
+        SharedPreferences preferences=context.getSharedPreferences(
+                MonitorService.PREFS,Context.MODE_PRIVATE);
+        if (!kernel && preferences.getBoolean("rootApproved",false)) {
+            RootShell.KernelSnapshot root=RootShell.readKernelReserve();
+            if (root.valid) {
+                kReal=root.real;
+                kNormal=root.normal;
+                kEmergency=root.emergency;
+                kDisplay=root.display;
+                kFull=root.fullSeen;
+                kernel=true;
+            }
+        }
+        // The userspace latch survives reboot and handles a ROM that omits the
+        // kernel sysfs bridge. A kernel-requested emergency always wins.
         int real=kernel?kReal:BatteryMath.clamp(pct);
+        BatteryMath.State fallback=BatteryMath.advance(real,plugged,
+                lastEmergency || (kernel && kEmergency==1),
+                lastFull || (kernel && kFull==1));
         int normal=kernel?kNormal:fallback.normal;
-        boolean emergency=kernel?kEmergency==1:fallback.emergency;
-        boolean full=kernel?kFull==1:fallback.fullSeen;
-        int display=kernel?kDisplay:fallback.displayed;
+        boolean emergency=(kernel && kEmergency==1) || fallback.emergency;
+        boolean full=(kernel && kFull==1) || fallback.fullSeen;
+        int display=emergency?real:(kernel?kDisplay:fallback.displayed);
         BatteryManager bm=(BatteryManager)context.getSystemService(Context.BATTERY_SERVICE);
         int current=-999999;
         if (bm!=null) {
