@@ -66,7 +66,12 @@ jobs:
             --disable ALWAYS_PERMISSIVE \
             --disable SECURITY_SELINUX_DEVELOP \
             --disable LOCALVERSION_AUTO \
-            --set-str LOCALVERSION "-Alice-S8P-RESERVE8020-AFC-TEST"
+            --enable IKCONFIG \
+            --enable IKCONFIG_PROC \
+            --disable LRU_GEN_ENABLED \
+            --enable MALI_HALO_NPU_PARTITION \
+            --disable ALICE_SYSINTEL \
+            --set-str LOCALVERSION "-Alice-S8P-LZ4KD-BOOTFIX-TEST"
           make O=out-reverse olddefconfig
 
       - name: Verify kernel feature flags
@@ -86,12 +91,15 @@ jobs:
           grep -q '^CONFIG_MEMCG=y$' "$C"
           grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set$' "$C"
           grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set$' "$C"
-          grep -q '^# CONFIG_MALI_HALO_NPU_PARTITION is not set$' "$C"
+          grep -q '^CONFIG_MALI_HALO_NPU_PARTITION=y$' "$C"
           grep -q '^CONFIG_EXYNOS_VPU_HARDWARE=y$' "$C"
           grep -q '^CONFIG_MALI_TMIX_R19P0=y$' "$C"
           grep -q '^CONFIG_LRU_GEN=y$' "$C"
           grep -q '^CONFIG_ALICE_BATTERY_RESERVE=y$' "$C"
-          grep -q '^# CONFIG_IKCONFIG is not set$' "$C"
+          grep -q '^CONFIG_IKCONFIG=y$' "$C"
+          grep -q '^CONFIG_IKCONFIG_PROC=y$' "$C"
+          grep -q '^# CONFIG_LRU_GEN_ENABLED is not set$' "$C"
+          grep -q '^# CONFIG_ALICE_SYSINTEL is not set$' "$C"
           grep -q '^CONFIG_MUIC_UNIVERSAL_MAX77865=y$' "$C"
           grep -q '^CONFIG_MUIC_HV=y$' "$C"
           grep -q '^CONFIG_MUIC_HV_MAX77865=y$' "$C"
@@ -139,7 +147,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: S8Plus-ESG1-Normal-EnergyStep-Reserve80-20-AFC-Kernel-TEST
+          name: S8Plus-ESG2-LZ4KD-Compat-Reserve80-20-BOOTFIX-TEST
           path: artifacts/
           if-no-files-found: error
 

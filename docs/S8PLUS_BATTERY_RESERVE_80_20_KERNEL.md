@@ -56,3 +56,7 @@ CPUFreq optimization: cache key includes an emergency/normal mode bit; the kerne
 
 ## ESG1 user-requested normal Energy Step variant
 The Energy Step governor uses its original utilization headroom with discrete OPP steps in **normal mode** (no reverse-energy target). During reserve it caps CPU frequency requests to 70% peak. The flashable BOOT test is repacked from the user's **V12R5T-ESG1-EnergyStep-EAS-Enforcing-TEST.img** boot base, retaining its ramdisk and boot header. This does not mean the compiled kernel binary itself is the same ESG1 kernel: it is a new kernel built from this source branch. Root module handles Android battery notifications; Samsung proprietary UPSM and SystemUI battery display are not modified by kernel alone.
+
+## 2026-11-16 bootloop compatibility experiment (UNVERIFIED)
+
+The failed 80/20 boot on real S8+ was a **different kernel binary**, not a failed LZ4KD compressor. Extracted IKCONFIG from the user's ESG2-LZ4KD original had CONFIG_MALI_HALO_NPU_PARTITION=y, CONFIG_LRU_GEN_ENABLED=n and IKCONFIG=y/PROC=y. The bootloop kernel had changed all three. The hotfix CI restores these **at build time with scripts/config**; no claims of a verified root cause. Also disable the experimental ALICE_SYSINTEL code absent from ESG2. Preserve CONFIG_ZRAM_DEF_COMP_LZ4KD=y and default Energy Step. If hotfix still bootloops, collect pstore/last_kmsg and roll back to the original boot rather than repeatedly flashing.
