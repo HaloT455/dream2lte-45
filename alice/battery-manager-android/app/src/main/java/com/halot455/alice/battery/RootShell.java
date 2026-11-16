@@ -70,6 +70,29 @@ public final class RootShell {
         return new KernelSnapshot(false,-1,-1,-1,-1,-1);
     }
 
+    /** One allow-listed root batch publishes UI-only SOC to Settings.Global.
+     * SystemUI reads this state without root; the actual fuel gauge is untouched.
+     * Only 0..100 numeric values are allowed in the resulting shell string.
+     */
+    public static Result publishSystemUiBattery(int real,int normal,
+            boolean emergency,boolean fullSeen) {
+        if (real<0 || real>100 || normal<0 || normal>100)
+            return new Result(false,"Invalid SOC");
+        long stamp=System.currentTimeMillis();
+        String command="settings put global alice_8020_real "+real+
+                " && settings put global alice_8020_normal "+normal+
+                " && settings put global alice_8020_emergency "+(emergency?1:0)+
+                " && settings put global alice_8020_fullseen "+(fullSeen?1:0)+
+                " && settings put global alice_8020_sync_ms "+stamp;
+        return execute(command,12);
+    }
+
+    /** Manual fallback: disable only the SystemUI presentation hook via SU. */
+    public static Result setStockBatteryIconOverride(boolean enabled) {
+        return execute(enabled?"settings put global alice_8020_hook_enabled 1":
+                "settings put global alice_8020_hook_enabled 0",8);
+    }
+
     public static boolean isRootGranted() {
         Result r=execute("id -u",30);
         return r.success && "0".equals(r.output.trim());
