@@ -5,6 +5,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.drawable.Icon;
 import android.content.Context;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -86,22 +92,47 @@ public final class MonitorService extends Service {
         return PendingIntent.getActivity(this,0,open,
                 PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
+    /** Small white-on-transparent status bar icon with the VIRTUAL percentage,
+     * or actual percentage when the reserve threshold forces emergency mode.
+     * This is an extra notification icon; it does NOT override Samsung SystemUI.
+     */
+    private Icon percentIcon(int displayedPercent) {
+        int number=Math.max(0,Math.min(100,displayedPercent));
+        Bitmap bitmap=Bitmap.createBitmap(96,96,Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(bitmap);
+        Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(6f);
+        canvas.drawRoundRect(new RectF(6,18,78,86),9,9,paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawRoundRect(new RectF(80,37,88,65),2,2,paint);
+        paint.setTypeface(android.graphics.Typeface.create(
+                android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD));
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(number==100?26f:(number<10?43f:35f));
+        canvas.drawText(Integer.toString(number),42,64,paint);
+        return Icon.createWithBitmap(bitmap);
+    }
     private Notification statusNotification(String message) {
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         int real=prefs.getInt("real",-1);
         int virtual=prefs.getInt("virtual",-1);
         boolean emergency=prefs.getBoolean("emergency",false);
+        int display=prefs.getInt("display",virtual);
         String title=real>=0 && virtual>=0 ?
-                "PIN ẢO "+virtual+"% | THẬT "+real+"%" : "ALice Battery 80/20";
+                (emergency ? "DỰ PHÒNG · PIN THẬT "+real+"% | ẢO "+virtual+"%"
+                           : "PIN ẢO "+virtual+"% | PIN THẬT "+real+"%")
+                : "ALice Battery 80/20";
         Notification.Builder builder=new Notification.Builder(this,STATUS_CHANNEL)
-                .setSmallIcon(R.drawable.ic_virtual_battery)
+                .setSmallIcon(percentIcon(display<0?100:display))
                 .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(new Notification.BigTextStyle().bigText(message))
                 .setContentIntent(appIntent()).setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setCategory(Notification.CATEGORY_SERVICE);
-        if (virtual>=0 && virtual<=100) builder.setProgress(100,virtual,false);
+        if (display>=0 && display<=100) builder.setProgress(100,display,false);
         if (emergency) builder.setSubText("DỰ PHÒNG · TIẾT KIỆM KHẨN CẤP");
         return builder.build();
     }
