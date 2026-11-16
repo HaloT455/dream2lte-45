@@ -212,6 +212,29 @@ public final class MonitorService extends Service {
          .putString("rootLast",rootResult);
         if (rootAttempted) e.putLong("lastRootAttemptAt",now);
 
+        // Synchronize only transitions / actual SOC changes. No per-frame or
+        // per-second su process, and no write to system battery properties.
+        boolean uiChanged=!p.contains("uiSyncedReal") ||
+                s.real!=p.getInt("uiSyncedReal",-1) ||
+                s.virtual!=p.getInt("uiSyncedNormal",-1) ||
+                s.emergency!=p.getBoolean("uiSyncedEmergency",false) ||
+                s.fullSeen!=p.getBoolean("uiSyncedFullSeen",false);
+        boolean uiRetry=now-p.getLong("uiSyncAttemptAt",0L)>=30000L;
+        if (rootApproved && uiChanged && uiRetry) {
+            RootShell.Result bridge=RootShell.publishSystemUiBattery(
+                    s.real,s.virtual,s.emergency,s.fullSeen);
+            e.putLong("uiSyncAttemptAt",now);
+            if (bridge.success) {
+                e.putInt("uiSyncedReal",s.real)
+                 .putInt("uiSyncedNormal",s.virtual)
+                 .putBoolean("uiSyncedEmergency",s.emergency)
+                 .putBoolean("uiSyncedFullSeen",s.fullSeen)
+                 .putString("uiSyncState","Đã gửi dữ liệu pin ảo qua ROOT tới SystemUI");
+            } else {
+                e.putString("uiSyncState","Không đồng bộ được SystemUI: "+bridge.output);
+            }
+        }
+
         if (s.emergency && (!hadSample || !wasEmergency)) {
             String event="VÀO DỰ PHÒNG: 5% ảo = 24% thật; yêu cầu tiết kiệm";
             appendEvent(e,p,event);
