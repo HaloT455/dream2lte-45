@@ -6,10 +6,14 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.IntentFilter;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.IBinder;
+import android.service.quicksettings.TileService;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -25,6 +29,9 @@ public final class MonitorService extends Service {
     private static final int STATUS_ID=18920, ALERT_ID=18921;
     private ScheduledExecutorService worker;
     private NotificationManager manager;
+    private BroadcastReceiver batteryEvents;
+    private int lastBroadcastLevel=-1;
+    private int lastBroadcastPlug=-1;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -45,6 +52,24 @@ public final class MonitorService extends Service {
             t.setDaemon(true);return t;
         });
         worker.scheduleWithFixedDelay(this::updateSafely,0,60,TimeUnit.SECONDS);
+        // A percent / charging transition must not wait for the 60s timer.
+        // Ignore voltage-only broadcasts to avoid CPU and root polling churn.
+        IntentFilter changes=new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        changes.addAction(Intent.ACTION_POWER_CONNECTED);
+        changes.addAction(Intent.ACTION_POWER_DISCONNECTED);
+        batteryEvents=new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                int level=intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL,-1);
+                int plug=intent.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED,-1);
+                if (level==lastBroadcastLevel && plug==lastBroadcastPlug) return;
+                lastBroadcastLevel=level;
+                lastBroadcastPlug=plug;
+                ScheduledExecutorService executor=worker;
+                if (executor!=null && !executor.isShutdown()) executor.execute(
+                        MonitorService.this::updateSafely);
+            }
+        };
+        registerReceiver(batteryEvents,changes);
     }
 
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
@@ -52,6 +77,7 @@ public final class MonitorService extends Service {
     }
     @Override public IBinder onBind(Intent intent) {return null;}
     @Override public void onDestroy() {
+        if (batteryEvents!=null) unregisterReceiver(batteryEvents);
         if (worker!=null) worker.shutdownNow();
         super.onDestroy();
     }
@@ -61,14 +87,23 @@ public final class MonitorService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     }
     private Notification statusNotification(String message) {
-        return new Notification.Builder(this,STATUS_CHANNEL)
-                .setSmallIcon(android.R.drawable.ic_lock_idle_low_battery)
-                .setContentTitle("ALice Battery 80/20")
+        SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        int real=prefs.getInt("real",-1);
+        int virtual=prefs.getInt("virtual",-1);
+        boolean emergency=prefs.getBoolean("emergency",false);
+        String title=real>=0 && virtual>=0 ?
+                "PIN ẢO "+virtual+"% | THẬT "+real+"%" : "ALice Battery 80/20";
+        Notification.Builder builder=new Notification.Builder(this,STATUS_CHANNEL)
+                .setSmallIcon(R.drawable.ic_virtual_battery)
+                .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(new Notification.BigTextStyle().bigText(message))
                 .setContentIntent(appIntent()).setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_SERVICE).build();
+                .setCategory(Notification.CATEGORY_SERVICE);
+        if (virtual>=0 && virtual<=100) builder.setProgress(100,virtual,false);
+        if (emergency) builder.setSubText("DỰ PHÒNG · TIẾT KIỆM KHẨN CẤP");
+        return builder.build();
     }
     private void alert(String title,String message) {
         SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
@@ -150,7 +185,8 @@ public final class MonitorService extends Service {
             String event="VÀO DỰ PHÒNG: 5% ảo = 24% thật; yêu cầu tiết kiệm";
             appendEvent(e,p,event);
             alert("ALice: Đã vào pin dự phòng",event+
-                    (s.kernelAvailable?" · Khóa từ kernel":" · Chế độ mô phỏng trong APK"));
+                    (s.kernelAvailable?" · Kernel đã kích hoạt dự phòng":" · APK đang giữ trạng thái dự phòng")+
+                    (rootApproved?" · Đang yêu cầu Battery Saver":" · Cần cấp ROOT để bật Battery Saver"));
         } else if (hadSample && wasEmergency && !s.emergency) {
             appendEvent(e,p,"Sạc đầy pin thật và rút dây: trở lại pin ảo");
             alert("ALice: Quay về chế độ thường",
@@ -166,5 +202,9 @@ public final class MonitorService extends Service {
                 (s.currentMa==-999999?"":" · "+s.currentMa+"mA");
         if (!s.kernelAvailable) status+=" · APK tính toán";
         manager.notify(STATUS_ID,statusNotification(status));
+        if (android.os.Build.VERSION.SDK_INT>=24) {
+            TileService.requestListeningState(this,
+                    new ComponentName(this,VirtualBatteryTile.class));
+        }
     }
 }
