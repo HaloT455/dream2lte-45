@@ -8,8 +8,8 @@ android {
         applicationId 'com.halot455.alice.battery'
         minSdk 26
         targetSdk 32
-        versionCode 101
-        versionName '1.0-ESG1-TEST'
+        versionCode 102
+        versionName '1.1-ESG2-ICON-EMERGENCY-TEST'
     }
 
     compileOptions {

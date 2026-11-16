@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
         if (p.getBoolean("monitor",true)) startMonitor();
         if (firstStart) {
             new AlertDialog.Builder(this).setTitle("ALice ESG1 80/20 đã sẵn sàng")
-                    .setMessage("Giám sát pin và chế độ Tự động đã bật. Để điều khiển Battery Saver Android, bạn cần cấp root một lần. Các lần khởi động lại sẽ tự chạy. Phần trăm thanh trạng thái Samsung vẫn là pin thật.")
+                    .setMessage("Đã bật giám sát Tự động. Thông báo có biểu tượng PIN ẢO và anh có thể thêm ô Pin ảo trong Cài đặt nhanh. Khi pin thật xuống 24%, ứng dụng yêu cầu bật Battery Saver ngay, không khởi động lại điện thoại. Cấp ROOT một lần để tự động dùng chức năng này. Phần trăm pin gốc của Samsung vẫn là pin thật.")
                     .setPositiveButton("Cấp ROOT", (dialog,which)->requestRoot())
                     .setNegativeButton("Xem pin không root",null)
                     .show();
@@ -131,7 +131,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         body.addView(text("ALice · BATTERY 80/20",18,ACCENT,true));
-        body.addView(text("Galaxy S8+ · ESG1 · Root Dashboard",13,MUTED,false));
+        body.addView(text("Galaxy S8+ · ESG2 LZ4KD · Root Dashboard",13,MUTED,false));
 
         LinearLayout main=panel(body);
         main.addView(text("PIN ĐANG HIỂN THỊ TRONG ỨNG DỤNG",13,MUTED,true));
@@ -219,8 +219,12 @@ public final class MainActivity extends Activity {
         recent.addView(text("NHẬT KÝ HOẠT ĐỘNG",17,WHITE,true));
         history=text("Chưa có sự kiện.",13,MUTED,false);
         recent.addView(history);
-        recent.addView(text("Cảnh báo: Ứng dụng không đổi pin thật, không ép xung và không "
-                +"thể bật/khóa màn hình Siêu tiết kiệm Samsung độc quyền chỉ bằng root.",
+        recent.addView(text("Biểu tượng PIN ẢO hiển thị trên thanh THÔNG BÁO. "
+                +"Vuốt xuống, sửa Cài đặt nhanh và thêm ô Pin ảo ALice để xem pin thật/ảo. "
+                +"Khi ảo còn 5% (thật 24%), biểu tượng chuyển sang hiển thị 24% thật. "
+                +"Đây là thông báo phụ, không thay biểu tượng pin hệ thống của Samsung. "
+                +"Ứng dụng không đổi pin thật, không ép xung và không "
+                +"thể tự chuyển giao diện Siêu tiết kiệm Samsung độc quyền chỉ bằng root.",
                 12,DANGER,false));
 
         Button refresh=button("Đọc lại pin ngay");
@@ -309,7 +313,7 @@ public final class MainActivity extends Activity {
         customButton.setBackground(bg(automatic?SURFACE:ACCENT,automatic?ACCENT:0));
         customButton.setTextColor(automatic?WHITE:BG);
         modeHint.setText(automatic?
-                "Tự động: khi pin ảo 5% (24% thật), bật lại Battery Saver Android. "
+                "Tự động: khi pin ảo 5% (24% thật), tự yêu cầu bật Battery Saver Android bằng root, không reboot. "
                 +"Sạc đầy 100% thật rồi rút sạc mới thoát khóa.":
                 "Tùy chỉnh: chọn mức kích hoạt Battery Saver và bật/tắt thủ công. "
                 +"Mốc dự phòng an toàn 24% của kernel luôn cố định.");
