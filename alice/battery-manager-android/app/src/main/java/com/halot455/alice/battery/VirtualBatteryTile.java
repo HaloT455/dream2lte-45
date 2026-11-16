@@ -32,7 +32,7 @@ public final class VirtualBatteryTile extends TileService {
             return;
         }
         tile.setIcon(Icon.createWithResource(this,R.drawable.ic_virtual_battery));
-        tile.setLabel("Ảo "+virtual+"% · Thật "+real+"%");
+        tile.setLabel(emergency ? "Dự phòng "+real+"% · Ảo "+virtual+"%" : "Ảo "+virtual+"% · Thật "+real+"%");
         tile.setState(Tile.STATE_ACTIVE);
         if (android.os.Build.VERSION.SDK_INT>=29) {
             tile.setContentDescription(emergency?
