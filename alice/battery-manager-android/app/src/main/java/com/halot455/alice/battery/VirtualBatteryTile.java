@@ -25,17 +25,20 @@ public final class VirtualBatteryTile extends TileService {
         int real=p.getInt("real",-1), virtual=p.getInt("virtual",-1);
         boolean emergency=p.getBoolean("emergency",false);
         if (real<0 || virtual<0) {
-            BatterySample sample=BatterySample.sample(this,false,false);
-            real=sample.real;
-            virtual=sample.virtual;
-            emergency=sample.emergency;
+            tile.setLabel("Pin ảo · mở ALice");
+            tile.setIcon(Icon.createWithResource(this,R.drawable.ic_virtual_battery));
+            tile.setState(Tile.STATE_INACTIVE);
+            tile.updateTile();
+            return;
         }
         tile.setIcon(Icon.createWithResource(this,R.drawable.ic_virtual_battery));
         tile.setLabel("Ảo "+virtual+"% · Thật "+real+"%");
         tile.setState(Tile.STATE_ACTIVE);
-        tile.setContentDescription(emergency?
-                "Pin dự phòng ALice, thật "+real+" phần trăm":
-                "Pin ảo "+virtual+" phần trăm; pin thật "+real+" phần trăm");
+        if (android.os.Build.VERSION.SDK_INT>=29) {
+            tile.setContentDescription(emergency?
+                    "Pin dự phòng ALice, thật "+real+" phần trăm":
+                    "Pin ảo "+virtual+" phần trăm; pin thật "+real+" phần trăm");
+        }
         tile.updateTile();
     }
 }
