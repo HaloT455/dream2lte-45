@@ -138,6 +138,14 @@ config CPU_FREQ_DEFAULT_GOV_ENERGYSTEP
 	  This adapts discrete frequency steps to Linux 4.4/WALT, NOT Samsung
 	  EMS energy_step (which requires newer emstune/EMS energy tables).
 
+config CPU_FREQ_DEFAULT_GOV_ENERGYAWARE
+    bool "energy_aware (Exynos8895 scheduler energy table)"
+    depends on SMP
+    select CPU_FREQ_GOV_ENERGYAWARE
+    select CPU_FREQ_GOV_PERFORMANCE
+    help
+      Use the energy-aware CPUFreq governor by default.
+
 config CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE
 	bool "blu_active"
 	select CPU_FREQ_GOV_BLU_ACTIVE
@@ -262,6 +270,15 @@ config CPU_FREQ_GOV_SCHEDUTIL
 	  be called cpufreq_schedutil.
 
 	  If in doubt, say N.
+
+config CPU_FREQ_GOV_ENERGYAWARE
+    bool "Exynos8895 energy_aware CPUFreq governor"
+    depends on SMP
+    select CPU_FREQ_GOV_COMMON
+    select IRQ_WORK
+    select SCHED_TUNE
+    help
+      Built-in governor using scheduler energy cost data from DTB.
 
 config CPU_FREQ_GOV_ENERGYSTEP
 	bool "'energy_step' Exynos8895 compatible cpufreq governor"
