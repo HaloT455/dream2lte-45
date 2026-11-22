@@ -5,7 +5,7 @@ The verified `boot.img` must use the exact original ALice Galaxy S8+ ramdisk.
 
 ## Required input
 
-Upload a file named **ALICE_original_ramdisk.cpio.gz** into this directory.
+**Simplest iPhone workflow:** download the ZIP under 1 MB from the ChatGPT conversation and upload the ZIP **without extracting it** into this directory, named **ALICE_original_ramdisk.zip**. GitHub Actions will extract the original `ALICE_original_ramdisk.cpio.gz` inside it. Alternatively, upload the extracted `ALICE_original_ramdisk.cpio.gz`.
 SHA-256 must equal:
 
 ```
@@ -14,7 +14,7 @@ SHA-256 must equal:
 
 ## What happens automatically
 
-On the push that adds the input, GitHub Actions runs
+On the push that adds the ZIP (or extracted ramdisk), GitHub Actions runs
 `.github/workflows/alice-s8plus-boot-img-ci.yml`.
 It fetches the actual, verified arm64 kernel and Samsung DTB from the
 successful build run [45043851949](https://github.com/HaloT455/dream2lte-45/actions/runs/45043851949),
