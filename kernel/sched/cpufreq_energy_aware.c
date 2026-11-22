@@ -148,7 +148,7 @@ static void eagov_update_commit(struct eagov_policy *sg_policy, u64 time,
 }
 
 /*
- * ALice EAM v2: evaluate ENERGY of each supported Exynos8895 OPP.
+ * ALice EAM v3: Samsung A53 EGO OPP search on Exynos8895 energy costs.
  *
  * The DTS sched-energy-costs tables expose a capacity and a busy power for
  * each core OPP, plus separate cluster power and idle-state costs.  We
@@ -178,39 +178,55 @@ static unsigned long eagov_util_to_load(unsigned long util,
                 (u64)min(util, capacity) * EAGOV_LOAD_SCALE, capacity);
 }
 
+/*
+ * EGO (Exynos1280)-inspired energy evaluation, adapted to Exynos8895:
+ *
+ *  1. Work out the minimum capacity required by the most loaded CPU.
+ *  2. Walk the *real cpufreq OPP table*, not a proportional target.
+ *  3. Reject any OPP which cannot supply that capacity.
+ *  4. Estimate busy and idle energy across the whole cluster using
+ *     Exynos8895 DTS sched-energy-costs (core + shared cluster).
+ *  5. Select the OPP with lowest predicted energy.
+ *
+ * The Samsung EGO source uses et_freq_to_cap()/et_compute_cpu_energy(),
+ * MLT idle ratios, emstune and fclamp.  Those interfaces do not exist in
+ * this Linux 4.4 kernel.  These computations are a native 4.4 adaptation
+ * of that algorithm, NOT a copy of the whole Samsung EMS framework.
+ *
+ * The original Samsung ESG energy_step.c source is archived as a separate
+ * reference.  We use the same capacity/power distinction, but keep only
+ * the energy_aware governor registered and enabled.
+ */
 static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
-                                             unsigned long peak_load,
-                                             unsigned long total_load)
+                                            unsigned long peak_load,
+                                            unsigned long total_load)
 {
     struct cpufreq_policy *policy = sg_policy->policy;
+    struct cpufreq_frequency_table *opp;
     const struct sched_group_energy *core, *cluster;
-    unsigned long max_cap = 0, required;
-    unsigned long core_idle, cluster_idle;
+    unsigned long max_cap = 0, required, core_idle, cluster_idle;
     unsigned int best_freq = policy->max;
     u64 best_energy = U64_MAX;
-    int i, k;
     bool found = false;
+    int i;
 
-    if (!peak_load)
+    if (unlikely(!peak_load))
         return policy->min;
 
     core = READ_ONCE(sge_array[policy->cpu][SD_LEVEL0]);
     cluster = READ_ONCE(sge_array[policy->cpu][SD_LEVEL1]);
-    if (unlikely(!core || !core->cap_states || !core->nr_cap_states)) {
-        /* Never silently substitute the schedutil formula for the EM. */
-        pr_warn_once("no core energy model; keeping safe maximum OPP\n");
+    if (unlikely(!core || !core->cap_states || !core->nr_cap_states ||
+                 !policy->freq_table)) {
+        pr_warn_once("missing DTS energy model or OPP table: safe maximum\n");
         return policy->max;
     }
 
     for (i = 0; i < core->nr_cap_states; i++)
         max_cap = max(max_cap, (unsigned long)core->cap_states[i].cap);
-    if (unlikely(!max_cap))
+    if (unlikely(!max_cap || !policy->cpuinfo.max_freq))
         return policy->max;
 
-    /*
-     * Convert utilization to the DTS capacity domain.  Headroom expresses
-     * a *feasibility constraint*, not a proportional frequency request.
-     */
+    /* Capacity headroom is a constraint. It is NOT a frequency formula. */
     required = (unsigned long)div64_u64(
                 (u64)min(peak_load, EAGOV_LOAD_SCALE) * max_cap *
                 EAGOV_CAPACITY_MARGIN_NUM +
@@ -224,40 +240,53 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
                    cluster->nr_idle_states ?
                    cluster->idle_states[0].power : 0;
 
-    for (i = 0; i < core->nr_cap_states; i++) {
-        const struct capacity_state *state = &core->cap_states[i];
+    /*
+     * Like A53 EGO's ego_find_energy_freq(), walk driver-supported
+     * frequencies and compare the cost to execute the same workload.
+     * The frequency-to-capacity conversion is the Linux 4.4 fallback
+     * for Exynos1280's et_freq_to_cap(), using Exynos8895's DTS caps.
+     */
+    cpufreq_for_each_valid_entry(opp, policy->freq_table) {
+        const struct capacity_state *core_state = NULL;
         const struct capacity_state *cluster_state = NULL;
-        unsigned long core_dynamic, cluster_dynamic;
-        unsigned int candidate;
+        unsigned long opp_cap, core_dynamic, cluster_dynamic;
+        unsigned int freq = opp->frequency;
         u64 energy;
 
-        if (!state->cap || state->cap < required)
+        if (freq < policy->min || freq > policy->max)
             continue;
 
+        opp_cap = (unsigned long)div64_u64((u64)max_cap * freq,
+                                            policy->cpuinfo.max_freq);
+        opp_cap = clamp_val(opp_cap, 1UL, max_cap);
+        if (opp_cap < required)
+            continue;
+
+        for (i = 0; i < core->nr_cap_states; i++) {
+            if (core->cap_states[i].cap >= opp_cap) {
+                core_state = &core->cap_states[i];
+                break;
+            }
+        }
+        if (!core_state)
+            core_state = &core->cap_states[core->nr_cap_states - 1];
+
         /*
-         * E_core = N * P_idle +
-         *          (P_busy - P_idle) * (sum_util / capacity).
-         *
-         * Scale both utilization and power consistently; we compare
-         * relative energies, so the common LOAD_SCALE denominator drops.
+         * Core idle power is charged for every member of the policy;
+         * dynamic power scales with SUM of active CPU work fractions.
          */
-        core_dynamic = state->power > core_idle ?
-                       state->power - core_idle : 0;
+        core_dynamic = core_state->power > core_idle ?
+                       core_state->power - core_idle : 0;
         energy = (u64)core_idle * cpumask_weight(policy->cpus) *
                  EAGOV_LOAD_SCALE;
         energy += div64_u64(
-                    (u64)core_dynamic * total_load * max_cap,
-                    state->cap);
+                    (u64)core_dynamic * total_load * max_cap, opp_cap);
 
-        /*
-         * Cluster energy is paid ONCE for shared hardware, not for each
-         * active CPU.  The busiest CPU bounds the cluster busy fraction.
-         * Match the cluster capacity state to the core candidate.
-         */
+        /* Shared cluster idle cost only ONCE; dynamic cost at peak. */
         if (cluster && cluster->cap_states && cluster->nr_cap_states) {
-            for (k = 0; k < cluster->nr_cap_states; k++) {
-                if (cluster->cap_states[k].cap >= state->cap) {
-                    cluster_state = &cluster->cap_states[k];
+            for (i = 0; i < cluster->nr_cap_states; i++) {
+                if (cluster->cap_states[i].cap >= opp_cap) {
+                    cluster_state = &cluster->cap_states[i];
                     break;
                 }
             }
@@ -270,29 +299,19 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
             energy += (u64)cluster_idle * EAGOV_LOAD_SCALE;
             energy += div64_u64(
                         (u64)cluster_dynamic * peak_load * max_cap,
-                        max_t(unsigned long, cluster_state->cap, 1UL));
+                        opp_cap);
         }
 
-        /*
-         * The DTS table stores capacities, not frequencies.  Translate
-         * the chosen MODEL OPP to a cpufreq driver-supported frequency,
-         * then enforce thermal/PM-QoS policy min and max constraints.
-         */
-        candidate = (unsigned int)div64_u64(
-                    (u64)policy->cpuinfo.max_freq * state->cap,
-                    max_cap);
-        candidate = cpufreq_driver_resolve_freq(policy,
-                    clamp_val(candidate, policy->min, policy->max));
-
         if (!found || energy < best_energy ||
-            (energy == best_energy && candidate < best_freq)) {
-            best_freq = candidate;
+            (energy == best_energy && freq < best_freq)) {
             best_energy = energy;
+            best_freq = freq;
             found = true;
         }
     }
 
-    return best_freq;
+    /* The PM/QoS constrained policy may have no feasible energy OPP. */
+    return found ? best_freq : policy->max;
 }
 
 static inline bool use_pelt(void)
