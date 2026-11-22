@@ -1,0 +1,111 @@
+name: ALice S8Plus Energy Aware Kernel CI
+on:
+  push:
+    branches:
+      - agent/s8plus-energy-aware-kernel-20261122
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout dedicated ALice source branch
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            bc bison flex build-essential libssl-dev libelf-dev python3 wget tar xz-utils
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+      - name: Download toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/tools"
+          wget -q --show-progress -O "$HOME/tools/gcc.tar.xz" \
+            https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz
+          tar -xJf "$HOME/tools/gcc.tar.xz" -C "$HOME/tools"
+
+      - name: Configure compiler
+        run: |
+          echo "ARCH=arm64" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$HOME/tools/arm-gnu-toolchain-14.2.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_USER=alice" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_HOST=s8plus-energy-aware" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+
+      - name: Generate strict energy-aware config
+        run: |
+          set -eux
+          make O=out-ea exynos8895-dream2lte_defconfig
+          scripts/config --file out-ea/.config \
+            --disable ALWAYS_PERMISSIVE \
+            --disable SECURITY_SELINUX_DEVELOP \
+            --disable LOCALVERSION_AUTO \
+            --disable CPU_FREQ_DEFAULT_GOV_ENERGYSTEP \
+            --disable CPU_FREQ_GOV_ENERGYSTEP \
+            --disable CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+            --disable CPU_FREQ_GOV_SCHEDUTIL \
+            --disable ALICE_BATTERY_RESERVE \
+            --enable CPU_FREQ_GOV_ENERGYAWARE \
+            --enable CPU_FREQ_DEFAULT_GOV_ENERGYAWARE \
+            --set-str LOCALVERSION "-Alice-S8P-EA-KSU-LZ4KD"
+          make O=out-ea olddefconfig
+
+      - name: Assert kernel-only integration
+        run: |
+          set -eux
+          C=out-ea/.config
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$' "$C"
+          grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYAWARE=y$' "$C"
+          ! grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y$' "$C"
+          ! grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$C"
+          ! grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$C"
+          ! grep -q '^CONFIG_ALICE_BATTERY_RESERVE=y$' "$C"
+          grep -q '^CONFIG_KSU=y$' "$C"
+          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' "$C"
+          grep -q '^CONFIG_CRYPTO_LZ4KD=y$' "$C"
+          grep -q 'sge_array\[' kernel/sched/cpufreq_energy_aware.c
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          grep -Eq ' [a-zA-Z] cpufreq_gov_energy_aware$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          sha256sum artifact/* > artifact/SHA256SUMS
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-Kernel-Image-DTB
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
