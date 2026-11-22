@@ -5,6 +5,7 @@ on:
       - agent/s8plus-energy-aware-kernel-20261122
     paths:
       - boot-input/ALICE_original_ramdisk.cpio.gz
+      - boot-input/ALICE_original_ramdisk.zip
   workflow_dispatch:
 
 permissions:
@@ -22,8 +23,13 @@ jobs:
       - name: Check exact original ALice ramdisk
         run: |
           set -euo pipefail
-          test -s boot-input/ALICE_original_ramdisk.cpio.gz
-          echo "0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2  boot-input/ALICE_original_ramdisk.cpio.gz" | sha256sum -c -
+          if [ -f boot-input/ALICE_original_ramdisk.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_ramdisk.zip)" = "ALICE_original_ramdisk.cpio.gz"
+            unzip -p boot-input/ALICE_original_ramdisk.zip ALICE_original_ramdisk.cpio.gz > "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz"
+          else
+            cp boot-input/ALICE_original_ramdisk.cpio.gz "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz"
+          fi
+          echo "0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2  $RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz" | sha256sum -c -
 
       - name: Fetch precompiled verified energy_aware Image and dtb.img
         env:
@@ -49,7 +55,7 @@ jobs:
           python3 scripts/alice_ci_boot_pack.py \
             --image kernel-out/Image-energy-aware \
             --dtb kernel-out/dtb.img \
-            --ramdisk boot-input/ALICE_original_ramdisk.cpio.gz \
+            --ramdisk "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz" \
             --out output/boot.img
           echo "4173a9b5b4c497070369913369ceabb5682457194343d0e02409f63dc3a3fa08  output/boot.img" | sha256sum -c -
           (cd output && sha256sum boot.img > SHA256SUMS.txt)
