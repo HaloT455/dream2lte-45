@@ -1,8 +1,8 @@
-name: ALice S8Plus Energy Model v2 CPUFreq CI
+name: ALice S8Plus EGO Inspired energy_aware CI
 on:
   push:
     branches:
-      - agent/s8plus-energy-aware-model-v2-20261123
+      - agent/s8plus-a53-ego-esg-port-20261123
   workflow_dispatch:
 
 permissions:
@@ -76,6 +76,11 @@ jobs:
           grep -q 'core_dynamic \* total_load' kernel/sched/cpufreq_energy_aware.c
           grep -q 'cluster_dynamic \* peak_load' kernel/sched/cpufreq_energy_aware.c
           grep -q 'SD_LEVEL1' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'cpufreq_for_each_valid_entry(opp, policy->freq_table)' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'ego_find_energy_freq' kernel/sched/cpufreq_energy_aware.c
+          grep -q '.name = "energy_aware"' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-energy_step-user-reference.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
           ! grep -q 'get_next_freq' kernel/sched/cpufreq_energy_aware.c
           ! grep -q 'cached_raw_freq' kernel/sched/cpufreq_energy_aware.c
 
@@ -104,7 +109,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ALice-S8Plus-EnergyAware-Kernel-Image-DTB
+          name: ALice-S8Plus-A53-EGO-Adapted-EnergyAware-Kernel
           path: artifact/
           if-no-files-found: error
 
