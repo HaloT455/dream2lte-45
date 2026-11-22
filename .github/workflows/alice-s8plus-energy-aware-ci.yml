@@ -84,6 +84,16 @@ jobs:
           ! grep -q 'get_next_freq' kernel/sched/cpufreq_energy_aware.c
           ! grep -q 'cached_raw_freq' kernel/sched/cpufreq_energy_aware.c
 
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+
       - name: Build Image and DTBs
         run: |
           set -o pipefail
