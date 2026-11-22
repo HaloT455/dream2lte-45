@@ -54,9 +54,15 @@ def unpack_original(original):
     if original_dt[:4] != SAMSUNG_DTB_MAGIC:
         fail("Original boot DTB is not the expected Samsung DTBH format")
 
+    cmdline = original[64:576] + original[608:1632]
+    if b"samsungexynos8895" not in cmdline:
+        fail("Original boot does not identify Samsung Exynos8895 hardware")
+
     footer = original[end:]
-    if footer and not (footer.startswith(SAMSUNG_FOOTER) or
-                       not footer.strip(b"\x00")):
+    if footer.startswith(SAMSUNG_FOOTER):
+        if footer[len(SAMSUNG_FOOTER):].strip(b"\\x00"):
+            fail("Unrecognized extra data after Samsung footer; refusing to forge signatures")
+    elif footer.strip(b"\\x00"):
         fail("Unknown original boot footer; refusing to discard/forge signatures")
     # A signature is NOT valid after modifying the boot image. The Samsung
     # SEANDROIDENFORCE compatibility trailer is *not* a cryptographic signature.
