@@ -60,9 +60,9 @@ def unpack_original(original):
 
     footer = original[end:]
     if footer.startswith(SAMSUNG_FOOTER):
-        if footer[len(SAMSUNG_FOOTER):].strip(b"\\x00"):
+        if footer[len(SAMSUNG_FOOTER):].strip(b"\x00"):
             fail("Unrecognized extra data after Samsung footer; refusing to forge signatures")
-    elif footer.strip(b"\\x00"):
+    elif footer.strip(b"\x00"):
         fail("Unknown original boot footer; refusing to discard/forge signatures")
     # A signature is NOT valid after modifying the boot image. The Samsung
     # SEANDROIDENFORCE compatibility trailer is *not* a cryptographic signature.
