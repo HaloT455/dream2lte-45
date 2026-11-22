@@ -1,34 +1,50 @@
-# ALice S8+ EnergyAware boot.img CI
+# REAL Samsung Galaxy S8+ (Exynos8895) energy_aware boot CI
 
-This path is deliberately **missing** the original user ramdisk until uploaded.
-The verified `boot.img` must use the exact original ALice Galaxy S8+ ramdisk.
+There is **no pre-generated boot.img in this branch**. The energy-aware CI
+will only publish a flash-test boot image when supplied with a **genuine**
+original boot image from the same handset and currently used ROM.
 
-## Required input
+## Required file: choose ONE
 
-**Simplest iPhone workflow:** download the ZIP under 1 MB from the ChatGPT conversation and upload the ZIP **without extracting it** into this directory, named **ALICE_original_ramdisk.zip**. GitHub Actions will extract the original `ALICE_original_ramdisk.cpio.gz` inside it. Alternatively, upload the extracted `ALICE_original_ramdisk.cpio.gz`.
-SHA-256 must equal:
+- `boot-input/ALICE_original_boot.img` (original unmodified boot partition image), OR
+- `boot-input/ALICE_original_boot.zip` (ZIP containing exactly one file
+  named `boot.img`, with the same original image bytes).
 
-```
-0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2
-```
+The boot input is NOT included in the repository. Do not substitute a random
+downloaded Galaxy S8/S8+ boot or a reconstructed/empty ramdisk. Kernel/ROM,
+ramdisk, DTB and boot header must all match the target handset. Upload only
+material you are authorized to use; avoid committing personal boot dumps to
+public repositories if they may contain private data.
 
-## What happens automatically
+## What the CI actually does
 
-On the push that adds the ZIP (or extracted ramdisk), GitHub Actions runs
-`.github/workflows/alice-s8plus-boot-img-ci.yml`.
-It fetches the actual, verified arm64 kernel and Samsung DTB from the
-successful build run [45043851949](https://github.com/HaloT455/dream2lte-45/actions/runs/45043851949),
-reconstructs the original Android boot v0 header, and writes
-`output/boot.img`. CI **refuses** other ramdisks and publishes only if
-the final SHA-256 is exactly:
+1. Checkout the exact `agent/s8plus-a53-ego-esg-port-20261123` commit.
+2. Compile **energy_aware** as the default governor with
+   `exynos8895-dream2lte_defconfig`.
+3. Verify `System.map`, `.config`, `Image` and the Samsung `dtb.img`
+   from the **same build**, not a hardcoded previous run.
+4. Validate original `ANDROID!` boot v0, Exynos8895 command line and
+   `DTBH` DTB layout. The repacker preserves original header fields,
+   ramdisk, second-stage and recognized Samsung `SEANDROIDENFORCE` trailer,
+   replacing only kernel + Samsung DTB + boot SHA1.
+5. Record source-boot SHA256, new Image SHA256, DTB SHA256, preserved ramdisk
+   SHA256, final boot SHA256, commit SHA and matching kernel config.
+6. Publish `ALice-Exynos8895-EnergyAware-REAL-BOOT-<sha>` artifact **only
+   when every check passes**.
 
-```
-4173a9b5b4c497070369913369ceabb5682457194343d0e02409f63dc3a3fa08
-```
+If original boot input is missing, kernel CI still builds `Image` and
+`dtb.img`, emits a warning, and **does not create a boot image**.
 
-The GitHub Actions artifact will be called
-**ALice_S8Plus_EnergyAware_KSU_LZ4KD_BOOT_TEST**.
+The separate manual `alice-s8plus-boot-img-ci.yml` workflow also refuses
+stale builds. It can only download an energy-aware kernel artifact from a
+successful CI run for the **exact same commit**.
 
-This is **not physically boot-tested**. Do not flash without a backup and
-recovery method. This energy_aware is an Exynos8895 adaptation, not the
-complete Samsung A53 EMS/EGO subsystem.
+## Safety and status
+
+No image produced by this CI has been confirmed to boot on physical hardware.
+The custom kernel is not signed; do not bypass a locked bootloader, Verified
+Boot, or device security. Preserve your original boot partition, maintain
+working recovery and verify the target partition size before any flash.
+
+This is an Exynos8895 Linux 4.4 energy-model adaptation inspired by Samsung
+EGO/EMS. It is not a full port of Samsung Exynos1280 scheduler hooks.
