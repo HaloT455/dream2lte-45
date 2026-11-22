@@ -1,8 +1,8 @@
-name: ALice S8Plus Energy Aware Kernel CI
+name: ALice S8Plus Energy Model v2 CPUFreq CI
 on:
   push:
     branches:
-      - agent/s8plus-energy-aware-kernel-20261122
+      - agent/s8plus-energy-aware-model-v2-20261123
   workflow_dispatch:
 
 permissions:
@@ -72,6 +72,12 @@ jobs:
           grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' "$C"
           grep -q '^CONFIG_CRYPTO_LZ4KD=y$' "$C"
           grep -q 'sge_array\[' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_energy_model_freq' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'core_dynamic \* total_load' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'cluster_dynamic \* peak_load' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'SD_LEVEL1' kernel/sched/cpufreq_energy_aware.c
+          ! grep -q 'get_next_freq' kernel/sched/cpufreq_energy_aware.c
+          ! grep -q 'cached_raw_freq' kernel/sched/cpufreq_energy_aware.c
 
       - name: Build Image and DTBs
         run: |
