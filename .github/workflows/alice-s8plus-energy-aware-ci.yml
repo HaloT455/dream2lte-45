@@ -103,7 +103,7 @@ jobs:
           cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
           cp out-ea/.config artifact/energy-aware.config
           cp out-ea/System.map artifact/System.map
-          sha256sum artifact/* > artifact/SHA256SUMS
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
 
       - name: Upload kernel build outputs
         if: success()
@@ -120,3 +120,50 @@ jobs:
           name: ALice-S8Plus-EnergyAware-build-log
           path: build-energy-aware.log
           if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
