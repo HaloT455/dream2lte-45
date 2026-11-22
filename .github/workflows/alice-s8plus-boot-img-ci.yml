@@ -1,11 +1,5 @@
-name: ALice S8Plus Pack Verified boot.img for Test
+name: ALice S8Plus Repack REAL EnergyAware boot.img (same commit)
 on:
-  push:
-    branches:
-      - agent/s8plus-energy-aware-kernel-20261122
-    paths:
-      - boot-input/ALICE_original_ramdisk.cpio.gz
-      - boot-input/ALICE_original_ramdisk.zip
   workflow_dispatch:
 
 permissions:
@@ -14,57 +8,67 @@ permissions:
 
 jobs:
   pack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
-      - name: Checkout ALice kernel source and ramdisk
+      - name: Checkout exact ALice branch commit
         uses: actions/checkout@v4
 
-      - name: Check exact original ALice ramdisk
+      - name: Require genuine original boot image
         run: |
           set -euo pipefail
-          if [ -f boot-input/ALICE_original_ramdisk.zip ]; then
-            test "$(unzip -Z1 boot-input/ALICE_original_ramdisk.zip)" = "ALICE_original_ramdisk.cpio.gz"
-            unzip -p boot-input/ALICE_original_ramdisk.zip ALICE_original_ramdisk.cpio.gz > "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz"
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide exactly one original boot input"
+            exit 1
+          elif [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/original-boot.img"
+          elif [ -f boot-input/ALICE_original_boot.img ]; then
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/original-boot.img"
           else
-            cp boot-input/ALICE_original_ramdisk.cpio.gz "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz"
+            echo "::error::Missing ORIGINAL boot.img from the SAME device/ROM. No synthetic or stale boot is allowed."
+            exit 1
           fi
-          echo "0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2  $RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz" | sha256sum -c -
+          test -s "$RUNNER_TEMP/original-boot.img"
 
-      - name: Fetch precompiled verified energy_aware Image and dtb.img
+      - name: Fetch only a verified SAME-COMMIT successful build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p kernel-out
-          gh run download 45043851949 -R "${{ github.repository }}" \
-            --name ALice-S8Plus-EnergyAware-Kernel-Image-DTB \
+          RUN_ID="$(gh run list \
+            --workflow alice-s8plus-energy-aware-ci.yml \
+            --commit "$GITHUB_SHA" --status success \
+            --json databaseId --jq '.[0].databaseId' --limit 10)"
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No successful energy-aware kernel build for commit $GITHUB_SHA. Run energy-aware CI first."
+            exit 1
+          fi
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            --name ALice-S8Plus-A53-EGO-Adapted-EnergyAware-Kernel \
             --dir kernel-out
-          test -s kernel-out/Image-energy-aware
-          test -s kernel-out/dtb.img
-          grep -q "^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$" kernel-out/energy-aware.config
-          grep -q "^CONFIG_KSU=y$" kernel-out/energy-aware.config
-          grep -q "^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$" kernel-out/energy-aware.config
-          grep -q " cpufreq_gov_energy_aware$" kernel-out/System.map
           (cd kernel-out && sha256sum -c SHA256SUMS)
+          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$' kernel-out/energy-aware.config
+          grep -Eq ' [a-zA-Z] cpufreq_gov_energy_aware$' kernel-out/System.map
+          echo "Source commit: $GITHUB_SHA" > provenance.txt
+          echo "Kernel CI run: $RUN_ID" >> provenance.txt
 
-      - name: Pack exact boot image from user's original ramdisk
+      - name: Pack using original header ramdisk and Samsung footer
         run: |
           set -euo pipefail
           mkdir -p output
-          python3 scripts/alice_ci_boot_pack.py \
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$RUNNER_TEMP/original-boot.img" \
             --image kernel-out/Image-energy-aware \
             --dtb kernel-out/dtb.img \
-            --ramdisk "$RUNNER_TEMP/ALICE_original_ramdisk.cpio.gz" \
-            --out output/boot.img
-          echo "4173a9b5b4c497070369913369ceabb5682457194343d0e02409f63dc3a3fa08  output/boot.img" | sha256sum -c -
-          (cd output && sha256sum boot.img > SHA256SUMS.txt)
-          echo 'WARNING: NOT physically boot-tested on Galaxy S8+. Keep original boot and recovery access.' > output/README_TEST_ONLY.txt
+            --out output/boot.img | tee output/build-provenance.txt
+          cat provenance.txt >> output/build-provenance.txt
+          (cd output && sha256sum boot.img > SHA256SUMS)
+          echo "UNTESTED boot; keep recovery and backup of original boot partition." > output/README-TEST-ONLY.txt
 
-      - name: Upload ONE boot.img to GitHub Actions Artifacts
+      - name: Upload boot test image (no fabricated boot)
         uses: actions/upload-artifact@v4
         with:
-          name: ALice_S8Plus_EnergyAware_KSU_LZ4KD_BOOT_TEST
+          name: ALice-S8Plus-REAL-EnergyAware-BOOT-${{ github.sha }}
           path: output/
-          compression-level: 6
           if-no-files-found: error
