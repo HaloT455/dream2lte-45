@@ -37,6 +37,8 @@ struct eagov_tunables {
 	struct gov_attr_set attr_set;
 	unsigned int up_rate_limit_us;
 	unsigned int down_rate_limit_us;
+	/* Optional Samsung ESG-style per-policy power envelope (0 = off). */
+	unsigned int energy_power_budget;
 };
 
 struct eagov_policy {
@@ -205,9 +207,10 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
     struct cpufreq_frequency_table *opp;
     const struct sched_group_energy *core, *cluster;
     unsigned long max_cap = 0, required, core_idle, cluster_idle;
-    unsigned int best_freq = policy->max;
-    u64 best_energy = U64_MAX;
-    bool found = false;
+    unsigned int best_freq = policy->max, budget_freq = policy->max;
+    unsigned int power_budget = READ_ONCE(sg_policy->tunables->energy_power_budget);
+    u64 best_energy = U64_MAX, budget_energy = U64_MAX;
+    bool found = false, budget_found = false;
     int i;
 
     if (unlikely(!peak_load))
@@ -251,7 +254,7 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
         const struct capacity_state *cluster_state = NULL;
         unsigned long opp_cap, core_dynamic, cluster_dynamic;
         unsigned int freq = opp->frequency;
-        u64 energy;
+        u64 energy, opp_busy_power;
 
         if (freq < policy->min || freq > policy->max)
             continue;
@@ -308,9 +311,32 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
             best_freq = freq;
             found = true;
         }
+
+        /*
+         * Samsung ESG uses find_step_power()/find_allowed_capacity() to
+         * impose an energy-step power constraint.  This tree has no EMS
+         * energy table nor step profiles: use actual Exynos8895 DTS busy
+         * power units instead.  A budget is OPTIONAL and cannot force an
+         * OPP below the load's capacity requirement.  If none satisfy
+         * the budget, the unconstrained minimum-energy OPP wins.
+         */
+        opp_busy_power = (u64)core_state->power *
+                         cpumask_weight(policy->cpus);
+        if (cluster_state)
+            opp_busy_power += cluster_state->power;
+
+        if (power_budget && opp_busy_power <= power_budget &&
+            (!budget_found || energy < budget_energy ||
+             (energy == budget_energy && freq < budget_freq))) {
+            budget_energy = energy;
+            budget_freq = freq;
+            budget_found = true;
+        }
     }
 
     /* The PM/QoS constrained policy may have no feasible energy OPP. */
+    if (budget_found)
+        return budget_freq;
     return found ? best_freq : policy->max;
 }
 
@@ -645,12 +671,40 @@ static ssize_t down_rate_limit_us_store(struct gov_attr_set *attr_set,
 	return count;
 }
 
+/*
+ * Optional ESG-style power envelope in the *actual DTS busy-cost units*:
+ * sum of busy core powers plus one shared-cluster power.  Zero (default)
+ * makes the governor rely solely on the EGO-like energy minimization.
+ */
+static ssize_t energy_power_budget_show(struct gov_attr_set *attr_set, char *buf)
+{
+    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
+
+    return sprintf(buf, "%u\\n", READ_ONCE(tunables->energy_power_budget));
+}
+
+static ssize_t energy_power_budget_store(struct gov_attr_set *attr_set,
+                                          const char *buf, size_t count)
+{
+    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
+    unsigned int value;
+
+    if (kstrtouint(buf, 10, &value))
+        return -EINVAL;
+
+    WRITE_ONCE(tunables->energy_power_budget, value);
+    return count;
+}
+
+static struct governor_attr energy_power_budget = __ATTR_RW(energy_power_budget);
+
 static struct governor_attr up_rate_limit_us = __ATTR_RW(up_rate_limit_us);
 static struct governor_attr down_rate_limit_us = __ATTR_RW(down_rate_limit_us);
 
 static struct attribute *eagov_attributes[] = {
 	&up_rate_limit_us.attr,
 	&down_rate_limit_us.attr,
+	&energy_power_budget.attr,
 	NULL
 };
 
@@ -766,6 +820,7 @@ static void eagov_tunables_save(struct cpufreq_policy *policy,
 
 	cached->up_rate_limit_us = tunables->up_rate_limit_us;
 	cached->down_rate_limit_us = tunables->down_rate_limit_us;
+	cached->energy_power_budget = READ_ONCE(tunables->energy_power_budget);
 }
 
 static void eagov_tunables_free(struct eagov_tunables *tunables)
@@ -787,6 +842,7 @@ static void eagov_tunables_restore(struct cpufreq_policy *policy)
 
 	tunables->up_rate_limit_us = cached->up_rate_limit_us;
 	tunables->down_rate_limit_us = cached->down_rate_limit_us;
+	WRITE_ONCE(tunables->energy_power_budget, cached->energy_power_budget);
 	sg_policy->up_rate_delay_ns =
 		tunables->up_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->down_rate_delay_ns =
@@ -853,6 +909,7 @@ static int eagov_init(struct cpufreq_policy *policy)
 		tunables->down_rate_limit_us = EAGOV_DEFAULT_DOWN_RATE_LIMIT_US;
 	}
 
+	WRITE_ONCE(tunables->energy_power_budget, 0);
 	policy->governor_data = sg_policy;
 	sg_policy->tunables = tunables;
 	stale_ns = walt_ravg_window + (walt_ravg_window >> 3);
