@@ -253,6 +253,7 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
         const struct capacity_state *core_state = NULL;
         const struct capacity_state *cluster_state = NULL;
         unsigned long opp_cap, core_dynamic, cluster_dynamic;
+        unsigned long core_cap, cluster_cap;
         unsigned int freq = opp->frequency;
         u64 energy, opp_busy_power;
 
@@ -278,12 +279,18 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
          * Core idle power is charged for every member of the policy;
          * dynamic power scales with SUM of active CPU work fractions.
          */
+        /* Use the capacity from Samsung's actual energy-state table
+         * when estimating work duration.  opp_cap is only a frequency-
+         * based feasibility estimate; its linear approximation must not
+         * silently replace the DTS capacity in the energy equation.
+         */
+        core_cap = max(1UL, (unsigned long)core_state->cap);
         core_dynamic = core_state->power > core_idle ?
                        core_state->power - core_idle : 0;
         energy = (u64)core_idle * cpumask_weight(policy->cpus) *
                  EAGOV_LOAD_SCALE;
         energy += div64_u64(
-                    (u64)core_dynamic * total_load * max_cap, opp_cap);
+                    (u64)core_dynamic * total_load * max_cap, core_cap);
 
         /* Shared cluster idle cost only ONCE; dynamic cost at peak. */
         if (cluster && cluster->cap_states && cluster->nr_cap_states) {
@@ -297,12 +304,13 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
                 cluster_state =
                     &cluster->cap_states[cluster->nr_cap_states - 1];
 
+            cluster_cap = max(1UL, (unsigned long)cluster_state->cap);
             cluster_dynamic = cluster_state->power > cluster_idle ?
                               cluster_state->power - cluster_idle : 0;
             energy += (u64)cluster_idle * EAGOV_LOAD_SCALE;
             energy += div64_u64(
                         (u64)cluster_dynamic * peak_load * max_cap,
-                        opp_cap);
+                        cluster_cap);
         }
 
         if (!found || energy < best_energy ||
