@@ -680,7 +680,7 @@ static ssize_t energy_power_budget_show(struct gov_attr_set *attr_set, char *buf
 {
     struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
 
-    return sprintf(buf, "%u\\n", READ_ONCE(tunables->energy_power_budget));
+    return sprintf(buf, "%u\n", READ_ONCE(tunables->energy_power_budget));
 }
 
 static ssize_t energy_power_budget_store(struct gov_attr_set *attr_set,
