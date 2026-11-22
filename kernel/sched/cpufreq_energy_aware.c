@@ -51,7 +51,6 @@ struct eagov_policy {
 	s64 up_rate_delay_ns;
 	s64 down_rate_delay_ns;
 	unsigned int next_freq;
-	unsigned int cached_raw_freq;
 
 	/* The next fields are only needed if fast switch cannot be used. */
 	struct irq_work irq_work;
@@ -126,11 +125,8 @@ static void eagov_update_commit(struct eagov_policy *sg_policy, u64 time,
 {
 	struct cpufreq_policy *policy = sg_policy->policy;
 
-	if (eagov_up_down_rate_limit(sg_policy, time, next_freq)) {
-		/* Reset cached freq as next_freq isn't changed */
-		sg_policy->cached_raw_freq = 0;
+	if (eagov_up_down_rate_limit(sg_policy, time, next_freq))
 		return;
-	}
 
 	if (sg_policy->next_freq == next_freq)
 		return;
@@ -151,122 +147,152 @@ static void eagov_update_commit(struct eagov_policy *sg_policy, u64 time,
 	}
 }
 
-/**
- * get_next_freq - Compute a new frequency for a given cpufreq policy.
- * @sg_policy: energy_step policy object to compute the new frequency for.
- * @util: Current CPU utilization.
- * @max: CPU capacity.
- *
- * If the utilization is frequency-invariant, choose the new frequency to be
- * proportional to it, that is
- *
- * next_freq = C * max_freq * util / max
- *
- * Otherwise, approximate the would-be frequency-invariant utilization by
- * util_raw * (curr_freq / max_freq) which leads to
- *
- * next_freq = C * curr_freq * util_raw / max
- *
- * Take C = 1.25 for the frequency tipping point at (util / max) = 0.8.
- *
- * The lowest driver-supported frequency which is equal or greater than the raw
- * next_freq (as calculated above) is returned, subject to policy min/max and
- * cpufreq driver limitations.
- */
 /*
- * ALICE EnergyStep-compat for Linux 4.4 / Exynos8895 (V12R68).
+ * ALice EAM v2: evaluate ENERGY of each supported Exynos8895 OPP.
  *
- * Samsung's genuine energy_step (2019+) relies on EMS energy-table hooks,
- * emstune, uclamp and vendor tracepoints missing from the Exynos8895 tree.
- * We preserve this tree's proven WALT/PELT, IOWAIT and cpufreq workqueue,
- * but select frequency in discrete policy-relative energy steps instead
- * of proportional schedutil targets. This is NOT Samsung EMS energy_step.
+ * The DTS sched-energy-costs tables expose a capacity and a busy power for
+ * each core OPP, plus separate cluster power and idle-state costs.  We
+ * evaluate the energy needed to execute the current policy's workload over
+ * one scheduler window (core work SUM, cluster active time PEAK), constrained
+ * by the highest per-CPU utilization and a modest capacity headroom.
  *
- * The step count is fixed, never exceeds policy->max and does not write
- * thermal/QoS constraints. The up/down rate limits retain hysteresis.
+ * This is deliberately NOT schedutil's (util * max_freq / max_capacity)
+ * frequency computation.  Utilization only describes the work requirement;
+ * the energy model, rather than a proportional clock target, picks the OPP.
+ *
+ * Retain the Linux 4.4 scheduler callback, IOWAIT, RT/DL and slow cpufreq
+ * transition infrastructure for the Exynos8895 hardware.  This is not the
+ * Samsung 5.10 EMS/EGO task-placement subsystem shipped on Exynos1280.
  */
-/*
- * ALice energy-aware CPUFreq algorithm for Exynos 8895, Linux 4.4.
- * Scheduler energy data is populated from 'sched-energy-costs' in DTB.
- * This is an Exynos 8895 adaptation, not Samsung A53 5.10 EMS/EGO.
- */
-static unsigned int eagov_energy_table_freq(struct eagov_policy *sg_policy,
-                                             unsigned long util,
-                                             unsigned long max_util)
+#define EAGOV_LOAD_SCALE            (1UL << SCHED_CAPACITY_SHIFT)
+#define EAGOV_CAPACITY_MARGIN_NUM   9U
+#define EAGOV_CAPACITY_MARGIN_DEN   8U
+
+static unsigned long eagov_util_to_load(unsigned long util,
+                                        unsigned long capacity)
+{
+    if (unlikely(!capacity))
+        return 0;
+
+    return (unsigned long)div64_u64(
+                (u64)min(util, capacity) * EAGOV_LOAD_SCALE, capacity);
+}
+
+static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
+                                             unsigned long peak_load,
+                                             unsigned long total_load)
 {
     struct cpufreq_policy *policy = sg_policy->policy;
-    const struct sched_group_energy *sge;
-    unsigned long cap_max = 0, required;
-    u64 best_cost = U64_MAX;
-    unsigned int best_freq = 0;
-    int i;
+    const struct sched_group_energy *core, *cluster;
+    unsigned long max_cap = 0, required;
+    unsigned long core_idle, cluster_idle;
+    unsigned int best_freq = policy->max;
+    u64 best_energy = U64_MAX;
+    int i, k;
+    bool found = false;
 
-    if (!max_util)
+    if (!peak_load)
         return policy->min;
 
-    sge = READ_ONCE(sge_array[policy->cpu][SD_LEVEL0]);
-    if (!sge || !sge->cap_states || !sge->nr_cap_states)
-        return 0;
+    core = READ_ONCE(sge_array[policy->cpu][SD_LEVEL0]);
+    cluster = READ_ONCE(sge_array[policy->cpu][SD_LEVEL1]);
+    if (unlikely(!core || !core->cap_states || !core->nr_cap_states)) {
+        /* Never silently substitute the schedutil formula for the EM. */
+        pr_warn_once("no core energy model; keeping safe maximum OPP\n");
+        return policy->max;
+    }
 
-    for (i = 0; i < sge->nr_cap_states; i++)
-        cap_max = max(cap_max, (unsigned long)sge->cap_states[i].cap);
-    if (!cap_max)
-        return 0;
+    for (i = 0; i < core->nr_cap_states; i++)
+        max_cap = max(max_cap, (unsigned long)core->cap_states[i].cap);
+    if (unlikely(!max_cap))
+        return policy->max;
 
+    /*
+     * Convert utilization to the DTS capacity domain.  Headroom expresses
+     * a *feasibility constraint*, not a proportional frequency request.
+     */
     required = (unsigned long)div64_u64(
-                (u64)min(util, max_util) * cap_max * 9,
-                (u64)max_util * 8);
-    required = clamp_val(required, 1UL, cap_max);
+                (u64)min(peak_load, EAGOV_LOAD_SCALE) * max_cap *
+                EAGOV_CAPACITY_MARGIN_NUM +
+                (u64)EAGOV_LOAD_SCALE * EAGOV_CAPACITY_MARGIN_DEN - 1,
+                (u64)EAGOV_LOAD_SCALE * EAGOV_CAPACITY_MARGIN_DEN);
+    required = clamp_val(required, 1UL, max_cap);
 
-    for (i = 0; i < sge->nr_cap_states; i++) {
-        const struct capacity_state *state = &sge->cap_states[i];
+    core_idle = core->idle_states && core->nr_idle_states ?
+                core->idle_states[0].power : 0;
+    cluster_idle = cluster && cluster->idle_states &&
+                   cluster->nr_idle_states ?
+                   cluster->idle_states[0].power : 0;
+
+    for (i = 0; i < core->nr_cap_states; i++) {
+        const struct capacity_state *state = &core->cap_states[i];
+        const struct capacity_state *cluster_state = NULL;
+        unsigned long core_dynamic, cluster_dynamic;
         unsigned int candidate;
-        u64 cost;
+        u64 energy;
 
         if (!state->cap || state->cap < required)
             continue;
 
-        cost = div64_u64((u64)state->power * required, state->cap);
-        candidate = (unsigned int)div64_u64(
-                   (u64)policy->cpuinfo.max_freq * state->cap, cap_max);
-        candidate = clamp_val(candidate, policy->min, policy->max);
-        candidate = cpufreq_driver_resolve_freq(policy, candidate);
+        /*
+         * E_core = N * P_idle +
+         *          (P_busy - P_idle) * (sum_util / capacity).
+         *
+         * Scale both utilization and power consistently; we compare
+         * relative energies, so the common LOAD_SCALE denominator drops.
+         */
+        core_dynamic = state->power > core_idle ?
+                       state->power - core_idle : 0;
+        energy = (u64)core_idle * cpumask_weight(policy->cpus) *
+                 EAGOV_LOAD_SCALE;
+        energy += div64_u64(
+                    (u64)core_dynamic * total_load * max_cap,
+                    state->cap);
 
-        if (!best_freq || cost < best_cost ||
-            (cost == best_cost && candidate < best_freq)) {
-            best_cost = cost;
+        /*
+         * Cluster energy is paid ONCE for shared hardware, not for each
+         * active CPU.  The busiest CPU bounds the cluster busy fraction.
+         * Match the cluster capacity state to the core candidate.
+         */
+        if (cluster && cluster->cap_states && cluster->nr_cap_states) {
+            for (k = 0; k < cluster->nr_cap_states; k++) {
+                if (cluster->cap_states[k].cap >= state->cap) {
+                    cluster_state = &cluster->cap_states[k];
+                    break;
+                }
+            }
+            if (!cluster_state)
+                cluster_state =
+                    &cluster->cap_states[cluster->nr_cap_states - 1];
+
+            cluster_dynamic = cluster_state->power > cluster_idle ?
+                              cluster_state->power - cluster_idle : 0;
+            energy += (u64)cluster_idle * EAGOV_LOAD_SCALE;
+            energy += div64_u64(
+                        (u64)cluster_dynamic * peak_load * max_cap,
+                        max_t(unsigned long, cluster_state->cap, 1UL));
+        }
+
+        /*
+         * The DTS table stores capacities, not frequencies.  Translate
+         * the chosen MODEL OPP to a cpufreq driver-supported frequency,
+         * then enforce thermal/PM-QoS policy min and max constraints.
+         */
+        candidate = (unsigned int)div64_u64(
+                    (u64)policy->cpuinfo.max_freq * state->cap,
+                    max_cap);
+        candidate = cpufreq_driver_resolve_freq(policy,
+                    clamp_val(candidate, policy->min, policy->max));
+
+        if (!found || energy < best_energy ||
+            (energy == best_energy && candidate < best_freq)) {
             best_freq = candidate;
+            best_energy = energy;
+            found = true;
         }
     }
+
     return best_freq;
-}
-
-static unsigned int get_next_freq(struct eagov_policy *sg_policy,
-                                  unsigned long util, unsigned long max_util)
-{
-    struct cpufreq_policy *policy = sg_policy->policy;
-    unsigned int base = arch_scale_freq_invariant() ?
-                        policy->cpuinfo.max_freq : policy->cur;
-    unsigned int raw, selected;
-
-    if (unlikely(!max_util))
-        return policy->min;
-
-    raw = (unsigned int)div64_u64(
-          (u64)(base + (base >> 3)) * util, max_util);
-
-    if (raw == sg_policy->cached_raw_freq &&
-        !sg_policy->need_freq_update)
-        return sg_policy->next_freq;
-
-    sg_policy->need_freq_update = false;
-    sg_policy->cached_raw_freq = raw;
-
-    selected = eagov_energy_table_freq(sg_policy, util, max_util);
-    if (!selected)
-        selected = cpufreq_driver_resolve_freq(policy,
-                   clamp_val(raw, policy->min, policy->max));
-    return selected;
 }
 
 static inline bool use_pelt(void)
@@ -392,17 +418,15 @@ static void eagov_update_single(struct update_util_data *hook, u64 time,
 	} else {
 		eagov_get_util(&util, &max, time);
 		eagov_iowait_boost(sg_cpu, &util, &max);
-		next_f = get_next_freq(sg_policy, util, max);
+		/* Let the energy model choose the OPP for this CPU workload. */
+		util = eagov_util_to_load(util, max);
+		next_f = eagov_energy_model_freq(sg_policy, util, util);
 		/*
 		 * Do not reduce the frequency if the CPU has not been idle
 		 * recently, as the reduction is likely to be premature then.
 		 */
-		if (busy && next_f < sg_policy->next_freq) {
+		if (busy && next_f < sg_policy->next_freq)
 			next_f = sg_policy->next_freq;
-
-			/* Reset cached freq as next_freq has changed */
-			sg_policy->cached_raw_freq = 0;
-		}
 	}
 	/* Serialize single-CPU slow-path updates with the worker too. */
 	if (policy->fast_switch_enabled) {
@@ -416,43 +440,35 @@ static void eagov_update_single(struct update_util_data *hook, u64 time,
 
 static unsigned int eagov_next_freq_shared(struct eagov_cpu *sg_cpu, u64 time)
 {
-	struct eagov_policy *sg_policy = sg_cpu->sg_policy;
-	struct cpufreq_policy *policy = sg_policy->policy;
-	unsigned long util = 0, max = 1;
-	unsigned int j;
+    struct eagov_policy *sg_policy = sg_cpu->sg_policy;
+    struct cpufreq_policy *policy = sg_policy->policy;
+    unsigned long peak_load = 0, total_load = 0;
+    unsigned int j;
 
-	for_each_cpu(j, policy->cpus) {
-		struct eagov_cpu *j_sg_cpu = &per_cpu(eagov_cpu, j);
-		unsigned long j_util, j_max;
-		s64 delta_ns;
+    for_each_cpu(j, policy->cpus) {
+        struct eagov_cpu *j_sg_cpu = &per_cpu(eagov_cpu, j);
+        unsigned long j_util, j_max, j_load;
+        s64 delta_ns;
 
-		/*
-		 * If the CPU utilization was last updated before the previous
-		 * frequency update and the time elapsed between the last update
-		 * of the CPU utilization and the last frequency update is long
-		 * enough, don't take the CPU into account as it probably is
-		 * idle now (and clear iowait_boost for it).
-		 */
-		delta_ns = time - j_sg_cpu->last_update;
-		if (delta_ns > stale_ns) {
-			j_sg_cpu->iowait_boost = 0;
-			j_sg_cpu->iowait_boost_pending = false;
-			continue;
-		}
-		if (j_sg_cpu->flags & SCHED_CPUFREQ_DL)
-			return policy->cpuinfo.max_freq;
+        /* Exclude stale tasks when estimating the next window's work. */
+        delta_ns = time - j_sg_cpu->last_update;
+        if (delta_ns > stale_ns) {
+            j_sg_cpu->iowait_boost = 0;
+            j_sg_cpu->iowait_boost_pending = false;
+            continue;
+        }
+        if (j_sg_cpu->flags & SCHED_CPUFREQ_DL)
+            return policy->max;
 
-		j_util = j_sg_cpu->util;
-		j_max = j_sg_cpu->max;
-		if (j_util * max >= j_max * util) {
-			util = j_util;
-			max = j_max;
-		}
+        j_util = j_sg_cpu->util;
+        j_max = j_sg_cpu->max;
+        eagov_iowait_boost(j_sg_cpu, &j_util, &j_max);
+        j_load = eagov_util_to_load(j_util, j_max);
+        peak_load = max(peak_load, j_load);
+        total_load += j_load;
+    }
 
-		eagov_iowait_boost(j_sg_cpu, &util, &max);
-	}
-
-	return get_next_freq(sg_policy, util, max);
+    return eagov_energy_model_freq(sg_policy, peak_load, total_load);
 }
 
 static void eagov_update_shared(struct update_util_data *hook, u64 time,
@@ -891,7 +907,6 @@ static int eagov_start(struct cpufreq_policy *policy)
 	sg_policy->next_freq = 0;
 	sg_policy->work_in_progress = false;
 	sg_policy->need_freq_update = false;
-	sg_policy->cached_raw_freq = 0;
 
 	for_each_cpu(cpu, policy->cpus) {
 		struct eagov_cpu *sg_cpu = &per_cpu(eagov_cpu, cpu);
