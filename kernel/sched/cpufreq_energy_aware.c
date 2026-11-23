@@ -11,6 +11,9 @@
 
 #include <linux/cpufreq.h>
 #include <linux/cpuidle.h>
+#include <linux/cpu.h>
+#include <linux/pm_opp.h>
+#include <linux/rcupdate.h>
 #include <trace/events/power.h>
 #include <linux/kthread.h>
 #include <linux/math64.h>
@@ -21,6 +24,7 @@
 
 #include "sched.h"
 #include "energy_aware_model.h"
+#include "energy_aware_oc.h"
 #include "energy_aware_idle.h"
 
 unsigned long boosted_cpu_util(int cpu);
@@ -30,6 +34,8 @@ struct eagov_policy {
 	unsigned int qos_min_class;
 	unsigned int qos_max_class;
 	struct eagov_energy_model model;
+	/* Native Samsung DTS entries are exact; later OC power is estimated. */
+	unsigned int nr_native_states;
 	struct gov_attr_set attr_set;
 	struct list_head attr_hook;
 	raw_spinlock_t lock;
@@ -139,7 +145,102 @@ static void eagov_qos_range(struct eagov_policy *ea, unsigned int *low,
 	*high = clamp_val((unsigned int)qos_max, policy->min, policy->max);
 }
 
-/* Every state must have its own explicit frequency in the Samsung DT. */
+/* ACME registers the real CAL/ASV voltage for each supported OPP. */
+static unsigned int eagov_opp_voltage(struct cpufreq_policy *policy,
+				      unsigned int frequency)
+{
+	struct device *dev = get_cpu_device(cpumask_first(policy->cpus));
+	struct dev_pm_opp *opp;
+	unsigned long uv = 0;
+
+	if (!dev)
+		return 0;
+
+	/* OPP pointers remain valid ONLY while holding rcu_read_lock(). */
+	rcu_read_lock();
+	opp = dev_pm_opp_find_freq_exact(dev,
+					(unsigned long)frequency * 1000UL, true);
+	if (!IS_ERR(opp))
+		uv = dev_pm_opp_get_voltage(opp);
+	rcu_read_unlock();
+	return uv > (~0U) ? 0 : (unsigned int)uv;
+}
+
+/*
+ * Extend the model ONLY with valid ACME/CAL OPPs above the native DTS
+ * table. Missing or invalid ASV voltage causes initialization to FAIL,
+ * never an invented OC OPP or fabricated "Samsung measured" power.
+ *
+ * The native busy power includes chip-specific effects not measured at
+ * OC frequencies. P ~ f*V^2 is therefore an engineering estimate only.
+ */
+static int eagov_append_oc_states(struct eagov_policy *ea,
+				   unsigned int allocated)
+{
+	struct cpufreq_policy *policy = ea->policy;
+	struct eagov_energy_model *model = &ea->model;
+	const struct eagov_energy_state *base;
+	unsigned int base_uv, prev_freq, next, nr = ea->nr_native_states;
+	struct cpufreq_frequency_table *opp;
+
+	if (!nr)
+		return -EINVAL;
+	base = &model->states[nr - 1];
+	prev_freq = base->frequency;
+	if (policy->cpuinfo.max_freq <= prev_freq)
+		return 0;
+
+	base_uv = eagov_opp_voltage(policy, base->frequency);
+	if (!base_uv)
+		return -ENODEV;
+
+	while (prev_freq < policy->cpuinfo.max_freq) {
+		struct eagov_energy_state *state;
+		unsigned int uv, core_power, cluster_power, capacity;
+
+		/* ACME's CAL table may be descending: choose next ascending. */
+		next = ~0U;
+		cpufreq_for_each_valid_entry(opp, policy->freq_table) {
+			if (opp->frequency > prev_freq &&
+			    opp->frequency <= policy->cpuinfo.max_freq &&
+			    opp->frequency < next)
+				next = opp->frequency;
+		}
+		if (next == ~0U)
+			break;
+		if (nr >= allocated)
+			return -EOVERFLOW;
+
+		uv = eagov_opp_voltage(policy, next);
+		core_power = eagov_estimate_oc_power(base->core_power,
+			    base->frequency, base_uv, next, uv);
+		cluster_power = eagov_estimate_oc_power(base->cluster_power,
+			    base->frequency, base_uv, next, uv);
+		capacity = eagov_estimate_oc_capacity(base->capacity,
+			    base->frequency, next);
+		if (!uv || !core_power || !cluster_power || !capacity)
+			return -EINVAL;
+
+		state = &model->states[nr];
+		state->frequency = next;
+		state->capacity = capacity;
+		state->core_power = max(core_power,
+				model->states[nr - 1].core_power + 1);
+		state->cluster_power = max(cluster_power,
+				model->states[nr - 1].cluster_power + 1);
+		nr++;
+		prev_freq = next;
+	}
+
+	if (prev_freq < policy->cpuinfo.max_freq)
+		return -EINVAL;
+	model->nr_states = nr;
+	pr_info("CPU%u: %u native DTS states + %u CAL/ASV OC states (estimated power)\\n",
+		policy->cpu, ea->nr_native_states, nr - ea->nr_native_states);
+	return 0;
+}
+
+/* Every Samsung native state is bound to a concrete frequency-data row. */
 static int eagov_build_model(struct eagov_policy *ea)
 {
 	struct cpufreq_policy *policy = ea->policy;
@@ -147,7 +248,7 @@ static int eagov_build_model(struct eagov_policy *ea)
 	struct device_node *cpu_node, *cost_node;
 	struct cpufreq_frequency_table *opp;
 	unsigned int previous_freq = 0;
-	unsigned int i, j, nr = 0;
+	unsigned int i, j, nr = 0, allocated = 0;
 	int ret = -EINVAL;
 
 	core = sge_array[policy->cpu][SD_LEVEL0];
@@ -168,8 +269,11 @@ static int eagov_build_model(struct eagov_policy *ea)
 	    core->nr_cap_states)
 		goto put_node;
 
-	ea->model.states = kcalloc(core->nr_cap_states,
-				   sizeof(*ea->model.states), GFP_KERNEL);
+	cpufreq_for_each_valid_entry(opp, policy->freq_table)
+		allocated++;
+	allocated = max(allocated, (unsigned int)core->nr_cap_states);
+	ea->model.states = kcalloc(allocated, sizeof(*ea->model.states),
+				   GFP_KERNEL);
 	if (!ea->model.states) {
 		ret = -ENOMEM;
 		goto put_node;
@@ -210,10 +314,15 @@ static int eagov_build_model(struct eagov_policy *ea)
 		nr++;
 	}
 	if (!nr || policy->cpuinfo.min_freq < ea->model.states[0].frequency ||
-	    policy->cpuinfo.max_freq > ea->model.states[nr - 1].frequency)
+	    ea->model.states[nr - 1].frequency != previous_freq)
 		goto free_states;
 
+	ea->nr_native_states = nr;
 	ea->model.nr_states = nr;
+	ret = eagov_append_oc_states(ea, allocated);
+	if (ret)
+		goto free_states;
+
 	ea->model.core_idle = core->nr_idle_states && core->idle_states ?
 				core->idle_states[0].power : 0;
 	ea->model.core_pwroff = core->nr_idle_states > 1 && core->idle_states ?
@@ -227,6 +336,7 @@ static int eagov_build_model(struct eagov_policy *ea)
 free_states:
 	kfree(ea->model.states);
 	ea->model.states = NULL;
+	ea->model.nr_states = 0;
 put_node:
 	of_node_put(cost_node);
 	return ret;
@@ -433,17 +543,18 @@ static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
 	u64 previous = 0;
 
 	len += scnprintf(buf, PAGE_SIZE,
-			 "step kHz capacity core cluster busy_power delta_power\n");
+			 "step kHz capacity core cluster busy_power delta_power source\n");
 	for (i = 0; i < ea->model.nr_states && len < PAGE_SIZE; i++) {
 		struct eagov_energy_state *state = &ea->model.states[i];
 		u64 power = eagov_busy_power(ea, i);
 
 		len += scnprintf(buf + len, PAGE_SIZE - len,
-				 "%u %u %u %u %u %llu %lld\n", i + 1,
+				 "%u %u %u %u %u %llu %lld %s\n", i + 1,
 				 state->frequency, state->capacity,
 				 state->core_power, state->cluster_power,
 				 (unsigned long long)power,
-				 i ? (long long)(power - previous) : 0LL);
+				 i ? (long long)(power - previous) : 0LL,
+				 i < ea->nr_native_states ? "DTS" : "OC_EST");
 		previous = power;
 	}
 	return len;
