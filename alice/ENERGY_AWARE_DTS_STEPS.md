@@ -39,3 +39,58 @@ See [the source-to-port mapping, full state tables and test details](../docs/ALI
 The donor is pinned to commit `2ec382e83341d79b552e77e27505228c731e6459`.
 Host tests and kernel/DTB compilation pass; physical S8+ boot and battery
 measurements remain untested.
+
+
+## Full ALice EGO candidate tables: 455–2002 / 741–2704 MHz
+
+The existing Samsung `frequency-data` / `busy-cost-data` pairs are preserved.
+Only the new **`oc-frequency-data`** property declares additional candidate
+frequencies. The governor checks each high OPP against the real ACME CAL table
+and reads that chip's ASV voltage. It estimates only the extra busy-power
+coefficients using the **f × V²** dynamic-power relationship. These
+coefficients are **not original Samsung power measurements**.
+
+| # | A53 (kHz) | Cost source | M2 (kHz) | Cost source |
+|---|---:|---|---:|---|
+| 1 | 455000 | DTS | 741000 | DTS |
+| 2 | 598000 | DTS | 858000 | DTS |
+| 3 | 715000 | DTS | 962000 | DTS |
+| 4 | 832000 | DTS | 1066000 | DTS |
+| 5 | 949000 | DTS | 1170000 | DTS |
+| 6 | 1053000 | DTS | 1261000 | DTS |
+| 7 | 1248000 | DTS | 1469000 | DTS |
+| 8 | 1456000 | DTS | 1703000 | DTS |
+| 9 | 1690000 | DTS | 1807000 | DTS |
+| 10 | 1794000 | OC_EST | 1937000 | DTS |
+| 11 | 1898000 | OC_EST | 2002000 | DTS |
+| 12 | 2002000 | OC_EST | 2158000 | DTS |
+| 13 | — | — | 2314000 | DTS |
+| 14 | — | — | 2496000 | OC_EST |
+| 15 | — | — | 2574000 | OC_EST |
+| 16 | — | — | 2652000 | OC_EST |
+| 17 | — | — | 2704000 | OC_EST |
+
+`DTS` here means the **original cost coefficients**; the correspondence
+between frequency and a native cost row is the earlier ALice reconstruction,
+not an independently measured Samsung calibration.
+
+The sysfs `energy_steps` table shows which rows were actually installed
+at boot and marks each `DTS` or `OC_EST`. An unsupported OC row is
+**skipped with a warning**, not fabricated. Thermal/PM QoS limits remain
+effective; an advertised top-frequency candidate does not mean that the
+processor must or can sustain it.
+
+To see real runtime results (requires root):
+
+```sh
+for p in /sys/devices/system/cpu/cpufreq/policy*; do
+  echo "$p: $(cat "$p/scaling_governor")"
+  cat "$p/energy_aware/energy_steps" 2>/dev/null
+done
+dmesg | grep -E 'energy_aware:.*(OC|EGO)'
+```
+
+Host regression: `python3 scripts/test_alice_oc_states.py` validates
+all 12 + 17 frequency entries and the C cost estimator. The final
+CI build must compile an Image and DTB; real boot remains a separate test.
+
