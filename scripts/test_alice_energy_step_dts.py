@@ -14,11 +14,11 @@ GOV = ROOT / "kernel/sched/cpufreq_energy_aware.c"
 
 def states(label):
     text = DTS.read_text()
-    pattern = r"\\b" + re.escape(label) + r":\\s*[^{}]+?\\{\\s*busy-cost-data\\s*=\\s*<([^>]+)>"
+    pattern = r"\b" + re.escape(label) + r":\s*[^{}]+?\{\s*busy-cost-data\s*=\s*<([^>]+)>"
     match = re.search(pattern, text, re.S)
     if not match:
         raise AssertionError("Missing Samsung power states for " + label)
-    values = [int(v) for v in re.findall(r"\\d+", match.group(1))]
+    values = [int(v) for v in re.findall(r"\d+", match.group(1))]
     if not values or len(values) % 2:
         raise AssertionError("Invalid capacity/power pairs for " + label)
     return list(zip(values[::2], values[1::2]))
@@ -77,7 +77,7 @@ class TestEnergySteps(unittest.TestCase):
         ):
             self.assertIn(required, source)
         self.assertNotIn("ALICE_ESGOV_STEPS", source)
-        self.assertNotRegex(source, r"policy->max\\s*\\*\\s*util\\s*/")
+        self.assertNotRegex(source, r"policy->max\s*\*\s*util\s*/")
 
 
 if __name__ == "__main__":
