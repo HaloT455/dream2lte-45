@@ -30,14 +30,14 @@ reconstructed proprietary source from a compiled boot image.
 | A53/M2 frequency ceiling in DTB | 1,794 / 2,574 MHz | 2,002 / 2,704 MHz | Retain user's requested ALice limits |
 | Samsung energy-cost references in CPU DT | Absent | Present with 12+17 EGO candidates | Retain ALice |
 | APOLLO thermal thresholds | 76/81/86/... °C | 65/70/75/... °C | **Do not import** elevated limits or weakened cooling maps |
-| KernelSU | `CONFIG_KSU=y`; LSM hooks and always-threaded throne tracker | `CONFIG_KSU=y`; manual hooks | Do not blindly switch LSM modes (manual hooks already in `security/security.c`); threaded tracker can break some FDE/FBE setups |
+| KernelSU | `CONFIG_KSU=y`; LSM hooks and always-threaded throne tracker | `CONFIG_KSU=y`; native 4.4 auto LSM hooks (new), boot tracker remains synchronous | **Imported mechanism from existing ALice KernelSU source:** native list registration instead of pointer hijacking; disabled duplicate manual sites; details in `alice/KERNELSU_AUTO_LSM44.md` |
 | Memory | legacy Android lowmemorykiller, zswap, vnswap | LRU_GEN/PSI and LZ4KD zram | Do not combine competing memory schemes without source and tests |
 | Networking | MPTCP enabled | no MPTCP subsystem | Feature exists in donor binary, **source code not supplied** |
 | Mali GPU | `CONFIG_MALI_VK_BOOST=y` | no such option in ALice | Not portable from binary alone; source/driver version required |
 | Fstab SYSTEM/PRODUCT/VENDOR | EROFS-only | EROFS and ext4 fallback | **Imported as opt-in ROM profile** |
 | Zram fstab entry | 2,684,354,560 bytes, 8 streams | 3,435,970,560 bytes, 4 streams | Preserved in opt-in ROM profile; not changed in default ALice |
 
-## Actually imported (no fake feature claims)
+The additional KernelSU automatic hook adaptation is tracked in [`alice/KERNELSU_AUTO_LSM44.md`](../../KERNELSU_AUTO_LSM44.md). Unlike the EROFS profile, it changes the compiled kernel configuration. It was implemented from the ALice KernelSU source because the uploaded binary does not contain rebuildable source.\n\n## Actually imported (no fake feature claims)
 
 `fstab.samsungexynos8895` in this folder was extracted byte-for-byte
 from the donor boot's gzip/newc ramdisk and Git blob hash verified:
