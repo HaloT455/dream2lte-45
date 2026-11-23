@@ -73,6 +73,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/alice_ci_boot_repack.py
           python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_alice_oc_states.py
           python3 scripts/test_energy_aware_worker.py
           grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
@@ -81,6 +82,10 @@ jobs:
           grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
           grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
           grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
 
       - name: Build Image and DTBs
         run: |
