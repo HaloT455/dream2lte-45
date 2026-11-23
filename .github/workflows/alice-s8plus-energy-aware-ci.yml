@@ -73,6 +73,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/alice_ci_boot_repack.py
           python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
           python3 scripts/test_alice_oc_states.py
           python3 scripts/test_energy_aware_worker.py
           grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
@@ -82,6 +83,10 @@ jobs:
           grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
           grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
           grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
           grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
           grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
           grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
