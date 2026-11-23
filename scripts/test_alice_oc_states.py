@@ -14,6 +14,38 @@ BOARD = (ROOT / "arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi").r
 GOV = (ROOT / "kernel/sched/cpufreq_energy_aware.c").read_text()
 ACME = (ROOT / "drivers/cpufreq/exynos-acme.c").read_text()
 
+# EGO's complete target OPP tables are explicit; only high OPP POWER
+# is estimated at runtime if the device's CAL/ASV exposes that OPP.
+import re
+
+def dts_freq_list(node, prop):
+    match = re.search(r"\b" + re.escape(node) + r":\s*[^{}]+\{([^{}]+)\}", SOC, re.S)
+    assert match, node
+    values = re.search(r"\b" + re.escape(prop) + r"\s*=\s*<([^>]+)>", match[1], re.S)
+    assert values, (node, prop)
+    return [int(x) for x in re.findall(r"\d+", values[1])]
+
+a53_native = dts_freq_list("CPU_COST_1", "frequency-data")
+a53_oc = dts_freq_list("CPU_COST_1", "oc-frequency-data")
+m2_native = dts_freq_list("CPU_COST_0", "frequency-data")
+m2_oc = dts_freq_list("CPU_COST_0", "oc-frequency-data")
+assert a53_native + a53_oc == [
+    455000, 598000, 715000, 832000, 949000, 1053000,
+    1248000, 1456000, 1690000, 1794000, 1898000, 2002000]
+assert m2_native + m2_oc == [
+    741000, 858000, 962000, 1066000, 1170000, 1261000,
+    1469000, 1703000, 1807000, 1937000, 2002000,
+    2158000, 2314000, 2496000, 2574000, 2652000, 2704000]
+assert len(a53_native) == 9 and len(a53_oc) == 3
+assert len(m2_native) == 13 and len(m2_oc) == 4
+assert all(v < w for table in (a53_native + a53_oc, m2_native + m2_oc)
+           for v, w in zip(table, table[1:]))
+assert '"oc-frequency-data"' in GOV
+assert "eagov_opp_voltage" in GOV
+assert "eagov_estimate_oc_power" in GOV
+assert "if (!supported)" in GOV
+assert "if (!uv || !core_power || !cluster_power || !capacity)" in GOV
+
 assert "max-freq = <2002000>;" in BOARD
 assert "max-freq = <2704000>;" in BOARD
 assert "frequency-data = <455000 598000 715000" in SOC
