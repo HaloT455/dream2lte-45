@@ -30,6 +30,9 @@ assert "struct list_head" in LSM
 assert "list_add_rcu" in AUTO
 assert "ksu_write_to_readonly_slot" not in AUTO
 assert "ksu_hack_lsm_slot" not in AUTO
+assert "list_del_rcu(&hook->list)" in AUTO
+assert "synchronize_rcu();" in AUTO
+assert "ksu_auto44_release_vfs_hook" in AUTO
 assert "max-freq = <2002000>;" in BOARD
 assert "max-freq = <2704000>;" in BOARD
 assert len(re.findall(r"LSM_HOOK_INIT\(", AUTO)) == 5
@@ -47,6 +50,10 @@ SOURCE = r'''
 #define LSM_SETID_RES 1
 #define unlikely(x) (x)
 #define pr_info(...) ((void)0)
+#define pr_warn(...) ((void)0)
+#define READ_ONCE(x) (x)
+#define IS_ERR(x) ((x) == NULL)
+#define PTR_ERR(x) ((long)(intptr_t)(x))
 struct linux_binprm { const char *filename; };
 struct inode { int id; };
 struct dentry { int id; };
@@ -71,7 +78,17 @@ struct security_hook_list {
     union security_list_options hook;
 };
 #define LSM_HOOK_INIT(name, fn) { .head = &security_hook_heads.name, .hook = { .name = (fn) } }
-static unsigned int added, logged, renamed, setuid, readhook, procattr;
+static unsigned int added, removed, synchronized, logged, renamed, setuid, readhook, procattr;
+static int (*boot_cleanup_thread)(void *);
+static struct task_struct fake_current;
+#define current (&fake_current)
+static void set_user_nice(struct task_struct *task, long nice) { (void)task; (void)nice; }
+static void msleep(unsigned int ms) { assert(ms > 0); }
+static void synchronize_rcu(void) { synchronized++; }
+static struct task_struct *kthread_run(int (*fn)(void *), void *arg, const char *name) {
+    assert(fn && !arg && name && name[0]); boot_cleanup_thread = fn;
+    return current;
+}
 static bool ksu_vfs_read_hook;
 static void ksu_sulog_emit_bprm(const char *name) {
     assert(name && name[0]); logged++;
@@ -99,6 +116,11 @@ static void list_add_rcu(struct list_head *node, struct list_head *head) {
     head->next = node;
     added++;
 }
+static void list_del_rcu(struct list_head *node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    removed++;
+}
 #include "drivers/kernelsu/hook/lsm_hooks_register_44.c"
 int main(void) {
     struct linux_binprm bin = {"ksud"};
@@ -120,6 +142,7 @@ int main(void) {
     for (i = 0; i < ARRAY_SIZE(heads); i++) init_head(heads[i]);
     ksu_core_init();
     assert(added == 5);
+    assert(boot_cleanup_thread != NULL);
     for (i = 0; i < ARRAY_SIZE(heads); i++) {
         assert(heads[i]->next != heads[i]);
         assert(heads[i]->next->next == heads[i]);
@@ -134,7 +157,14 @@ int main(void) {
     assert(ksu_auto44_hooks[4].hook.setprocattr(&task, attr, value, sizeof(value)) == 0);
     assert(logged == 1 && renamed == 1 && setuid == 1);
     assert(readhook == 1 && procattr == 1);
-    puts("PASS: 5 native KernelSU auto LSM callbacks; one observer each; no hijack");
+    ksu_vfs_read_hook = false;
+    assert(boot_cleanup_thread(NULL) == 0);
+    assert(removed == 1 && synchronized == 1);
+    assert(security_hook_heads.file_permission.next == &security_hook_heads.file_permission);
+    for (i = 0; i < ARRAY_SIZE(heads); i++) {
+        if (i != 3) assert(heads[i]->next != heads[i]);
+    }
+    puts("PASS: 5 native KernelSU auto LSM callbacks; boot-only VFS hook RCU cleanup");
     return 0;
 }
 '''
