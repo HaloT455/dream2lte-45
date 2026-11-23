@@ -68,8 +68,33 @@ static struct security_hook_list ksu_auto44_hooks[] = {
 	LSM_HOOK_INIT(setprocattr, ksu_auto44_setprocattr),
 };
 
+/*
+ * This boot-only VFS read observer must not run on every file permission
+ * event forever.  Once ksud disables its boot VFS hook, unlink OUR list
+ * entry using RCU, not another LSM's function pointer.
+ */
+#define KSU_AUTO44_FILE_PERMISSION_SLOT 3
+static int ksu_auto44_release_vfs_hook(void *unused)
+{
+	struct security_hook_list *hook =
+		&ksu_auto44_hooks[KSU_AUTO44_FILE_PERMISSION_SLOT];
+
+	set_user_nice(current, 19);
+	do {
+		msleep(1000);
+	} while (READ_ONCE(ksu_vfs_read_hook));
+
+	/* Avoid racing a just-scheduled boot read callback. */
+	msleep(1000);
+	list_del_rcu(&hook->list);
+	synchronize_rcu();
+	pr_info("KernelSU: removed boot-only file_permission LSM callback\n");
+	return 0;
+}
+
 static void __init ksu_core_init(void)
 {
+	struct task_struct *worker;
 	unsigned int i;
 
 	/*
@@ -83,4 +108,10 @@ static void __init ksu_core_init(void)
 
 	pr_info("KernelSU: registered %zu automatic Linux 4.4 LSM callbacks (no pointer hijack)\n",
 		ARRAY_SIZE(ksu_auto44_hooks));
+
+	worker = kthread_run(ksu_auto44_release_vfs_hook, NULL,
+			     "ksu_lsm_vfs44");
+	if (IS_ERR(worker))
+		pr_warn("KernelSU: file_permission cleanup worker unavailable (%ld); hook stays active\n",
+			PTR_ERR(worker));
 }
