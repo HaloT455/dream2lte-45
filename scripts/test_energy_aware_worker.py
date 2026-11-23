@@ -49,7 +49,7 @@ struct eagov_policy {
     struct irq_work irq_work;
     struct kthread_work work;
     struct kthread_worker worker;
-    unsigned int target_state, applied_state;
+    unsigned int target_state, applied_state, org_freq, eng_freq;
     unsigned long long target_energy;
     s64 power_delta;
     bool enabled, queued;
@@ -125,6 +125,7 @@ static void drain(void) {
 int main(void) {
     reset(); request(40); request(120); drain();
     assert(driver_calls == 1 && last_applied == 200 && state.applied_state == 1);
+    assert(state.org_freq == 150 && state.eng_freq == 200);
     request(120); assert(!irq_pending);  /* unchanged OPP */
 
     reset(); request(40); inject_count = 1; drain();
