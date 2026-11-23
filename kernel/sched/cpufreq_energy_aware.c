@@ -1,6 +1,7 @@
 /*
  * ALice energy-model-driven CPUFreq governor for Exynos8895.
- * Uses discrete policy frequency steps, scheduler utilization and rate hysteresis.
+ * Selects energy-minimal OPPs from Samsung DTS power/capacity states.
+ * Optional energy_step constrains the DTS power-state envelope, not MHz.
  *
  * Copyright (C) 2016, Intel Corporation
  * Author: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
@@ -39,6 +40,8 @@ struct eagov_tunables {
 	unsigned int down_rate_limit_us;
 	/* Optional Samsung ESG-style per-policy power envelope (0 = off). */
 	unsigned int energy_power_budget;
+	/* 0: automatic EAS; 1..N: DTS power-state index (lowest first). */
+	unsigned int energy_step;
 };
 
 struct eagov_policy {
@@ -169,6 +172,8 @@ static void eagov_update_commit(struct eagov_policy *sg_policy, u64 time,
 #define EAGOV_LOAD_SCALE            (1UL << SCHED_CAPACITY_SHIFT)
 #define EAGOV_CAPACITY_MARGIN_NUM   9U
 #define EAGOV_CAPACITY_MARGIN_DEN   8U
+/* Validate writes independently of each CPU cluster's DTS state count. */
+#define EAGOV_MAX_MANUAL_STEP       32U
 
 static unsigned long eagov_util_to_load(unsigned long util,
                                         unsigned long capacity)
@@ -199,6 +204,47 @@ static unsigned long eagov_util_to_load(unsigned long util,
  * reference.  We use the same capacity/power distinction, but keep only
  * the energy_aware governor registered and enabled.
  */
+/*
+ * Translate an explicitly requested Samsung-style energy step to a power
+ * envelope using the *actual* per-cluster DTS busy-cost-data states.
+ *
+ * The source energy_step.c calls find_step_power() from EMS; Exynos8895
+ * Linux 4.4 has no such function.  This equivalent is intentionally local:
+ * an index addresses a DTS power/capacity state, not an arbitrary MHz step.
+ * Step 0 leaves the energy optimizer unconstrained.  A53 and M2 interpret
+ * the index in their *own* power tables, never a global watt value.
+ */
+static u64 eagov_dts_step_power(const struct cpufreq_policy *policy,
+                               const struct sched_group_energy *core,
+                               const struct sched_group_energy *cluster,
+                               unsigned int step)
+{
+    const struct capacity_state *state;
+    unsigned long cap;
+    u64 power;
+    int i;
+
+    if (!step || !core || !core->cap_states || !core->nr_cap_states)
+        return 0;
+
+    i = min_t(unsigned int, step, core->nr_cap_states) - 1;
+    state = &core->cap_states[i];
+    cap = state->cap;
+    power = (u64)state->power * cpumask_weight(policy->cpus);
+
+    if (!cluster || !cluster->cap_states || !cluster->nr_cap_states)
+        return power;
+
+    for (i = 0; i < cluster->nr_cap_states; i++)
+        if (cluster->cap_states[i].cap >= cap)
+            break;
+
+    if (i == cluster->nr_cap_states)
+        i--;
+
+    return power + cluster->cap_states[i].power;
+}
+
 static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
                                             unsigned long peak_load,
                                             unsigned long total_load)
@@ -209,6 +255,8 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
     unsigned long max_cap = 0, required, core_idle, cluster_idle;
     unsigned int best_freq = policy->max, budget_freq = policy->max;
     unsigned int power_budget = READ_ONCE(sg_policy->tunables->energy_power_budget);
+    unsigned int step = READ_ONCE(sg_policy->tunables->energy_step);
+    u64 step_power, effective_budget = power_budget;
     u64 best_energy = U64_MAX, budget_energy = U64_MAX;
     bool found = false, budget_found = false;
     int i;
@@ -228,6 +276,15 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
         max_cap = max(max_cap, (unsigned long)core->cap_states[i].cap);
     if (unlikely(!max_cap || !policy->cpuinfo.max_freq))
         return policy->max;
+
+    /*
+     * energy_step is a DTS power-state envelope, not a frequency index.
+     * An optional absolute power budget may further tighten it.  Neither
+     * limit may force a CPU below the capacity required by scheduler util.
+     */
+    step_power = eagov_dts_step_power(policy, core, cluster, step);
+    if (step_power && (!effective_budget || step_power < effective_budget))
+        effective_budget = step_power;
 
     /* Capacity headroom is a constraint. It is NOT a frequency formula. */
     required = (unsigned long)div64_u64(
@@ -321,19 +378,18 @@ static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
         }
 
         /*
-         * Samsung ESG uses find_step_power()/find_allowed_capacity() to
-         * impose an energy-step power constraint.  This tree has no EMS
-         * energy table nor step profiles: use actual Exynos8895 DTS busy
-         * power units instead.  A budget is OPTIONAL and cannot force an
-         * OPP below the load's capacity requirement.  If none satisfy
-         * the budget, the unconstrained minimum-energy OPP wins.
+         * The energy-step envelope derives from the core + cluster DTS
+         * power states (same units as the OPP cost).  Like Samsung ESG,
+         * an explicit step constrains energy *after* checking capacity.
+         * If the demanded capacity needs more power, we choose the
+         * unconstrained minimum-energy OPP to preserve responsiveness.
          */
         opp_busy_power = (u64)core_state->power *
                          cpumask_weight(policy->cpus);
         if (cluster_state)
             opp_busy_power += cluster_state->power;
 
-        if (power_budget && opp_busy_power <= power_budget &&
+        if (effective_budget && opp_busy_power <= effective_budget &&
             (!budget_found || energy < budget_energy ||
              (energy == budget_energy && freq < budget_freq))) {
             budget_energy = energy;
@@ -704,6 +760,33 @@ static ssize_t energy_power_budget_store(struct gov_attr_set *attr_set,
     return count;
 }
 
+/*
+ * 0: automatic energy minimization.
+ * 1..N: power envelope from core DTS state N and matching cluster state.
+ * The per-cluster table length is capped when evaluating a step.
+ * This does NOT translate N into N evenly spaced clock frequencies.
+ */
+static ssize_t energy_step_show(struct gov_attr_set *attr_set, char *buf)
+{
+    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
+
+    return sprintf(buf, "%u\n", READ_ONCE(tunables->energy_step));
+}
+
+static ssize_t energy_step_store(struct gov_attr_set *attr_set,
+                                 const char *buf, size_t count)
+{
+    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
+    unsigned int value;
+
+    if (kstrtouint(buf, 10, &value) || value > EAGOV_MAX_MANUAL_STEP)
+        return -EINVAL;
+
+    WRITE_ONCE(tunables->energy_step, value);
+    return count;
+}
+
+static struct governor_attr energy_step = __ATTR_RW(energy_step);
 static struct governor_attr energy_power_budget = __ATTR_RW(energy_power_budget);
 
 static struct governor_attr up_rate_limit_us = __ATTR_RW(up_rate_limit_us);
@@ -713,6 +796,7 @@ static struct attribute *eagov_attributes[] = {
 	&up_rate_limit_us.attr,
 	&down_rate_limit_us.attr,
 	&energy_power_budget.attr,
+	&energy_step.attr,
 	NULL
 };
 
@@ -829,6 +913,7 @@ static void eagov_tunables_save(struct cpufreq_policy *policy,
 	cached->up_rate_limit_us = tunables->up_rate_limit_us;
 	cached->down_rate_limit_us = tunables->down_rate_limit_us;
 	cached->energy_power_budget = READ_ONCE(tunables->energy_power_budget);
+	cached->energy_step = READ_ONCE(tunables->energy_step);
 }
 
 static void eagov_tunables_free(struct eagov_tunables *tunables)
@@ -851,6 +936,7 @@ static void eagov_tunables_restore(struct cpufreq_policy *policy)
 	tunables->up_rate_limit_us = cached->up_rate_limit_us;
 	tunables->down_rate_limit_us = cached->down_rate_limit_us;
 	WRITE_ONCE(tunables->energy_power_budget, cached->energy_power_budget);
+	WRITE_ONCE(tunables->energy_step, cached->energy_step);
 	sg_policy->up_rate_delay_ns =
 		tunables->up_rate_limit_us * NSEC_PER_USEC;
 	sg_policy->down_rate_delay_ns =
@@ -918,6 +1004,8 @@ static int eagov_init(struct cpufreq_policy *policy)
 	}
 
 	WRITE_ONCE(tunables->energy_power_budget, 0);
+	/* Default auto mode still walks the real discrete DTS power states. */
+	WRITE_ONCE(tunables->energy_step, 0);
 	policy->governor_data = sg_policy;
 	sg_policy->tunables = tunables;
 	stale_ns = walt_ravg_window + (walt_ravg_window >> 3);
