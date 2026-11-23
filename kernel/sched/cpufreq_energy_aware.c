@@ -181,7 +181,7 @@ static int eagov_append_oc_states(struct eagov_policy *ea,
 	struct cpufreq_policy *policy = ea->policy;
 	struct eagov_energy_model *model = &ea->model;
 	const struct eagov_energy_state *base;
-	unsigned int base_uv, previous_freq, requested_freq;
+	unsigned int base_uv, previous_freq;
 	unsigned int nr = ea->nr_native_states;
 	struct cpufreq_frequency_table *opp;
 	int i, candidates;
