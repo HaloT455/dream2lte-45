@@ -39,6 +39,8 @@ struct ego_workload {
 	struct ego_cpu_work *cpus;
 	unsigned int nr_cpus;
 	unsigned int peak;
+	/* Samsung EGO get_next_freq(): utilization floor before energy scan. */
+	unsigned int org_freq;
 };
 
 struct eagov_energy_choice {
@@ -47,10 +49,17 @@ struct eagov_energy_choice {
 };
 
 /*
- * A53 EGO: normalize per-CPU active time and distribute residual idle time
- * between CLKOFF and PWROFF using that CPU's observed idle history. Sum
- * active energy (et_compute_cpu_energy on A53) and residual idle energy.
- * S8+ adds its explicit shared-cluster busy/idle cost once per policy.
+ * Use the Samsung energy_table.c per-CPU energy primitives in the ACTIVE
+ * energy_aware path, instead of only archiving the original A53 source.
+ * They operate on Exynos8895 DTS/ASV OPPs, not Exynos1280 coefficients.
+ */
+#include "energy_aware_samsung_et.h"
+
+/*
+ * Samsung A53 ego.c: ego_compute_energy(). Its energy input is
+ * et_compute_cpu_energy() plus CLKOFF/PWROFF idle prediction. On 8895 the
+ * per-core busy/idle accounting is supplied by et_compute_cpu_energy_8895.
+ * Samsung Exynos8895 also has shared-cluster idle/busy costs; count ONCE.
  */
 static inline unsigned long long ego_compute_energy(
 		const struct eagov_energy_model *model, unsigned int index,
@@ -58,26 +67,14 @@ static inline unsigned long long ego_compute_energy(
 {
 	const struct eagov_energy_state *state = &model->states[index];
 	unsigned int capacity = state->capacity;
-	unsigned int cpu, peak = work->peak;
-	unsigned long long energy = 0;
+	unsigned int peak = work->peak;
+	unsigned long long energy;
 
-	for (cpu = 0; cpu < work->nr_cpus; cpu++) {
-		unsigned int util = work->cpus[cpu].util;
-		unsigned int ratio = work->cpus[cpu].clkoff_ratio;
-		unsigned int idle_util, clkoff;
+	if (!capacity)
+		return 0;
 
-		if (util > capacity)
-			util = capacity;
-		if (ratio > EAGOV_ENERGY_SCALE)
-			ratio = EAGOV_ENERGY_SCALE;
-		idle_util = capacity - util;
-		clkoff = idle_util * ratio / EAGOV_ENERGY_SCALE;
-
-		energy += (unsigned long long)state->core_power * util;
-		energy += (unsigned long long)model->core_idle * clkoff;
-		energy += (unsigned long long)model->core_pwroff *
-			  (idle_util - clkoff);
-	}
+	/* From Samsung et_compute_cpu_energy(): normalized CPU work cost. */
+	energy = et_compute_cpu_energy_8895(model, index, work);
 	if (peak > capacity)
 		peak = capacity;
 	energy += (unsigned long long)state->cluster_power * peak;
@@ -86,11 +83,37 @@ static inline unsigned long long ego_compute_energy(
 }
 
 /*
+ * Direct port of Samsung A53 ego_map_util_freq() from ego.c.
+ * Samsung's original function: ((freq * (100 + pelt_margin))/100)*util/cap.
+ *
+ * 64-bit intermediates prevent overflow at ALice 2.002/2.704 GHz OPPs.
+ * This is a MINIMUM OPP workload floor, NOT the final chosen frequency;
+ * ego_find_energy_freq() still evaluates every eligible OPP's energy.
+ */
+static inline unsigned int ego_map_util_freq_8895(unsigned int util,
+						    unsigned int max_freq,
+						    unsigned int max_cap,
+						    unsigned int pelt_margin)
+{
+	unsigned long long floor;
+
+	if (!max_cap)
+		return 0;
+	if (pelt_margin > 100U)
+		pelt_margin = 100U;
+	floor = (unsigned long long)max_freq * (100U + pelt_margin) / 100U;
+	floor = floor * util / max_cap;
+	return floor > ~0U ? ~0U : (unsigned int)floor;
+}
+
+/*
  * Port of A53 ego_find_energy_freq(): walk OPPs at/above the work floor,
  * call ego_compute_energy() for each, and retain the lowest-energy OPP.
- * The work floor is resolved in DT capacity units instead of a linear kHz
- * estimate. Energy search always runs; the A53 busy-only gate and optional
- * eng-boost interpolation are removed for this energy-aware-only profile.
+ * Samsung EGO's utilization-derived org_freq floor is combined with the
+ * native Exynos8895 capacity floor. Scan every allowed real frequency above
+ * both floors and choose the one with minimum predicted energy, as in A53.
+ * Energy search always runs; donor eng-boost interpolation is omitted since
+ * it could create a frequency without a corresponding CAL/ASV power state.
  */
 static inline struct eagov_energy_choice ego_find_energy_freq(
 		const struct eagov_energy_model *model,
@@ -112,6 +135,9 @@ static inline struct eagov_energy_choice ego_find_energy_freq(
 		if (state->frequency < min_freq || state->frequency > max_freq)
 			continue;
 		ceiling = i;
+		/* Samsung ego_find_energy_freq(): skip OPPs below org_freq. */
+		if (state->frequency < work->org_freq)
+			continue;
 		if (state->capacity < required)
 			continue;
 
