@@ -32,6 +32,41 @@ IOWAIT governor boost and directional frequency delays to meet this branch's
 energy-aware-only requirement. It does not transplant the complete 5.10 EMS,
 emstune, MHDVFS, SoMAC or Exynos1280 power coefficients into Linux 4.4.
 
+## Direct Samsung A53 GPLv2 source-port boundary
+
+The source is pinned to **Samsung Exynos1280 Galaxy A53** commit
+`2ec382e83341d79b552e77e27505228c731e6459`. The full original
+`kernel/sched/ems/ego.c` is preserved byte-for-byte in
+`research/samsung-a53-exynos1280-ego-reference.c`, and the original
+`kernel/sched/ems/energy_table.c` is preserved in
+`research/samsung-a53-exynos1280-energy-table-reference.c`.
+
+The **compiled** Samsung-derived algorithm implementations are:
+
+| Samsung donor operation | Compiled Exynos8895 Linux 4.4 path | Port boundary |
+|---|---|---|
+| `get_freq_index()` / `et_freq_to_cap()` | `energy_aware_samsung_et.h:et_freq_to_cap_8895()` | Lookup the first frequency >= requested; use DTS capacity for that state |
+| `get_cap_index()` / `et_fill_energy_state()` | `energy_aware_samsung_et.h:et_cap_to_state_8895()` | Select the first DTS power/capacity state >= demand |
+| `__compute_cpu_energy()` / `et_compute_cpu_energy()` | `energy_aware_samsung_et.h:et_compute_cpu_energy_8895()` | Sum native per-core busy/idle energy; no A53 power constants are copied |
+| `ego_compute_energy()` | `energy_aware_model.h:ego_compute_energy()` | Add Exynos8895 shared-cluster energy once, normalize by capacity |
+| `ego_map_util_freq()` in `get_next_freq()` | `energy_aware_model.h:ego_map_util_freq_8895()`; invoked from `cpufreq_energy_aware.c:eagov_request()` | Uses A53's original 25% default PELT margin as an OPP *floor*, not a final util-to-frequency target |
+| `ego_find_energy_freq()` | `energy_aware_model.h:ego_find_energy_freq()` | Skip OPPs below the Samsung utilization floor and Exynos8895 required capacity; evaluate energy for each remaining OPP |
+| `ego_compute_cpu_idle_ratio()` / MLT | `energy_aware_idle.h` and `cpu_idle` tracepoint adapter | Real Linux 4.4 cpuidle events replace absent Samsung 5.10 MLT counters |
+
+This is **a direct backport of the enumerated EGO/ET algorithms**, *not*
+the full Exynos1280 EMS subsystem, frequency driver, temperature model,
+`emstune` framework, MLT implementation or DSU power table. The 25%
+utilization margin exists in Samsung EGO itself; shared update hooks do
+not make this a renamed schedutil governor. The frequency selection
+objective after that work floor is still minimum predicted energy.
+
+Host check: `python3 scripts/test_samsung_a53_ego_port.py` compiles the
+active C headers and checks frequency/capacity lookup, active/idle energy,
+utilization floor, minimum-energy OPP and thermal/QoS cap behavior.
+The existing randomized C model tests and worker tests also run in CI.
+Compilation alone cannot verify real-world battery savings or boot
+stability on an S8+.
+
 ## Selection and energy steps
 
 `kernel/sched/energy_aware_model.h` contains the ported
@@ -104,10 +139,15 @@ source-level reconstruction, not a new hardware power measurement. Both
 core and shared-cluster costs themselves are retained verbatim from the DTS.
 Runtime initialization intersects these rows with the firmware driver's table.
 
-The previous board override allowed A53 2002 MHz and M2 2704 MHz, beyond the
-power model. It now limits A53 to 1690 MHz and M2 to 2314 MHz. Supporting higher
-OPPs requires additional validated capacity/core-power/cluster-power rows;
-reusing the last stock power row would underprice those OPPs.
+The ALice board retains the requested A53 455–2002 MHz and M2
+741–2704 MHz frequency candidates. The Samsung Exynos8895 DTS originally
+characterizes only A53 455–1690 MHz and M2 741–2314 MHz. The new
+`oc-frequency-data` rows are NOT Samsung power measurements. The actual
+ACME CAL/ASV table must supply each additional frequency and voltage;
+unsupported OPPs are skipped. For supported extra OPPs the governor
+estimates core and cluster power using voltage/frequency scaling (`f*V^2`),
+labels them `OC_EST`, and never replaces the measured DTS coefficients.
+The chip's thermal and PM QoS limits still apply.
 
 The following busy-power columns assume four online CPUs; runtime diagnostics
 use the current online policy count. Units are relative Samsung DTS costs.
