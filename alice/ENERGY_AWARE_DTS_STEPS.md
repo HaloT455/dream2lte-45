@@ -19,8 +19,20 @@ is linked. Generic inactive governor sources remain available to other configs.
 
 The former writable `energy_step` soft envelope and `energy_power_budget`
 mode are removed. Steps are mandatory energy-model states, not arbitrary MHz
-increments. A53 has 9 modeled states (455–1690 MHz), M2 has 13
-(741–2314 MHz). Those are the ranges with native DTS energy data.
+increments. The original Samsung DTS has 9 native A53 states (455–1690 MHz)
+and 13 native M2 states (741–2314 MHz).
+
+The older ALice high OPP limits are restored: **A53 2.002 GHz** and
+**M2 2.704 GHz**, but these upper states are deliberately identified as
+`OC_EST`, not native Samsung measured energy states. The governor
+intersects with the real ACME/CAL frequency table, looks up ASV voltage
+through `dev_pm_opp_find_freq_exact()`, and estimates extra busy power
+relative to each cluster's last native DTS entry with `f * V^2`.
+It never inserts a synthetic OPP or changes voltages to reach a target.
+A missing OC OPP or voltage makes model initialization fail closed.
+The `energy_steps` file labels each row `DTS` or `OC_EST`.
+Estimated capacities above 1024 are private governor throughput units,
+not a change to the scheduler's normalized global capacity.
 Policy/thermal and native PM QoS bounds constrain the search before the driver.
 
 See [the source-to-port mapping, full state tables and test details](../docs/ALICE-S8PLUS-ENERGYAWARE-A53-EGO-ESG.md).
