@@ -13,6 +13,8 @@ is linked. Generic inactive governor sources remain available to other configs.
 | --- | --- |
 | `energy_steps` | All native frequency/capacity/power steps and adjacent power jumps |
 | `energy_step` | Last driver-acknowledged step, read-only |
+| `org_freq` | Samsung donor `ego_map_util_freq` workload frequency floor (kHz), read-only |
+| `eng_freq` | Energy-minimizing target OPP after capacity/QoS constraints (kHz), read-only |
 | `energy_delta` | Last acknowledged transition's busy-power difference |
 | `predicted_energy` | Latest target's normalized-window predicted cost |
 | `idle_ratios` | Per-CPU CLKOFF/PWROFF shares on a 1024 scale |
