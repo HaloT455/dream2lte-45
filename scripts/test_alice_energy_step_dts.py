@@ -100,7 +100,7 @@ unsigned int select_state(const struct eagov_energy_model *model,
     struct ego_cpu_work *cpus, unsigned int count,
     unsigned int min, unsigned int max, unsigned long long *energy)
 {
-    struct ego_workload work = { cpus, count, 0 };
+    struct ego_workload work = { .cpus = cpus, .nr_cpus = count, .peak = 0 };
     unsigned int i;
     for (i = 0; i < count; i++)
         if (cpus[i].util > work.peak) work.peak = cpus[i].util;
