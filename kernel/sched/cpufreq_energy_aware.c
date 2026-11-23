@@ -235,7 +235,7 @@ static int eagov_append_oc_states(struct eagov_policy *ea,
 	if (prev_freq < policy->cpuinfo.max_freq)
 		return -EINVAL;
 	model->nr_states = nr;
-	pr_info("CPU%u: %u native DTS states + %u CAL/ASV OC states (estimated power)\\n",
+	pr_info("CPU%u: %u native DTS states + %u CAL/ASV OC states (estimated power)\n",
 		policy->cpu, ea->nr_native_states, nr - ea->nr_native_states);
 	return 0;
 }
