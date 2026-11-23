@@ -271,6 +271,10 @@
 		};
 		energy-costs {
 			CPU_COST_0: core-core0{
+				/* kHz binding for each busy-cost-data row, lowest first. */
+				frequency-data = <741000 858000 962000 1066000 1170000
+					1261000 1469000 1703000 1807000 1937000 2002000
+					2158000 2314000>;
 				busy-cost-data = <
 					328     152
 					380	172
@@ -293,6 +297,8 @@
 				>;
 			};
 			CPU_COST_1: core-core1{
+				frequency-data = <455000 598000 715000 832000 949000
+					1053000 1248000 1456000 1690000>;
 				busy-cost-data = <
 					83	26
 					108	33

@@ -18,6 +18,14 @@ config CPU_FREQ
 
 if CPU_FREQ
 
+config CPU_FREQ_ENERGY_AWARE_ONLY
+	bool "Restrict CPUFreq to the energy_aware governor"
+	depends on SMP && ARM64 && ARM_EXYNOS_ACME && CPU_IDLE && TRACEPOINTS
+	help
+	  Compile and register only energy_aware. Other governor choices and
+	  the performance fallback are unavailable in this profile. The
+	  device tree must provide complete frequency/capacity/power states.
+
 config CPU_FREQ_GOV_ATTR_SET
 	bool
 
@@ -57,6 +65,7 @@ config CPU_FREQ_STAT_DETAILS
 choice
 	prompt "Default CPUFreq governor"
 	default CPU_FREQ_DEFAULT_GOV_USERSPACE if ARM_SA1100_CPUFREQ || ARM_SA1110_CPUFREQ
+	default CPU_FREQ_DEFAULT_GOV_ENERGYAWARE if CPU_FREQ_ENERGY_AWARE_ONLY
 	default CPU_FREQ_DEFAULT_GOV_PERFORMANCE
 	help
 	  This option sets which CPUFreq governor shall be loaded at
@@ -64,6 +73,7 @@ choice
 
 config CPU_FREQ_DEFAULT_GOV_PERFORMANCE
 	bool "performance"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
 	  Use the CPUFreq governor 'performance' as default. This sets
@@ -72,6 +82,7 @@ config CPU_FREQ_DEFAULT_GOV_PERFORMANCE
 
 config CPU_FREQ_DEFAULT_GOV_POWERSAVE
 	bool "powersave"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_POWERSAVE
 	help
 	  Use the CPUFreq governor 'powersave' as default. This sets
@@ -80,6 +91,7 @@ config CPU_FREQ_DEFAULT_GOV_POWERSAVE
 
 config CPU_FREQ_DEFAULT_GOV_USERSPACE
 	bool "userspace"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_USERSPACE
 	help
 	  Use the CPUFreq governor 'userspace' as default. This allows
@@ -89,6 +101,7 @@ config CPU_FREQ_DEFAULT_GOV_USERSPACE
 
 config CPU_FREQ_DEFAULT_GOV_ONDEMAND
 	bool "ondemand"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_ONDEMAND
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
@@ -101,6 +114,7 @@ config CPU_FREQ_DEFAULT_GOV_ONDEMAND
 
 config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 	bool "conservative"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_CONSERVATIVE
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
@@ -113,6 +127,7 @@ config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 
 config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 	bool "interactive"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_INTERACTIVE
 	help
 	  Use the CPUFreq governor 'interactive' as default. This allows
@@ -122,6 +137,7 @@ config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 
 config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 	bool "schedutil"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_SCHEDUTIL
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
@@ -131,6 +147,7 @@ config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 
 config CPU_FREQ_DEFAULT_GOV_ENERGYSTEP
 	bool "energy_step (ALICE Exynos8895 compatibility)"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_ENERGYSTEP
 	select CPU_FREQ_GOV_PERFORMANCE
 	help
@@ -139,15 +156,15 @@ config CPU_FREQ_DEFAULT_GOV_ENERGYSTEP
 	  EMS energy_step (which requires newer emstune/EMS energy tables).
 
 config CPU_FREQ_DEFAULT_GOV_ENERGYAWARE
-    bool "energy_aware (Exynos8895 scheduler energy table)"
-    depends on SMP
-    select CPU_FREQ_GOV_ENERGYAWARE
-    select CPU_FREQ_GOV_PERFORMANCE
-    help
-      Use the energy-aware CPUFreq governor by default.
+	bool "energy_aware (A53 EGO backport for Exynos8895)"
+	depends on SMP && OF && ARM_EXYNOS_ACME && CPU_IDLE && TRACEPOINTS
+	select CPU_FREQ_GOV_ENERGYAWARE
+	help
+	  Select discrete core/cluster energy states using scheduler work.
 
 config CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE
 	bool "blu_active"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_BLU_ACTIVE
 	help
 	  Use the CPUFreq governor 'blu_active' as default. This allows
@@ -159,6 +176,7 @@ endchoice
 
 config CPU_FREQ_GOV_PERFORMANCE
 	tristate "'performance' governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	help
 	  This cpufreq governor sets the frequency statically to the
 	  highest available CPU frequency.
@@ -170,6 +188,7 @@ config CPU_FREQ_GOV_PERFORMANCE
 
 config CPU_FREQ_GOV_POWERSAVE
 	tristate "'powersave' governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	help
 	  This cpufreq governor sets the frequency statically to the
 	  lowest available CPU frequency.
@@ -181,6 +200,7 @@ config CPU_FREQ_GOV_POWERSAVE
 
 config CPU_FREQ_GOV_USERSPACE
 	tristate "'userspace' governor for userspace frequency scaling"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	help
 	  Enable this cpufreq governor when you either want to set the
 	  CPU frequency manually or when a userspace program shall
@@ -196,6 +216,7 @@ config CPU_FREQ_GOV_USERSPACE
 
 config CPU_FREQ_GOV_ONDEMAND
 	tristate "'ondemand' cpufreq policy governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	select CPU_FREQ_GOV_COMMON
 	help
 	  'ondemand' - This driver adds a dynamic cpufreq policy governor.
@@ -214,6 +235,7 @@ config CPU_FREQ_GOV_ONDEMAND
 
 config CPU_FREQ_GOV_INTERACTIVE
 	bool "'interactive' cpufreq policy governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	help
 	  'interactive' - This driver adds a dynamic cpufreq policy governor
 	  designed for latency-sensitive workloads.
@@ -228,6 +250,7 @@ config CPU_FREQ_GOV_INTERACTIVE
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	depends on CPU_FREQ
 	select CPU_FREQ_GOV_COMMON
 	help
@@ -252,6 +275,7 @@ config CPU_FREQ_GOV_CONSERVATIVE
 
 config CPU_FREQ_GOV_SCHEDUTIL
 	tristate "'schedutil' cpufreq policy governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	depends on CPU_FREQ
 	select CPU_FREQ_GOV_ATTR_SET
 	select IRQ_WORK
@@ -272,16 +296,20 @@ config CPU_FREQ_GOV_SCHEDUTIL
 	  If in doubt, say N.
 
 config CPU_FREQ_GOV_ENERGYAWARE
-    bool "Exynos8895 energy_aware CPUFreq governor"
-    depends on SMP
-    select CPU_FREQ_GOV_COMMON
-    select IRQ_WORK
-    select SCHED_TUNE
-    help
-      Built-in governor using scheduler energy cost data from DTB.
+	bool "Exynos8895 energy_aware CPUFreq governor"
+	depends on SMP && OF && ARM_EXYNOS_ACME && CPU_IDLE && TRACEPOINTS
+	select CPU_FREQ_GOV_ATTR_SET
+	select IRQ_WORK
+	select SCHED_TUNE
+	help
+	  Backport the A53 EGO energy search and idle-time accounting.
+	  Choose the minimum-energy feasible state from explicit DT
+	  frequency/capacity/core-power/cluster-power data. No proportional
+	  clock target, directional rate limits or optional energy budget.
 
 config CPU_FREQ_GOV_ENERGYSTEP
 	bool "'energy_step' Exynos8895 compatible cpufreq governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	depends on CPU_FREQ && SMP
 	select CPU_FREQ_GOV_ATTR_SET
 	select IRQ_WORK
@@ -317,6 +345,7 @@ config CPUFREQ_DT
 
 config CPU_FREQ_GOV_BLU_ACTIVE
 	tristate "'blu_active' cpufreq policy governor"
+	depends on !CPU_FREQ_ENERGY_AWARE_ONLY
 	help
  	  'blu_active' - This driver adds a dynamic cpufreq policy governor
 	  designed for latency-sensitive workloads.

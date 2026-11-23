@@ -1,1141 +1,625 @@
 /*
- * ALice energy-model-driven CPUFreq governor for Exynos8895.
- * Selects energy-minimal OPPs from Samsung DTS power/capacity states.
- * Optional energy_step constrains the DTS power-state envelope, not MHz.
+ * Exynos8895 CPUFreq governor driven by discrete energy states.
  *
  * Copyright (C) 2016, Intel Corporation
- * Author: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * Original scheduler/CPUFreq interface: Rafael J. Wysocki
+ * Copyright (C) 2021, Samsung Electronic Corporation
+ * A53 EGO search/idle-time mechanism backported for ALice / Exynos8895.
+ * Licensed under the GNU General Public License version 2.
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#define pr_fmt(fmt) "energy_aware: " fmt
 
 #include <linux/cpufreq.h>
-#include <linux/sched_energy.h>
-#include <linux/math64.h>
-#include <linux/kthread.h>
-#include <linux/slab.h>
+#include <linux/cpuidle.h>
 #include <trace/events/power.h>
+#include <linux/kthread.h>
+#include <linux/math64.h>
+#include <linux/of.h>
+#include <linux/pm_qos.h>
+#include <linux/sched_energy.h>
+#include <linux/slab.h>
 
 #include "sched.h"
-#include "tune.h"
+#include "energy_aware_model.h"
+#include "energy_aware_idle.h"
 
 unsigned long boosted_cpu_util(int cpu);
 
-/* Stub out fast switch routines present on mainline to reduce the backport
- * overhead. */
-#define cpufreq_driver_fast_switch(x, y) 0
-#define cpufreq_enable_fast_switch(x)
-#define cpufreq_disable_fast_switch(x)
-#define EAGOV_DEFAULT_UP_RATE_LIMIT_US		(3000)
-#define EAGOV_DEFAULT_DOWN_RATE_LIMIT_US	(12000)
-#define EAGOV_KTHREAD_PRIORITY	50
-
-struct eagov_tunables {
-	struct gov_attr_set attr_set;
-	unsigned int up_rate_limit_us;
-	unsigned int down_rate_limit_us;
-	/* Optional Samsung ESG-style per-policy power envelope (0 = off). */
-	unsigned int energy_power_budget;
-	/* 0: automatic EAS; 1..N: DTS power-state index (lowest first). */
-	unsigned int energy_step;
-};
-
 struct eagov_policy {
 	struct cpufreq_policy *policy;
-
-	struct eagov_tunables *tunables;
-	struct list_head tunables_hook;
-
-	raw_spinlock_t update_lock;  /* For shared policies */
-	u64 last_freq_update_time;
-	s64 min_rate_limit_ns;
-	s64 up_rate_delay_ns;
-	s64 down_rate_delay_ns;
-	unsigned int next_freq;
-
-	/* The next fields are only needed if fast switch cannot be used. */
+	unsigned int qos_min_class;
+	unsigned int qos_max_class;
+	struct eagov_energy_model model;
+	struct gov_attr_set attr_set;
+	struct list_head attr_hook;
+	raw_spinlock_t lock;
+	struct mutex work_lock;
 	struct irq_work irq_work;
 	struct kthread_work work;
-	struct mutex work_lock;
 	struct kthread_worker worker;
 	struct task_struct *thread;
-	bool work_in_progress;
-
-	bool need_freq_update;
+	unsigned int target_state;
+	unsigned int applied_state;
+	unsigned long long target_energy;
+	s64 power_delta;
+	bool enabled;
+	bool queued;
 };
 
 struct eagov_cpu {
-	struct update_util_data update_util;
-	struct eagov_policy *sg_policy;
-
-	bool iowait_boost_pending;
-	unsigned int iowait_boost;
-	unsigned int iowait_boost_max;
-	u64 last_update;
-
-	/* The fields below are only needed when sharing a policy. */
-	unsigned long util;
-	unsigned long max;
-	unsigned int flags;
-
-	/* The field below is for single-CPU policies only. */
-#ifdef CONFIG_NO_HZ_COMMON
-	unsigned long saved_idle_calls;
-#endif
+	struct update_util_data hook;
+	struct eagov_policy *policy;
+	u64 time;
+	unsigned int util;
+	bool valid;
 };
 
-static DEFINE_PER_CPU(struct eagov_cpu, eagov_cpu);
-static DEFINE_PER_CPU(struct eagov_tunables *, cached_tunables);
-static unsigned int stale_ns;
+static DEFINE_PER_CPU(struct eagov_cpu, eagov_cpus);
 
-/************************ Governor internals ***********************/
+struct ego_idle_cpu {
+	raw_spinlock_t lock;
+	struct ego_idle_history history;
+};
 
-static bool eagov_should_update_freq(struct eagov_policy *sg_policy, u64 time)
+static DEFINE_PER_CPU(struct ego_idle_cpu, ego_idle_cpus);
+
+/* Native 4.4 replacement for A53 MLT CLKOFF/PWROFF event accounting. */
+static void ego_idle_transition(void *unused, unsigned int state,
+				unsigned int cpu)
 {
-	s64 delta_ns;
+	struct ego_idle_cpu *idle = &per_cpu(ego_idle_cpus, cpu);
+	unsigned long flags;
+	int next;
 
-	if (unlikely(sg_policy->need_freq_update))
-		return true;
-
-	delta_ns = time - sg_policy->last_freq_update_time;
-
-	/* No need to recalculate next freq for min_rate_limit_us at least */
-	return delta_ns >= sg_policy->min_rate_limit_ns;
+	if (state == (unsigned int)PWR_EVENT_EXIT)
+		next = EGO_IDLE_RUNNING;
+	else
+		next = state ? EGO_IDLE_PWROFF : EGO_IDLE_CLKOFF;
+	raw_spin_lock_irqsave(&idle->lock, flags);
+	ego_idle_update(&idle->history, sched_clock_cpu(cpu), next);
+	raw_spin_unlock_irqrestore(&idle->lock, flags);
 }
 
-static bool eagov_up_down_rate_limit(struct eagov_policy *sg_policy, u64 time,
-				     unsigned int next_freq)
+/* A53 ego_compute_cpu_idle_ratio(), using eight native 4 ms periods. */
+static unsigned int ego_compute_cpu_idle_ratio(unsigned int cpu)
 {
-	s64 delta_ns;
+	struct ego_idle_cpu *idle = &per_cpu(ego_idle_cpus, cpu);
+	unsigned long flags;
+	unsigned int ratio;
 
-	delta_ns = time - sg_policy->last_freq_update_time;
-
-	if (next_freq > sg_policy->next_freq &&
-	    delta_ns < sg_policy->up_rate_delay_ns)
-			return true;
-
-	if (next_freq < sg_policy->next_freq &&
-	    delta_ns < sg_policy->down_rate_delay_ns)
-			return true;
-
-	return false;
+	raw_spin_lock_irqsave(&idle->lock, flags);
+	ego_idle_update(&idle->history, sched_clock_cpu(cpu),
+			idle->history.initialized ? idle->history.state :
+			EGO_IDLE_RUNNING);
+	ratio = ego_idle_clkoff_ratio(&idle->history);
+	raw_spin_unlock_irqrestore(&idle->lock, flags);
+	return ratio;
 }
 
-static void eagov_update_commit(struct eagov_policy *sg_policy, u64 time,
-				unsigned int next_freq)
+/* Resolve the same native Samsung QoS classes used by Exynos ACME. */
+static int eagov_init_qos(struct eagov_policy *ea)
 {
-	struct cpufreq_policy *policy = sg_policy->policy;
+	struct device_node *node;
+	const char *cpus;
+	cpumask_t mask;
+	int ret;
 
-	if (eagov_up_down_rate_limit(sg_policy, time, next_freq))
+	for_each_node_by_type(node, "cpufreq-domain") {
+		if (of_property_read_string(node, "sibling-cpus", &cpus) ||
+		    cpulist_parse(cpus, &mask) ||
+		    !cpumask_test_cpu(ea->policy->cpu, &mask))
+			continue;
+		ret = of_property_read_u32(node, "pm_qos-min-class",
+					   &ea->qos_min_class);
+		ret |= of_property_read_u32(node, "pm_qos-max-class",
+					    &ea->qos_max_class);
+		of_node_put(node);
+		if (ret || !ea->qos_min_class || !ea->qos_max_class ||
+		    ea->qos_min_class >= PM_QOS_NUM_CLASSES ||
+		    ea->qos_max_class >= PM_QOS_NUM_CLASSES)
+			return -EINVAL;
+		return 0;
+	}
+	return -ENODEV;
+}
+
+/* Native replacement for A53's external fclamp/EMS frequency limits. */
+static void eagov_qos_range(struct eagov_policy *ea, unsigned int *low,
+			    unsigned int *high)
+{
+	struct cpufreq_policy *policy = ea->policy;
+	int qos_min = pm_qos_request(ea->qos_min_class);
+	int qos_max = pm_qos_request(ea->qos_max_class);
+
+	*low = policy->min;
+	*high = policy->max;
+	if (qos_min < 0 || qos_max < 0)
 		return;
-
-	if (sg_policy->next_freq == next_freq)
-		return;
-
-	sg_policy->next_freq = next_freq;
-	sg_policy->last_freq_update_time = time;
-
-	if (policy->fast_switch_enabled) {
-		next_freq = cpufreq_driver_fast_switch(policy, next_freq);
-		if (next_freq == CPUFREQ_ENTRY_INVALID)
-			return;
-
-		policy->cur = next_freq;
-		trace_cpu_frequency(next_freq, smp_processor_id());
-	} else if (!sg_policy->work_in_progress) {
-		sg_policy->work_in_progress = true;
-		irq_work_queue(&sg_policy->irq_work);
-	}
+	*low = clamp_val((unsigned int)qos_min, policy->min, policy->max);
+	*high = clamp_val((unsigned int)qos_max, policy->min, policy->max);
 }
 
-/*
- * ALice EAM v3: Samsung A53 EGO OPP search on Exynos8895 energy costs.
- *
- * The DTS sched-energy-costs tables expose a capacity and a busy power for
- * each core OPP, plus separate cluster power and idle-state costs.  We
- * evaluate the energy needed to execute the current policy's workload over
- * one scheduler window (core work SUM, cluster active time PEAK), constrained
- * by the highest per-CPU utilization and a modest capacity headroom.
- *
- * This is deliberately NOT schedutil's (util * max_freq / max_capacity)
- * frequency computation.  Utilization only describes the work requirement;
- * the energy model, rather than a proportional clock target, picks the OPP.
- *
- * Retain the Linux 4.4 scheduler callback, IOWAIT, RT/DL and slow cpufreq
- * transition infrastructure for the Exynos8895 hardware.  This is not the
- * Samsung 5.10 EMS/EGO task-placement subsystem shipped on Exynos1280.
- */
-#define EAGOV_LOAD_SCALE            (1UL << SCHED_CAPACITY_SHIFT)
-#define EAGOV_CAPACITY_MARGIN_NUM   9U
-#define EAGOV_CAPACITY_MARGIN_DEN   8U
-/* Validate writes independently of each CPU cluster's DTS state count. */
-#define EAGOV_MAX_MANUAL_STEP       32U
-
-static unsigned long eagov_util_to_load(unsigned long util,
-                                        unsigned long capacity)
+/* Every state must have its own explicit frequency in the Samsung DT. */
+static int eagov_build_model(struct eagov_policy *ea)
 {
-    if (unlikely(!capacity))
-        return 0;
+	struct cpufreq_policy *policy = ea->policy;
+	const struct sched_group_energy *core, *cluster;
+	struct device_node *cpu_node, *cost_node;
+	struct cpufreq_frequency_table *opp;
+	unsigned int previous_freq = 0;
+	unsigned int i, j, nr = 0;
+	int ret = -EINVAL;
 
-    return (unsigned long)div64_u64(
-                (u64)min(util, capacity) * EAGOV_LOAD_SCALE, capacity);
-}
+	core = sge_array[policy->cpu][SD_LEVEL0];
+	cluster = sge_array[policy->cpu][SD_LEVEL1];
+	if (!core || !cluster || !core->nr_cap_states ||
+	    core->nr_cap_states != cluster->nr_cap_states ||
+	    !core->cap_states || !cluster->cap_states || !policy->freq_table)
+		return -EINVAL;
 
-/*
- * EGO (Exynos1280)-inspired energy evaluation, adapted to Exynos8895:
- *
- *  1. Work out the minimum capacity required by the most loaded CPU.
- *  2. Walk the *real cpufreq OPP table*, not a proportional target.
- *  3. Reject any OPP which cannot supply that capacity.
- *  4. Estimate busy and idle energy across the whole cluster using
- *     Exynos8895 DTS sched-energy-costs (core + shared cluster).
- *  5. Select the OPP with lowest predicted energy.
- *
- * The Samsung EGO source uses et_freq_to_cap()/et_compute_cpu_energy(),
- * MLT idle ratios, emstune and fclamp.  Those interfaces do not exist in
- * this Linux 4.4 kernel.  These computations are a native 4.4 adaptation
- * of that algorithm, NOT a copy of the whole Samsung EMS framework.
- *
- * The original Samsung ESG energy_step.c source is archived as a separate
- * reference.  We use the same capacity/power distinction, but keep only
- * the energy_aware governor registered and enabled.
- */
-/*
- * Translate an explicitly requested Samsung-style energy step to a power
- * envelope using the *actual* per-cluster DTS busy-cost-data states.
- *
- * The source energy_step.c calls find_step_power() from EMS; Exynos8895
- * Linux 4.4 has no such function.  This equivalent is intentionally local:
- * an index addresses a DTS power/capacity state, not an arbitrary MHz step.
- * Step 0 leaves the energy optimizer unconstrained.  A53 and M2 interpret
- * the index in their *own* power tables, never a global watt value.
- */
-static u64 eagov_dts_step_power(const struct cpufreq_policy *policy,
-                               const struct sched_group_energy *core,
-                               const struct sched_group_energy *cluster,
-                               unsigned int step)
-{
-    const struct capacity_state *state;
-    unsigned long cap;
-    u64 power;
-    int i;
+	cpu_node = of_get_cpu_node(policy->cpu, NULL);
+	if (!cpu_node)
+		return -EINVAL;
+	cost_node = of_parse_phandle(cpu_node, "sched-energy-costs", SD_LEVEL0);
+	of_node_put(cpu_node);
+	if (!cost_node)
+		return -EINVAL;
+	if (of_property_count_u32_elems(cost_node, "frequency-data") !=
+	    core->nr_cap_states)
+		goto put_node;
 
-    if (!step || !core || !core->cap_states || !core->nr_cap_states)
-        return 0;
-
-    i = min_t(unsigned int, step, core->nr_cap_states) - 1;
-    state = &core->cap_states[i];
-    cap = state->cap;
-    power = (u64)state->power * cpumask_weight(policy->cpus);
-
-    if (!cluster || !cluster->cap_states || !cluster->nr_cap_states)
-        return power;
-
-    for (i = 0; i < cluster->nr_cap_states; i++)
-        if (cluster->cap_states[i].cap >= cap)
-            break;
-
-    if (i == cluster->nr_cap_states)
-        i--;
-
-    return power + cluster->cap_states[i].power;
-}
-
-static unsigned int eagov_energy_model_freq(struct eagov_policy *sg_policy,
-                                            unsigned long peak_load,
-                                            unsigned long total_load)
-{
-    struct cpufreq_policy *policy = sg_policy->policy;
-    struct cpufreq_frequency_table *opp;
-    const struct sched_group_energy *core, *cluster;
-    unsigned long max_cap = 0, required, core_idle, cluster_idle;
-    unsigned int best_freq = policy->max, budget_freq = policy->max;
-    unsigned int power_budget = READ_ONCE(sg_policy->tunables->energy_power_budget);
-    unsigned int step = READ_ONCE(sg_policy->tunables->energy_step);
-    u64 step_power, effective_budget = power_budget;
-    u64 best_energy = U64_MAX, budget_energy = U64_MAX;
-    bool found = false, budget_found = false;
-    int i;
-
-    if (unlikely(!peak_load))
-        return policy->min;
-
-    core = READ_ONCE(sge_array[policy->cpu][SD_LEVEL0]);
-    cluster = READ_ONCE(sge_array[policy->cpu][SD_LEVEL1]);
-    if (unlikely(!core || !core->cap_states || !core->nr_cap_states ||
-                 !policy->freq_table)) {
-        pr_warn_once("missing DTS energy model or OPP table: safe maximum\n");
-        return policy->max;
-    }
-
-    for (i = 0; i < core->nr_cap_states; i++)
-        max_cap = max(max_cap, (unsigned long)core->cap_states[i].cap);
-    if (unlikely(!max_cap || !policy->cpuinfo.max_freq))
-        return policy->max;
-
-    /*
-     * energy_step is a DTS power-state envelope, not a frequency index.
-     * An optional absolute power budget may further tighten it.  Neither
-     * limit may force a CPU below the capacity required by scheduler util.
-     */
-    step_power = eagov_dts_step_power(policy, core, cluster, step);
-    if (step_power && (!effective_budget || step_power < effective_budget))
-        effective_budget = step_power;
-
-    /* Capacity headroom is a constraint. It is NOT a frequency formula. */
-    required = (unsigned long)div64_u64(
-                (u64)min(peak_load, EAGOV_LOAD_SCALE) * max_cap *
-                EAGOV_CAPACITY_MARGIN_NUM +
-                (u64)EAGOV_LOAD_SCALE * EAGOV_CAPACITY_MARGIN_DEN - 1,
-                (u64)EAGOV_LOAD_SCALE * EAGOV_CAPACITY_MARGIN_DEN);
-    required = clamp_val(required, 1UL, max_cap);
-
-    core_idle = core->idle_states && core->nr_idle_states ?
-                core->idle_states[0].power : 0;
-    cluster_idle = cluster && cluster->idle_states &&
-                   cluster->nr_idle_states ?
-                   cluster->idle_states[0].power : 0;
-
-    /*
-     * Like A53 EGO's ego_find_energy_freq(), walk driver-supported
-     * frequencies and compare the cost to execute the same workload.
-     * The frequency-to-capacity conversion is the Linux 4.4 fallback
-     * for Exynos1280's et_freq_to_cap(), using Exynos8895's DTS caps.
-     */
-    cpufreq_for_each_valid_entry(opp, policy->freq_table) {
-        const struct capacity_state *core_state = NULL;
-        const struct capacity_state *cluster_state = NULL;
-        unsigned long opp_cap, core_dynamic, cluster_dynamic;
-        unsigned long core_cap, cluster_cap;
-        unsigned int freq = opp->frequency;
-        u64 energy, opp_busy_power;
-
-        if (freq < policy->min || freq > policy->max)
-            continue;
-
-        opp_cap = (unsigned long)div64_u64((u64)max_cap * freq,
-                                            policy->cpuinfo.max_freq);
-        opp_cap = clamp_val(opp_cap, 1UL, max_cap);
-        if (opp_cap < required)
-            continue;
-
-        for (i = 0; i < core->nr_cap_states; i++) {
-            if (core->cap_states[i].cap >= opp_cap) {
-                core_state = &core->cap_states[i];
-                break;
-            }
-        }
-        if (!core_state)
-            core_state = &core->cap_states[core->nr_cap_states - 1];
-
-        /*
-         * Core idle power is charged for every member of the policy;
-         * dynamic power scales with SUM of active CPU work fractions.
-         */
-        /* Use the capacity from Samsung's actual energy-state table
-         * when estimating work duration.  opp_cap is only a frequency-
-         * based feasibility estimate; its linear approximation must not
-         * silently replace the DTS capacity in the energy equation.
-         */
-        core_cap = max(1UL, (unsigned long)core_state->cap);
-        core_dynamic = core_state->power > core_idle ?
-                       core_state->power - core_idle : 0;
-        energy = (u64)core_idle * cpumask_weight(policy->cpus) *
-                 EAGOV_LOAD_SCALE;
-        energy += div64_u64(
-                    (u64)core_dynamic * total_load * max_cap, core_cap);
-
-        /* Shared cluster idle cost only ONCE; dynamic cost at peak. */
-        if (cluster && cluster->cap_states && cluster->nr_cap_states) {
-            for (i = 0; i < cluster->nr_cap_states; i++) {
-                if (cluster->cap_states[i].cap >= opp_cap) {
-                    cluster_state = &cluster->cap_states[i];
-                    break;
-                }
-            }
-            if (!cluster_state)
-                cluster_state =
-                    &cluster->cap_states[cluster->nr_cap_states - 1];
-
-            cluster_cap = max(1UL, (unsigned long)cluster_state->cap);
-            cluster_dynamic = cluster_state->power > cluster_idle ?
-                              cluster_state->power - cluster_idle : 0;
-            energy += (u64)cluster_idle * EAGOV_LOAD_SCALE;
-            energy += div64_u64(
-                        (u64)cluster_dynamic * peak_load * max_cap,
-                        cluster_cap);
-        }
-
-        if (!found || energy < best_energy ||
-            (energy == best_energy && freq < best_freq)) {
-            best_energy = energy;
-            best_freq = freq;
-            found = true;
-        }
-
-        /*
-         * The energy-step envelope derives from the core + cluster DTS
-         * power states (same units as the OPP cost).  Like Samsung ESG,
-         * an explicit step constrains energy *after* checking capacity.
-         * If the demanded capacity needs more power, we choose the
-         * unconstrained minimum-energy OPP to preserve responsiveness.
-         */
-        opp_busy_power = (u64)core_state->power *
-                         cpumask_weight(policy->cpus);
-        if (cluster_state)
-            opp_busy_power += cluster_state->power;
-
-        if (effective_budget && opp_busy_power <= effective_budget &&
-            (!budget_found || energy < budget_energy ||
-             (energy == budget_energy && freq < budget_freq))) {
-            budget_energy = energy;
-            budget_freq = freq;
-            budget_found = true;
-        }
-    }
-
-    /* The PM/QoS constrained policy may have no feasible energy OPP. */
-    if (budget_found)
-        return budget_freq;
-    return found ? best_freq : policy->max;
-}
-
-static inline bool use_pelt(void)
-{
-#ifdef CONFIG_SCHED_WALT
-	return (!sysctl_sched_use_walt_cpu_util || walt_disabled);
-#else
-	return true;
-#endif
-}
-
-static void eagov_get_util(unsigned long *util, unsigned long *max, u64 time)
-{
-	int cpu = smp_processor_id();
-	struct rq *rq = cpu_rq(cpu);
-	unsigned long max_cap, rt;
-	s64 delta;
-
-	max_cap = arch_scale_cpu_capacity(NULL, cpu);
-
-	sched_avg_update(rq);
-	delta = time - rq->age_stamp;
-	if (unlikely(delta < 0))
-		delta = 0;
-	rt = div64_u64(rq->rt_avg, sched_avg_period() + delta);
-	rt = (rt * max_cap) >> SCHED_CAPACITY_SHIFT;
-
-	*util = boosted_cpu_util(cpu);
-	if (use_pelt())
-		*util = *util + rt;
-
-	*util = min(*util, max_cap);
-	*max = max_cap;
-}
-
-static void eagov_set_iowait_boost(struct eagov_cpu *sg_cpu, u64 time,
-				   unsigned int flags)
-{
-	if (flags & SCHED_CPUFREQ_IOWAIT) {
-		if (sg_cpu->iowait_boost_pending)
-			return;
-
-		sg_cpu->iowait_boost_pending = true;
-
-		if (sg_cpu->iowait_boost) {
-			sg_cpu->iowait_boost <<= 1;
-			if (sg_cpu->iowait_boost > sg_cpu->iowait_boost_max)
-				sg_cpu->iowait_boost = sg_cpu->iowait_boost_max;
-		} else {
-			sg_cpu->iowait_boost = sg_cpu->sg_policy->policy->min;
-		}
-	} else if (sg_cpu->iowait_boost) {
-		s64 delta_ns = time - sg_cpu->last_update;
-
-		/* Clear iowait_boost if the CPU apprears to have been idle. */
-		if (delta_ns > TICK_NSEC) {
-			sg_cpu->iowait_boost = 0;
-			sg_cpu->iowait_boost_pending = false;
-		}
-	}
-}
-
-static void eagov_iowait_boost(struct eagov_cpu *sg_cpu, unsigned long *util,
-			       unsigned long *max)
-{
-	unsigned int boost_util, boost_max;
-
-	if (!sg_cpu->iowait_boost)
-		return;
-
-	if (sg_cpu->iowait_boost_pending) {
-		sg_cpu->iowait_boost_pending = false;
-	} else {
-		sg_cpu->iowait_boost >>= 1;
-		if (sg_cpu->iowait_boost < sg_cpu->sg_policy->policy->min) {
-			sg_cpu->iowait_boost = 0;
-			return;
-		}
+	ea->model.states = kcalloc(core->nr_cap_states,
+				   sizeof(*ea->model.states), GFP_KERNEL);
+	if (!ea->model.states) {
+		ret = -ENOMEM;
+		goto put_node;
 	}
 
-	boost_util = sg_cpu->iowait_boost;
-	boost_max = sg_cpu->iowait_boost_max;
+	for (i = 0; i < core->nr_cap_states; i++) {
+		struct eagov_energy_state *state = &ea->model.states[nr];
+		u32 frequency;
+		bool supported = false;
 
-	if (*util * boost_max < *max * boost_util) {
-		*util = boost_util;
-		*max = boost_max;
+		if (of_property_read_u32_index(cost_node, "frequency-data", i,
+					       &frequency) ||
+		    frequency <= previous_freq || !core->cap_states[i].cap ||
+		    core->cap_states[i].cap > SCHED_CAPACITY_SCALE ||
+		    (i && core->cap_states[i].cap <=
+			  core->cap_states[i - 1].cap))
+			goto free_states;
+		previous_freq = frequency;
+		for (j = 0; j < cluster->nr_cap_states; j++)
+			if (cluster->cap_states[j].cap ==
+			    core->cap_states[i].cap)
+				break;
+		if (j == cluster->nr_cap_states)
+			goto free_states;
+
+		cpufreq_for_each_valid_entry(opp, policy->freq_table)
+			if (opp->frequency == frequency) {
+				supported = true;
+				break;
+			}
+		if (!supported)
+			continue;
+
+		state->frequency = frequency;
+		state->capacity = core->cap_states[i].cap;
+		state->core_power = core->cap_states[i].power;
+		state->cluster_power = cluster->cap_states[j].power;
+		nr++;
 	}
-}
+	if (!nr || policy->cpuinfo.min_freq < ea->model.states[0].frequency ||
+	    policy->cpuinfo.max_freq > ea->model.states[nr - 1].frequency)
+		goto free_states;
 
-#ifdef CONFIG_NO_HZ_COMMON
-static bool eagov_cpu_is_busy(struct eagov_cpu *sg_cpu)
-{
-	unsigned long idle_calls = tick_nohz_get_idle_calls();
-	bool ret = idle_calls == sg_cpu->saved_idle_calls;
+	ea->model.nr_states = nr;
+	ea->model.core_idle = core->nr_idle_states && core->idle_states ?
+				core->idle_states[0].power : 0;
+	ea->model.core_pwroff = core->nr_idle_states > 1 && core->idle_states ?
+				  core->idle_states[1].power : 0;
+	ea->model.cluster_idle =
+		cluster->nr_idle_states && cluster->idle_states ?
+		cluster->idle_states[0].power : 0;
+	ret = 0;
+	goto put_node;
 
-	sg_cpu->saved_idle_calls = idle_calls;
+free_states:
+	kfree(ea->model.states);
+	ea->model.states = NULL;
+put_node:
+	of_node_put(cost_node);
 	return ret;
 }
-#else
-static inline bool eagov_cpu_is_busy(struct eagov_cpu *sg_cpu) { return false; }
-#endif /* CONFIG_NO_HZ_COMMON */
 
-static void eagov_update_single(struct update_util_data *hook, u64 time,
-				unsigned int flags)
+static unsigned int eagov_read_util(struct eagov_policy *ea, u64 time,
+				    unsigned int flags)
 {
-	struct eagov_cpu *sg_cpu = container_of(hook, struct eagov_cpu, update_util);
-	struct eagov_policy *sg_policy = sg_cpu->sg_policy;
-	struct cpufreq_policy *policy = sg_policy->policy;
-	unsigned long util, max;
-	unsigned int next_f;
-	bool busy;
+	struct rq *rq = cpu_rq(smp_processor_id());
+	unsigned int capacity =
+		ea->model.states[ea->model.nr_states - 1].capacity;
+	unsigned long util, rt;
+	s64 delta;
+	bool pelt = true;
 
-	eagov_set_iowait_boost(sg_cpu, time, flags);
-	sg_cpu->last_update = time;
+	if (flags & SCHED_CPUFREQ_DL)
+		return capacity;
+#ifdef CONFIG_SCHED_WALT
+	pelt = !sysctl_sched_use_walt_cpu_util || walt_disabled;
+#endif
+	util = boosted_cpu_util(smp_processor_id());
+	if (pelt) {
+		sched_avg_update(rq);
+		delta = max_t(s64, time - rq->age_stamp, 0);
+		rt = div64_u64(rq->rt_avg, sched_avg_period() + delta);
+		util += (rt * capacity) >> SCHED_CAPACITY_SHIFT;
+	}
+	return min_t(unsigned long, util, capacity);
+}
 
-	if (!eagov_should_update_freq(sg_policy, time))
+static u64 eagov_sample_window(void)
+{
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util)
+		return (u64)walt_ravg_window + (walt_ravg_window >> 3);
+#endif
+	return 2 * TICK_NSEC;
+}
+
+static u64 eagov_busy_power(struct eagov_policy *ea, unsigned int index)
+{
+	struct eagov_energy_state *state = &ea->model.states[index];
+
+	return (u64)state->core_power * cpumask_weight(ea->policy->cpus) +
+		state->cluster_power;
+}
+
+/* Called under ea->lock. The energy model is the only decision path. */
+static void eagov_request(struct eagov_policy *ea, u64 time)
+{
+	struct eagov_energy_choice choice;
+	struct ego_cpu_work cpus[NR_CPUS];
+	struct ego_workload work = { .cpus = cpus };
+	unsigned int cpu, low, high;
+	s64 window = eagov_sample_window();
+
+	for_each_cpu(cpu, ea->policy->cpus) {
+		struct eagov_cpu *sample = &per_cpu(eagov_cpus, cpu);
+
+		struct ego_cpu_work *input = &cpus[work.nr_cpus++];
+
+		input->util = !sample->valid ||
+			(s64)(time - sample->time) > window ? 0 : sample->util;
+		input->clkoff_ratio = ego_compute_cpu_idle_ratio(cpu);
+		work.peak = max(work.peak, input->util);
+	}
+	eagov_qos_range(ea, &low, &high);
+	choice = ego_find_energy_freq(&ea->model, &work, low, high);
+	/* A conflicting QoS floor cannot defeat a thermal/QoS ceiling. */
+	if (choice.state == EAGOV_NO_STATE)
+		choice = ego_find_energy_freq(&ea->model, &work,
+					    ea->policy->min, high);
+	if (WARN_ON_ONCE(choice.state == EAGOV_NO_STATE))
 		return;
 
-	busy = eagov_cpu_is_busy(sg_cpu);
-
-	if (flags & SCHED_CPUFREQ_DL) {
-		next_f = policy->cpuinfo.max_freq;
-	} else {
-		eagov_get_util(&util, &max, time);
-		eagov_iowait_boost(sg_cpu, &util, &max);
-		/* Let the energy model choose the OPP for this CPU workload. */
-		util = eagov_util_to_load(util, max);
-		next_f = eagov_energy_model_freq(sg_policy, util, util);
-		/*
-		 * Do not reduce the frequency if the CPU has not been idle
-		 * recently, as the reduction is likely to be premature then.
-		 */
-		if (busy && next_f < sg_policy->next_freq)
-			next_f = sg_policy->next_freq;
-	}
-	/* Serialize single-CPU slow-path updates with the worker too. */
-	if (policy->fast_switch_enabled) {
-		eagov_update_commit(sg_policy, time, next_f);
-	} else {
-		raw_spin_lock(&sg_policy->update_lock);
-		eagov_update_commit(sg_policy, time, next_f);
-		raw_spin_unlock(&sg_policy->update_lock);
+	/* QoS can change the hardware OPP outside this governor's worker. */
+	if (!ea->queued && ea->applied_state != EAGOV_NO_STATE &&
+	    ea->policy->cur != ea->model.states[ea->applied_state].frequency)
+		ea->applied_state = EAGOV_NO_STATE;
+	ea->target_energy = choice.energy;
+	ea->target_state = choice.state;
+	if (ea->enabled && !ea->queued && ea->applied_state != choice.state) {
+		ea->queued = true;
+		irq_work_queue(&ea->irq_work);
 	}
 }
 
-static unsigned int eagov_next_freq_shared(struct eagov_cpu *sg_cpu, u64 time)
+static void eagov_update(struct update_util_data *hook, u64 time,
+			 unsigned int flags)
 {
-    struct eagov_policy *sg_policy = sg_cpu->sg_policy;
-    struct cpufreq_policy *policy = sg_policy->policy;
-    unsigned long peak_load = 0, total_load = 0;
-    unsigned int j;
+	struct eagov_cpu *sample = container_of(hook, struct eagov_cpu, hook);
+	struct eagov_policy *ea = sample->policy;
+	unsigned int util = eagov_read_util(ea, time, flags);
 
-    for_each_cpu(j, policy->cpus) {
-        struct eagov_cpu *j_sg_cpu = &per_cpu(eagov_cpu, j);
-        unsigned long j_util, j_max, j_load;
-        s64 delta_ns;
-
-        /* Exclude stale tasks when estimating the next window's work. */
-        delta_ns = time - j_sg_cpu->last_update;
-        if (delta_ns > stale_ns) {
-            j_sg_cpu->iowait_boost = 0;
-            j_sg_cpu->iowait_boost_pending = false;
-            continue;
-        }
-        if (j_sg_cpu->flags & SCHED_CPUFREQ_DL)
-            return policy->max;
-
-        j_util = j_sg_cpu->util;
-        j_max = j_sg_cpu->max;
-        eagov_iowait_boost(j_sg_cpu, &j_util, &j_max);
-        j_load = eagov_util_to_load(j_util, j_max);
-        peak_load = max(peak_load, j_load);
-        total_load += j_load;
-    }
-
-    return eagov_energy_model_freq(sg_policy, peak_load, total_load);
+	raw_spin_lock(&ea->lock);
+	sample->util = util;
+	sample->time = time;
+	sample->valid = true;
+	if (ea->enabled)
+		eagov_request(ea, time);
+	raw_spin_unlock(&ea->lock);
 }
 
-static void eagov_update_shared(struct update_util_data *hook, u64 time,
-				unsigned int flags)
-{
-	struct eagov_cpu *sg_cpu = container_of(hook, struct eagov_cpu, update_util);
-	struct eagov_policy *sg_policy = sg_cpu->sg_policy;
-	unsigned long util, max;
-	unsigned int next_f;
-
-	eagov_get_util(&util, &max, time);
-
-	raw_spin_lock(&sg_policy->update_lock);
-
-	sg_cpu->util = util;
-	sg_cpu->max = max;
-	sg_cpu->flags = flags;
-
-	eagov_set_iowait_boost(sg_cpu, time, flags);
-	sg_cpu->last_update = time;
-
-	if (eagov_should_update_freq(sg_policy, time)) {
-		if (flags & SCHED_CPUFREQ_DL)
-			next_f = sg_policy->policy->cpuinfo.max_freq;
-		else
-			next_f = eagov_next_freq_shared(sg_cpu, time);
-
-		eagov_update_commit(sg_policy, time, next_f);
-	}
-
-	raw_spin_unlock(&sg_policy->update_lock);
-}
-
+/* The sleeping Exynos driver is transport; it never selects an energy step. */
 static void eagov_work(struct kthread_work *work)
 {
-	struct eagov_policy *sg_policy = container_of(work, struct eagov_policy, work);
-	unsigned int freq;
+	struct eagov_policy *ea = container_of(work, struct eagov_policy, work);
+	unsigned int state, frequency, previous;
 	unsigned long flags;
-	int attempt;
+	int attempt, ret;
 
-	/*
-	 * Keep work_in_progress set until the current target completes.
-	 * Drain at most two requests so an endless UI utilization stream
-	 * cannot monopolize the cpufreq kthread.  If more updates arrive,
-	 * schedule a fresh work item instead of losing the latest target.
-	 */
-	mutex_lock(&sg_policy->work_lock);
+	mutex_lock(&ea->work_lock);
 	for (attempt = 0; attempt < 2; attempt++) {
-		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		freq = sg_policy->next_freq;
-		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
-
-		__cpufreq_driver_target(sg_policy->policy, freq,
-					CPUFREQ_RELATION_L);
-
-		raw_spin_lock_irqsave(&sg_policy->update_lock, flags);
-		if (sg_policy->next_freq == freq) {
-			sg_policy->work_in_progress = false;
-			raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+		raw_spin_lock_irqsave(&ea->lock, flags);
+		state = ea->target_state;
+		if (!ea->enabled || state == EAGOV_NO_STATE) {
+			ea->queued = false;
+			raw_spin_unlock_irqrestore(&ea->lock, flags);
 			break;
 		}
-		if (attempt == 1) {
-			/*
-			 * The currently executing kthread_work has already
-			 * left its queue.  The IRQ work will enqueue it again
-			 * when another frequency target is pending.
-			 */
-			irq_work_queue(&sg_policy->irq_work);
+		frequency = ea->model.states[state].frequency;
+		previous = ea->applied_state;
+		raw_spin_unlock_irqrestore(&ea->lock, flags);
+
+		ret = __cpufreq_driver_target(ea->policy, frequency,
+					      CPUFREQ_RELATION_L);
+
+		raw_spin_lock_irqsave(&ea->lock, flags);
+		/* QoS may clamp the driver: acknowledge only an applied OPP. */
+		ea->applied_state = !ret && ea->policy->cur == frequency ?
+				    state : EAGOV_NO_STATE;
+		if (ea->applied_state != EAGOV_NO_STATE && previous != state)
+			ea->power_delta = previous == EAGOV_NO_STATE ? 0 :
+				(s64)eagov_busy_power(ea, state) -
+				(s64)eagov_busy_power(ea, previous);
+		if (ret || !ea->enabled || ea->target_state == state) {
+			ea->queued = false;
+			raw_spin_unlock_irqrestore(&ea->lock, flags);
+			break;
 		}
-		raw_spin_unlock_irqrestore(&sg_policy->update_lock, flags);
+		if (attempt == 1)
+			irq_work_queue(&ea->irq_work);
+		raw_spin_unlock_irqrestore(&ea->lock, flags);
 	}
-	mutex_unlock(&sg_policy->work_lock);
+	mutex_unlock(&ea->work_lock);
 }
 
-static void eagov_irq_work(struct irq_work *irq_work)
+static void eagov_irq_work(struct irq_work *irq)
 {
-	struct eagov_policy *sg_policy;
+	struct eagov_policy *ea =
+		container_of(irq, struct eagov_policy, irq_work);
 
-	sg_policy = container_of(irq_work, struct eagov_policy, irq_work);
-
-	queue_kthread_work(&sg_policy->worker, &sg_policy->work);
+	queue_kthread_work(&ea->worker, &ea->work);
 }
 
-/************************** sysfs interface ************************/
-
-static struct eagov_tunables *global_tunables;
-static DEFINE_MUTEX(global_tunables_lock);
-
-static inline struct eagov_tunables *to_eagov_tunables(struct gov_attr_set *attr_set)
+static struct eagov_policy *eagov_from_attrs(struct gov_attr_set *set)
 {
-	return container_of(attr_set, struct eagov_tunables, attr_set);
+	return container_of(set, struct eagov_policy, attr_set);
 }
 
-static DEFINE_MUTEX(min_rate_lock);
-
-static void update_min_rate_limit_us(struct eagov_policy *sg_policy)
+static ssize_t idle_ratios_show(struct gov_attr_set *set, char *buf)
 {
-	mutex_lock(&min_rate_lock);
-	sg_policy->min_rate_limit_ns = min(sg_policy->up_rate_delay_ns,
-					   sg_policy->down_rate_delay_ns);
-	mutex_unlock(&min_rate_lock);
-}
+	struct eagov_policy *ea = eagov_from_attrs(set);
+	unsigned int cpu;
+	int len = 0;
 
-static ssize_t up_rate_limit_us_show(struct gov_attr_set *attr_set, char *buf)
-{
-	struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
+	len += scnprintf(buf, PAGE_SIZE, "cpu clkoff pwroff (scale 1024)\n");
+	for_each_cpu(cpu, ea->policy->cpus) {
+		unsigned int ratio = ego_compute_cpu_idle_ratio(cpu);
 
-	return sprintf(buf, "%u\n", tunables->up_rate_limit_us);
-}
-
-static ssize_t down_rate_limit_us_show(struct gov_attr_set *attr_set, char *buf)
-{
-	struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-
-	return sprintf(buf, "%u\n", tunables->down_rate_limit_us);
-}
-
-static ssize_t up_rate_limit_us_store(struct gov_attr_set *attr_set,
-				      const char *buf, size_t count)
-{
-	struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-	struct eagov_policy *sg_policy;
-	unsigned int rate_limit_us;
-
-	if (kstrtouint(buf, 10, &rate_limit_us))
-		return -EINVAL;
-
-	tunables->up_rate_limit_us = rate_limit_us;
-
-	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
-		sg_policy->up_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
-		update_min_rate_limit_us(sg_policy);
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%u %u %u\n",
+				 cpu, ratio, EAGOV_ENERGY_SCALE - ratio);
 	}
-
-	return count;
+	return len;
 }
 
-static ssize_t down_rate_limit_us_store(struct gov_attr_set *attr_set,
-					const char *buf, size_t count)
+static ssize_t energy_step_show(struct gov_attr_set *set, char *buf)
 {
-	struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-	struct eagov_policy *sg_policy;
-	unsigned int rate_limit_us;
+	struct eagov_policy *ea = eagov_from_attrs(set);
+	unsigned int state = READ_ONCE(ea->applied_state);
 
-	if (kstrtouint(buf, 10, &rate_limit_us))
-		return -EINVAL;
+	return sprintf(buf, "%u\n", state == EAGOV_NO_STATE ? 0 : state + 1);
+}
 
-	tunables->down_rate_limit_us = rate_limit_us;
+static ssize_t energy_delta_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
 
-	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
-		sg_policy->down_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
-		update_min_rate_limit_us(sg_policy);
+	return sprintf(buf, "%lld\n", (long long)READ_ONCE(ea->power_delta));
+}
+
+static ssize_t predicted_energy_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
+
+	return sprintf(buf, "%llu\n", READ_ONCE(ea->target_energy));
+}
+
+static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
+	unsigned int i;
+	int len = 0;
+	u64 previous = 0;
+
+	len += scnprintf(buf, PAGE_SIZE,
+			 "step kHz capacity core cluster busy_power delta_power\n");
+	for (i = 0; i < ea->model.nr_states && len < PAGE_SIZE; i++) {
+		struct eagov_energy_state *state = &ea->model.states[i];
+		u64 power = eagov_busy_power(ea, i);
+
+		len += scnprintf(buf + len, PAGE_SIZE - len,
+				 "%u %u %u %u %u %llu %lld\n", i + 1,
+				 state->frequency, state->capacity,
+				 state->core_power, state->cluster_power,
+				 (unsigned long long)power,
+				 i ? (long long)(power - previous) : 0LL);
+		previous = power;
 	}
-
-	return count;
+	return len;
 }
 
-/*
- * Optional ESG-style power envelope in the *actual DTS busy-cost units*:
- * sum of busy core powers plus one shared-cluster power.  Zero (default)
- * makes the governor rely solely on the EGO-like energy minimization.
- */
-static ssize_t energy_power_budget_show(struct gov_attr_set *attr_set, char *buf)
-{
-    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-
-    return sprintf(buf, "%u\n", READ_ONCE(tunables->energy_power_budget));
-}
-
-static ssize_t energy_power_budget_store(struct gov_attr_set *attr_set,
-                                          const char *buf, size_t count)
-{
-    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-    unsigned int value;
-
-    if (kstrtouint(buf, 10, &value))
-        return -EINVAL;
-
-    WRITE_ONCE(tunables->energy_power_budget, value);
-    return count;
-}
-
-/*
- * 0: automatic energy minimization.
- * 1..N: power envelope from core DTS state N and matching cluster state.
- * The per-cluster table length is capped when evaluating a step.
- * This does NOT translate N into N evenly spaced clock frequencies.
- */
-static ssize_t energy_step_show(struct gov_attr_set *attr_set, char *buf)
-{
-    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-
-    return sprintf(buf, "%u\n", READ_ONCE(tunables->energy_step));
-}
-
-static ssize_t energy_step_store(struct gov_attr_set *attr_set,
-                                 const char *buf, size_t count)
-{
-    struct eagov_tunables *tunables = to_eagov_tunables(attr_set);
-    unsigned int value;
-
-    if (kstrtouint(buf, 10, &value) || value > EAGOV_MAX_MANUAL_STEP)
-        return -EINVAL;
-
-    WRITE_ONCE(tunables->energy_step, value);
-    return count;
-}
-
-static struct governor_attr energy_step = __ATTR_RW(energy_step);
-static struct governor_attr energy_power_budget = __ATTR_RW(energy_power_budget);
-
-static struct governor_attr up_rate_limit_us = __ATTR_RW(up_rate_limit_us);
-static struct governor_attr down_rate_limit_us = __ATTR_RW(down_rate_limit_us);
-
+static struct governor_attr idle_ratios = __ATTR_RO(idle_ratios);
+static struct governor_attr energy_step = __ATTR_RO(energy_step);
+static struct governor_attr energy_delta = __ATTR_RO(energy_delta);
+static struct governor_attr energy_steps = __ATTR_RO(energy_steps);
+static struct governor_attr predicted_energy = __ATTR_RO(predicted_energy);
 static struct attribute *eagov_attributes[] = {
-	&up_rate_limit_us.attr,
-	&down_rate_limit_us.attr,
-	&energy_power_budget.attr,
+	&idle_ratios.attr,
 	&energy_step.attr,
+	&energy_delta.attr,
+	&energy_steps.attr,
+	&predicted_energy.attr,
 	NULL
 };
 
-static struct kobj_type eagov_tunables_ktype = {
+static void eagov_release(struct kobject *kobj)
+{
+	struct gov_attr_set *set =
+		container_of(kobj, struct gov_attr_set, kobj);
+	struct eagov_policy *ea = eagov_from_attrs(set);
+
+	kfree(ea->model.states);
+	kfree(ea);
+}
+
+static struct kobj_type eagov_ktype = {
 	.default_attrs = eagov_attributes,
 	.sysfs_ops = &governor_sysfs_ops,
+	.release = eagov_release,
 };
-
-/********************** cpufreq governor interface *********************/
-#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE
-static
-#endif
-struct cpufreq_governor cpufreq_gov_energy_aware;
-
-static struct eagov_policy *eagov_policy_alloc(struct cpufreq_policy *policy)
-{
-	struct eagov_policy *sg_policy;
-
-	sg_policy = kzalloc(sizeof(*sg_policy), GFP_KERNEL);
-	if (!sg_policy)
-		return NULL;
-
-	sg_policy->policy = policy;
-	raw_spin_lock_init(&sg_policy->update_lock);
-	return sg_policy;
-}
-
-static void eagov_policy_free(struct eagov_policy *sg_policy)
-{
-	kfree(sg_policy);
-}
-
-static int eagov_kthread_create(struct eagov_policy *sg_policy)
-{
-	struct task_struct *thread;
-	struct sched_param param = { .sched_priority = MAX_USER_RT_PRIO / 2 };
-	struct cpufreq_policy *policy = sg_policy->policy;
-	int ret;
-
-	/* kthread only required for slow path */
-	if (policy->fast_switch_enabled)
-		return 0;
-
-	init_kthread_work(&sg_policy->work, eagov_work);
-	init_kthread_worker(&sg_policy->worker);
-	thread = kthread_create(kthread_worker_fn, &sg_policy->worker,
-				"eagov:%d",
-				cpumask_first(policy->related_cpus));
-	if (IS_ERR(thread)) {
-		pr_err("failed to create eagov thread: %ld\n", PTR_ERR(thread));
-		return PTR_ERR(thread);
-	}
-
-	ret = sched_setscheduler_nocheck(thread, SCHED_FIFO, &param);
-	if (ret) {
-		kthread_stop(thread);
-		pr_warn("%s: failed to set SCHED_FIFO\n", __func__);
-		return ret;
-	}
-
-	sg_policy->thread = thread;
-	kthread_bind_mask(thread, policy->related_cpus);
-	init_irq_work(&sg_policy->irq_work, eagov_irq_work);
-	mutex_init(&sg_policy->work_lock);
-
-	wake_up_process(thread);
-
-	return 0;
-}
-
-static void eagov_kthread_stop(struct eagov_policy *sg_policy)
-{
-	/* kthread only required for slow path */
-	if (sg_policy->policy->fast_switch_enabled)
-		return;
-
-	flush_kthread_worker(&sg_policy->worker);
-	kthread_stop(sg_policy->thread);
-	mutex_destroy(&sg_policy->work_lock);
-}
-
-static struct eagov_tunables *eagov_tunables_alloc(struct eagov_policy *sg_policy)
-{
-	struct eagov_tunables *tunables;
-
-	tunables = kzalloc(sizeof(*tunables), GFP_KERNEL);
-	if (tunables) {
-		gov_attr_set_init(&tunables->attr_set, &sg_policy->tunables_hook);
-		if (!have_governor_per_policy())
-			global_tunables = tunables;
-	}
-	return tunables;
-}
-
-static void eagov_tunables_save(struct cpufreq_policy *policy,
-		struct eagov_tunables *tunables)
-{
-	int cpu;
-	struct eagov_tunables *cached = per_cpu(cached_tunables, policy->cpu);
-
-	if (!have_governor_per_policy())
-		return;
-
-	if (!cached) {
-		cached = kzalloc(sizeof(*tunables), GFP_KERNEL);
-		if (!cached) {
-			pr_warn("Couldn't allocate tunables for caching\n");
-			return;
-		}
-		for_each_cpu(cpu, policy->related_cpus)
-			per_cpu(cached_tunables, cpu) = cached;
-	}
-
-	cached->up_rate_limit_us = tunables->up_rate_limit_us;
-	cached->down_rate_limit_us = tunables->down_rate_limit_us;
-	cached->energy_power_budget = READ_ONCE(tunables->energy_power_budget);
-	cached->energy_step = READ_ONCE(tunables->energy_step);
-}
-
-static void eagov_tunables_free(struct eagov_tunables *tunables)
-{
-	if (!have_governor_per_policy())
-		global_tunables = NULL;
-
-	kfree(tunables);
-}
-
-static void eagov_tunables_restore(struct cpufreq_policy *policy)
-{
-	struct eagov_policy *sg_policy = policy->governor_data;
-	struct eagov_tunables *tunables = sg_policy->tunables;
-	struct eagov_tunables *cached = per_cpu(cached_tunables, policy->cpu);
-
-	if (!cached)
-		return;
-
-	tunables->up_rate_limit_us = cached->up_rate_limit_us;
-	tunables->down_rate_limit_us = cached->down_rate_limit_us;
-	WRITE_ONCE(tunables->energy_power_budget, cached->energy_power_budget);
-	WRITE_ONCE(tunables->energy_step, cached->energy_step);
-	sg_policy->up_rate_delay_ns =
-		tunables->up_rate_limit_us * NSEC_PER_USEC;
-	sg_policy->down_rate_delay_ns =
-		tunables->down_rate_limit_us * NSEC_PER_USEC;
-	sg_policy->min_rate_limit_ns = min(sg_policy->up_rate_delay_ns,
-					   sg_policy->down_rate_delay_ns);
-}
 
 static int eagov_init(struct cpufreq_policy *policy)
 {
-	struct eagov_policy *sg_policy;
-	struct eagov_tunables *tunables;
-	int ret = 0;
+	struct sched_param param = { .sched_priority = MAX_USER_RT_PRIO / 2 };
+	struct eagov_policy *ea;
+	int ret;
 
-	/* State should be equivalent to EXIT */
 	if (policy->governor_data)
 		return -EBUSY;
-
-	cpufreq_enable_fast_switch(policy);
-
-	sg_policy = eagov_policy_alloc(policy);
-	if (!sg_policy) {
-		ret = -ENOMEM;
-		goto disable_fast_switch;
-	}
-
-	ret = eagov_kthread_create(sg_policy);
+	if (!have_governor_per_policy())
+		return -EINVAL;
+	ea = kzalloc(sizeof(*ea), GFP_KERNEL);
+	if (!ea)
+		return -ENOMEM;
+	ea->policy = policy;
+	ret = eagov_init_qos(ea);
 	if (ret)
-		goto free_sg_policy;
-
-	mutex_lock(&global_tunables_lock);
-
-	if (global_tunables) {
-		if (WARN_ON(have_governor_per_policy())) {
-			ret = -EINVAL;
-			goto stop_kthread;
-		}
-		policy->governor_data = sg_policy;
-		sg_policy->tunables = global_tunables;
-
-		gov_attr_set_get(&global_tunables->attr_set, &sg_policy->tunables_hook);
-		goto out;
+		goto free_policy;
+	ret = eagov_build_model(ea);
+	if (ret) {
+		pr_err("CPU%u: complete frequency/capacity/power model required (%d)\n",
+		       policy->cpu, ret);
+		goto free_policy;
 	}
-
-	tunables = eagov_tunables_alloc(sg_policy);
-	if (!tunables) {
-		ret = -ENOMEM;
-		goto stop_kthread;
+	raw_spin_lock_init(&ea->lock);
+	mutex_init(&ea->work_lock);
+	init_irq_work(&ea->irq_work, eagov_irq_work);
+	init_kthread_work(&ea->work, eagov_work);
+	init_kthread_worker(&ea->worker);
+	ea->thread = kthread_create(kthread_worker_fn, &ea->worker,
+				    "energy_aware:%u", policy->cpu);
+	if (IS_ERR(ea->thread)) {
+		ret = PTR_ERR(ea->thread);
+		goto free_model;
 	}
-
-	if (policy->up_transition_delay_us && policy->down_transition_delay_us) {
-		tunables->up_rate_limit_us = policy->up_transition_delay_us;
-		tunables->down_rate_limit_us = policy->down_transition_delay_us;
-	} else {
-		/*
-		 * Exynos8895 does not publish separate transition delays.  Scaling
-		 * the hardware latency by 1000 delayed both directions by about
-		 * 100 ms, which is visible as launch and scrolling stutter.  Use a
-		 * short 2.5 ms response window, then release a stale high OPP after
-		 * 8 ms.  This keeps UI bursts responsive without pinning the Exynos M2
-		 * cluster at an overclocked OPP between frames.
-		 */
-		tunables->up_rate_limit_us = EAGOV_DEFAULT_UP_RATE_LIMIT_US;
-		tunables->down_rate_limit_us = EAGOV_DEFAULT_DOWN_RATE_LIMIT_US;
-	}
-
-	WRITE_ONCE(tunables->energy_power_budget, 0);
-	/* Default auto mode still walks the real discrete DTS power states. */
-	WRITE_ONCE(tunables->energy_step, 0);
-	policy->governor_data = sg_policy;
-	sg_policy->tunables = tunables;
-	stale_ns = walt_ravg_window + (walt_ravg_window >> 3);
-
-	eagov_tunables_restore(policy);
-
-	ret = kobject_init_and_add(&tunables->attr_set.kobj, &eagov_tunables_ktype,
-				   get_governor_parent_kobj(policy), "%s",
-				   cpufreq_gov_energy_aware.name);
+	ret = sched_setscheduler_nocheck(ea->thread, SCHED_FIFO, &param);
 	if (ret)
-		goto fail;
+		goto stop_thread;
+	kthread_bind_mask(ea->thread, policy->related_cpus);
+	wake_up_process(ea->thread);
 
-out:
-	mutex_unlock(&global_tunables_lock);
+	ea->target_state = EAGOV_NO_STATE;
+	ea->applied_state = EAGOV_NO_STATE;
+	gov_attr_set_init(&ea->attr_set, &ea->attr_hook);
+	ret = kobject_init_and_add(&ea->attr_set.kobj, &eagov_ktype,
+				   get_governor_parent_kobj(policy),
+				   "energy_aware");
+	if (ret) {
+		kthread_stop(ea->thread);
+		mutex_destroy(&ea->work_lock);
+		mutex_destroy(&ea->attr_set.update_lock);
+		kobject_put(&ea->attr_set.kobj);
+		return ret;
+	}
+	policy->governor_data = ea;
 	return 0;
 
-fail:
-	policy->governor_data = NULL;
-	eagov_tunables_free(tunables);
-
-stop_kthread:
-	eagov_kthread_stop(sg_policy);
-
-free_sg_policy:
-	mutex_unlock(&global_tunables_lock);
-
-	eagov_policy_free(sg_policy);
-
-disable_fast_switch:
-	cpufreq_disable_fast_switch(policy);
-
-	pr_err("initialization failed (error %d)\n", ret);
+stop_thread:
+	kthread_stop(ea->thread);
+free_model:
+	mutex_destroy(&ea->work_lock);
+	kfree(ea->model.states);
+free_policy:
+	kfree(ea);
 	return ret;
 }
 
 static int eagov_exit(struct cpufreq_policy *policy)
 {
-	struct eagov_policy *sg_policy = policy->governor_data;
-	struct eagov_tunables *tunables = sg_policy->tunables;
-	unsigned int count;
+	struct eagov_policy *ea = policy->governor_data;
 
-	mutex_lock(&global_tunables_lock);
-
-	count = gov_attr_set_put(&tunables->attr_set, &sg_policy->tunables_hook);
+	flush_kthread_worker(&ea->worker);
+	kthread_stop(ea->thread);
+	mutex_destroy(&ea->work_lock);
 	policy->governor_data = NULL;
-	if (!count) {
-		eagov_tunables_save(policy, tunables);
-		eagov_tunables_free(tunables);
-	}
-
-	mutex_unlock(&global_tunables_lock);
-
-	eagov_kthread_stop(sg_policy);
-	eagov_policy_free(sg_policy);
-
-	cpufreq_disable_fast_switch(policy);
+	/* This embedded attr_set is freed by the kobject release callback. */
+	mutex_destroy(&ea->attr_set.update_lock);
+	kobject_put(&ea->attr_set.kobj);
 	return 0;
 }
 
 static int eagov_start(struct cpufreq_policy *policy)
 {
-	struct eagov_policy *sg_policy = policy->governor_data;
+	struct eagov_policy *ea = policy->governor_data;
 	unsigned int cpu;
 
-	sg_policy->up_rate_delay_ns =
-		sg_policy->tunables->up_rate_limit_us * NSEC_PER_USEC;
-	sg_policy->down_rate_delay_ns =
-		sg_policy->tunables->down_rate_limit_us * NSEC_PER_USEC;
-	update_min_rate_limit_us(sg_policy);
-	sg_policy->last_freq_update_time = 0;
-	sg_policy->next_freq = 0;
-	sg_policy->work_in_progress = false;
-	sg_policy->need_freq_update = false;
-
+	ea->target_state = EAGOV_NO_STATE;
+	ea->applied_state = EAGOV_NO_STATE;
+	ea->queued = false;
+	ea->power_delta = 0;
 	for_each_cpu(cpu, policy->cpus) {
-		struct eagov_cpu *sg_cpu = &per_cpu(eagov_cpu, cpu);
+		struct eagov_cpu *sample = &per_cpu(eagov_cpus, cpu);
 
-		memset(sg_cpu, 0, sizeof(*sg_cpu));
-		sg_cpu->sg_policy = sg_policy;
-		sg_cpu->flags = SCHED_CPUFREQ_DL;
-		sg_cpu->iowait_boost_max = policy->cpuinfo.max_freq;
+		memset(sample, 0, sizeof(*sample));
+		sample->policy = ea;
 	}
-
+	ea->enabled = true;
 	for_each_cpu(cpu, policy->cpus) {
-		struct eagov_cpu *sg_cpu = &per_cpu(eagov_cpu, cpu);
+		struct eagov_cpu *sample = &per_cpu(eagov_cpus, cpu);
 
-		cpufreq_add_update_util_hook(cpu, &sg_cpu->update_util,
-					     policy_is_shared(policy) ?
-							eagov_update_shared :
-							eagov_update_single);
+		cpufreq_add_update_util_hook(cpu, &sample->hook, eagov_update);
 	}
 	return 0;
 }
 
 static int eagov_stop(struct cpufreq_policy *policy)
 {
-	struct eagov_policy *sg_policy = policy->governor_data;
+	struct eagov_policy *ea = policy->governor_data;
+	unsigned long flags;
 	unsigned int cpu;
 
 	for_each_cpu(cpu, policy->cpus)
 		cpufreq_remove_update_util_hook(cpu);
-
 	synchronize_sched();
-
-	if (!policy->fast_switch_enabled) {
-		irq_work_sync(&sg_policy->irq_work);
-		kthread_cancel_work_sync(&sg_policy->work);
-	}
+	raw_spin_lock_irqsave(&ea->lock, flags);
+	ea->enabled = false;
+	raw_spin_unlock_irqrestore(&ea->lock, flags);
+	irq_work_sync(&ea->irq_work);
+	kthread_cancel_work_sync(&ea->work);
 	return 0;
 }
 
 static int eagov_limits(struct cpufreq_policy *policy)
 {
-	struct eagov_policy *sg_policy = policy->governor_data;
+	struct eagov_policy *ea = policy->governor_data;
+	unsigned long flags;
 
-	if (!policy->fast_switch_enabled) {
-		mutex_lock(&sg_policy->work_lock);
-		cpufreq_policy_apply_limits(policy);
-		mutex_unlock(&sg_policy->work_lock);
-	}
-
-	sg_policy->need_freq_update = true;
-
+	mutex_lock(&ea->work_lock);
+	cpufreq_policy_apply_limits(policy);
+	raw_spin_lock_irqsave(&ea->lock, flags);
+	ea->applied_state = EAGOV_NO_STATE;
+	if (ea->enabled)
+		eagov_request(ea, sched_clock_cpu(policy->cpu));
+	raw_spin_unlock_irqrestore(&ea->lock, flags);
+	mutex_unlock(&ea->work_lock);
 	return 0;
 }
 
 static int cpufreq_energy_aware_cb(struct cpufreq_policy *policy,
-				unsigned int event)
+				   unsigned int event)
 {
-	switch(event) {
+	switch (event) {
 	case CPUFREQ_GOV_POLICY_INIT:
 		return eagov_init(policy);
 	case CPUFREQ_GOV_POLICY_EXIT:
@@ -1147,7 +631,7 @@ static int cpufreq_energy_aware_cb(struct cpufreq_policy *policy,
 	case CPUFREQ_GOV_LIMITS:
 		return eagov_limits(policy);
 	default:
-		BUG();
+		return -EINVAL;
 	}
 }
 
@@ -1162,6 +646,18 @@ struct cpufreq_governor cpufreq_gov_energy_aware = {
 
 static int __init eagov_register(void)
 {
-	return cpufreq_register_governor(&cpufreq_gov_energy_aware);
+	int cpu, ret;
+
+	for_each_possible_cpu(cpu)
+		raw_spin_lock_init(&per_cpu(ego_idle_cpus, cpu).lock);
+	ret = register_trace_cpu_idle(ego_idle_transition, NULL);
+	if (ret)
+		return ret;
+	ret = cpufreq_register_governor(&cpufreq_gov_energy_aware);
+	if (ret) {
+		unregister_trace_cpu_idle(ego_idle_transition, NULL);
+		tracepoint_synchronize_unregister();
+	}
+	return ret;
 }
 fs_initcall(eagov_register);

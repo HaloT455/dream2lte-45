@@ -19,16 +19,17 @@
 	compatible = "samsung,exynos8895", "samsung,UNIVERSAL8895";
 
 	/*
-	 * Use firmware-backed CPU OPPs: 2002 MHz for A53 and 2704 MHz for
-	 * Mongoose M2.  GPU limits remain stock.
+	 * Restrict the strict energy-aware profile to characterized energy
+	 * states: A53 1690 MHz, M2 2314 MHz. Higher firmware OPPs have no
+	 * matching busy-power rows and must not reuse lower-OPP costs.
 	 */
 	cpufreq {
 		domain@0 {
-			max-freq = <2002000>;
+			max-freq = <1690000>;
 		};
 
 		domain@1 {
-			max-freq = <2704000>;
+			max-freq = <2314000>;
 		};
 	};
 

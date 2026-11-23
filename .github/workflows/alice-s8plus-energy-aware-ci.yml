@@ -1,4 +1,4 @@
-name: ALice S8Plus EGO Inspired energy_aware CI
+name: ALice S8Plus A53 EGO energy_aware ONLY CI
 on:
   push:
     branches:
@@ -48,6 +48,8 @@ jobs:
             --disable ALWAYS_PERMISSIVE \
             --disable SECURITY_SELINUX_DEVELOP \
             --disable LOCALVERSION_AUTO \
+            --enable CPU_FREQ_ENERGY_AWARE_ONLY \
+            --disable CPU_FREQ_GOV_PERFORMANCE \
             --disable CPU_FREQ_DEFAULT_GOV_ENERGYSTEP \
             --disable CPU_FREQ_GOV_ENERGYSTEP \
             --disable CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
@@ -58,39 +60,20 @@ jobs:
             --set-str LOCALVERSION "-Alice-S8P-EA-KSU-LZ4KD"
           make O=out-ea olddefconfig
 
-      - name: Assert kernel-only integration
+      - name: Assert strict energy-aware integration
         run: |
           set -eux
-          C=out-ea/.config
-          grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$' "$C"
-          grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYAWARE=y$' "$C"
-          ! grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYSTEP=y$' "$C"
-          ! grep -q '^CONFIG_CPU_FREQ_GOV_ENERGYSTEP=y$' "$C"
-          ! grep -q '^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y$' "$C"
-          ! grep -q '^CONFIG_ALICE_BATTERY_RESERVE=y$' "$C"
-          grep -q '^CONFIG_KSU=y$' "$C"
-          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' "$C"
-          grep -q '^CONFIG_CRYPTO_LZ4KD=y$' "$C"
-          grep -q 'sge_array\[' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'eagov_energy_model_freq' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'eagov_dts_step_power' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'energy_step = __ATTR_RW(energy_step)' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'core_dynamic \* total_load' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'cluster_dynamic \* peak_load' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'SD_LEVEL1' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'cpufreq_for_each_valid_entry(opp, policy->freq_table)' kernel/sched/cpufreq_energy_aware.c
-          grep -q 'ego_find_energy_freq' kernel/sched/cpufreq_energy_aware.c
-          grep -q '.name = "energy_aware"' kernel/sched/cpufreq_energy_aware.c
-          test -s research/samsung-energy_step-user-reference.c
-          test -s research/samsung-a53-exynos1280-ego-reference.c
-          ! grep -q 'get_next_freq' kernel/sched/cpufreq_energy_aware.c
-          ! grep -q 'cached_raw_freq' kernel/sched/cpufreq_energy_aware.c
+          python3 scripts/check_energy_aware_only.py out-ea/.config
+          grep -q '^CONFIG_KSU=y$' out-ea/.config
+          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' out-ea/.config
+          grep -q '^CONFIG_CRYPTO_LZ4KD=y$' out-ea/.config
 
       - name: Verify real Samsung A53 energy costs and repacker syntax
         run: |
           set -euo pipefail
           python3 -m py_compile scripts/alice_ci_boot_repack.py
           python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_energy_aware_worker.py
           grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
@@ -109,7 +92,7 @@ jobs:
           set -eux
           test -s out-ea/arch/arm64/boot/Image
           test -s out-ea/arch/arm64/boot/dtb.img
-          grep -Eq ' [a-zA-Z] cpufreq_gov_energy_aware$' out-ea/System.map
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
           grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
@@ -124,7 +107,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ALice-S8Plus-A53-EGO-Adapted-EnergyAware-Kernel
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
           path: artifact/
           if-no-files-found: error
 

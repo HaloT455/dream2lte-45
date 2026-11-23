@@ -25,34 +25,39 @@ output directory and parallel job count.
 The build script sets the metadata recovered from the reference image. Use a
 new/empty output directory when producing the reproducible release build.
 
-## Current EAS profile
+## Current energy-aware-only profile
 
-- WALT-backed EAS with schedutil as the default and only dynamic CPU frequency
-  governor; the mandatory performance fallback remains compiled.
-- Scheduler HMP and the CPU interactive governor are not compiled.
-- Cortex-A53 maximum OPP is 2002 MHz. Below 65 degrees C the APOLLO thermal
-  zone releases stale cooling limits so schedutil retains the complete OPP
-  range. At 65 degrees C and above it applies progressively stronger caps.
-- EAS begins wakeup placement near the task's previous CPU to preserve cache
-  and avoid waking Mongoose M2 for every boosted UI frame. It still scans both
-  clusters and can select M2 when utilization requires it. There is no fixed
-  85% A53 gate; schedutil uses a 2.5 ms up delay and 8 ms down delay for short
-  responsive bursts without retaining a stale overclocked OPP.
-- Mongoose M2 maximum OPP is the firmware-backed 2704 MHz step.
-- Complete SimpleLMK is enabled with global and memcg vmpressure triggers,
-  bounded victim waits and the original OOM fallback when reclaim cannot run.
-- KernelSU 32590 uses manual Samsung 4.4 security hooks; automated LSM hook
-  insertion, kprobes, syscall-table tampering, and hosts redirect are disabled.
-- The permissive build pins the SELinux runtime state to permissive, including
-  when Android init later requests enforcing mode.
-- M2 retains the complete 741MHz..2.704GHz schedutil range below 65 degrees C.
-  Its stock power allocator starts at 65 degrees C and targets 70 degrees C.
-  GPU limits, CPU voltage tables, battery charging protection, and CPU hot
-  safety trips remain in place.
-- Screen-off sleep uses the known-good V6 Samsung watchdog syscore path.
-  Schedutil workers remain bound to their own policy CPU masks; the later
-  device-PM watchdog conversion and forced CPU0 worker binding are removed.
-- ABOX SRAM IPC uses the required I/O-memory copy helpers.
+The S8+ defconfig enables `CONFIG_CPU_FREQ_ENERGY_AWARE_ONLY=y`.
+`energy_aware` is the sole compiled and registered CPUFreq governor, including
+at startup. Schedutil, the older compatibility energy_step governor,
+interactive, ondemand and the performance fallback cannot be selected in this
+profile. Scheduler EAS placement remains enabled with WALT utilization.
+
+The Galaxy A53 EGO energy-search and CLKOFF/PWROFF idle-time mechanism is
+backported to the S8+ Linux 4.4 interfaces. The governor evaluates explicit DTS frequency/capacity/core-power/cluster-power
+states and selects the feasible state with the lowest predicted energy. It
+has no proportional utilization-to-frequency target, separate up/down rate
+limits, busy-CPU frequency hold, IOWAIT frequency boost or optional power-budget
+mode. Its worker only passes the selected state to the sleeping Exynos driver.
+
+A53 uses 9 modeled states from 455 to 1690 MHz; Mongoose M2 uses 13 from 741 to
+2314 MHz. Higher firmware OPPs are excluded because this tree has no matching
+energy costs for them. This is an intentional reduction from the old 2002/
+2704 MHz limits. Core and shared-cluster busy/idle costs come from Samsung DTS;
+these are model units, not measured battery watts. The explicit frequency
+bindings follow the ordered stock OPPs and capacity ratios in that DTS.
+
+Runtime diagnostics under each policy's `energy_aware/` directory expose
+`energy_steps` (full state/power/delta table), `energy_step` (last acknowledged
+state), `energy_delta` (last transition's busy-power change), and
+`predicted_energy` (latest target cost over a common normalized window), and
+`idle_ratios` (observed per-CPU CLKOFF/PWROFF shares).
+Policy min/max, thermal caps, native Samsung PM QoS and the voltage driver still
+apply. See [the model and verification details](docs/ALICE-S8PLUS-ENERGYAWARE-A53-EGO-ESG.md).
+
+KernelSU manual hooks, LZ4KD and other non-CPUFreq features retain their existing
+configuration. A successful build does not establish physical boot stability
+or battery savings; those require tests on the S8+.
 
 To create a flashable image while preserving a known-good boot image ramdisk
 and footer:
