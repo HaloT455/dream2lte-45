@@ -96,6 +96,8 @@ jobs:
           grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'sge_array\[' kernel/sched/energy.c
           grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
 
       - name: Build Image and DTBs
         run: |
