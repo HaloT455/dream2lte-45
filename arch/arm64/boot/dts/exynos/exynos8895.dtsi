@@ -275,6 +275,9 @@
 				frequency-data = <741000 858000 962000 1066000 1170000
 					1261000 1469000 1703000 1807000 1937000 2002000
 					2158000 2314000>;
+				/* OC candidates only: their power is calculated from CAL/ASV,
+				 * NOT added to measured Samsung busy-cost-data. kHz. */
+				oc-frequency-data = <2496000 2574000 2652000 2704000>;
 				busy-cost-data = <
 					328     152
 					380	172
@@ -299,6 +302,8 @@
 			CPU_COST_1: core-core1{
 				frequency-data = <455000 598000 715000 832000 949000
 					1053000 1248000 1456000 1690000>;
+				/* ALice A53 OC candidates (kHz); power estimated via CAL/ASV. */
+				oc-frequency-data = <1794000 1898000 2002000>;
 				busy-cost-data = <
 					83	26
 					108	33
