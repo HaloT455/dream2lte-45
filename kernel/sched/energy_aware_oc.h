@@ -49,8 +49,14 @@ static inline unsigned int eagov_estimate_oc_capacity(unsigned int base_cap,
 		return 0;
 	result = div64_u64((unsigned long long)base_cap * new_khz,
 			   base_khz);
-	/* The kernel's normalized scheduler capacity cannot exceed 1024. */
-	return result > 1024U ? 1024U : (unsigned int)result;
+	/*
+	 * These are governor-local work-throughput units, not the global
+	 * sched_capacity_scale.  Native M2 already reaches 1024 at 2314 MHz:
+	 * clamping OC states to 1024 would make 2496..2704 MHz impossible
+	 * to select on capacity demand, regardless of actual utilization.
+	 * Scheduler inputs remain unchanged, only OPP throughput is extended.
+	 */
+	return result > 4096U ? 0 : (unsigned int)result;
 }
 
 #endif /* _ENERGY_AWARE_OC_H */
