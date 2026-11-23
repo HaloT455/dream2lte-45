@@ -121,13 +121,18 @@ static inline struct eagov_energy_choice ego_find_energy_freq(
 		unsigned int max_freq)
 {
 	struct eagov_energy_choice best = { EAGOV_NO_STATE, ~0ULL };
-	unsigned int required, ceiling = EAGOV_NO_STATE, i;
+	unsigned int required, cap_floor, ceiling = EAGOV_NO_STATE, i;
 
 	if (!model->nr_states || !work->nr_cpus)
 		return best;
 
-	/* Capacity headroom constrains work, never computes a clock target. */
+	/*
+	 * Samsung energy_table.c get_cap_index()/et_fill_energy_state()
+	 * adaptation: find first discrete DTS capacity state satisfying work.
+	 * Keep this independent of the donor's utilization-derived kHz floor.
+	 */
 	required = (work->peak * 9U + 7U) / 8U;
+	cap_floor = et_cap_to_state_8895(model, required);
 	for (i = 0; i < model->nr_states; i++) {
 		const struct eagov_energy_state *state = &model->states[i];
 		unsigned long long energy;
@@ -138,7 +143,7 @@ static inline struct eagov_energy_choice ego_find_energy_freq(
 		/* Samsung ego_find_energy_freq(): skip OPPs below org_freq. */
 		if (state->frequency < work->org_freq)
 			continue;
-		if (state->capacity < required)
+		if (cap_floor == EAGOV_NO_STATE || i < cap_floor)
 			continue;
 
 		energy = ego_compute_energy(model, i, work);
