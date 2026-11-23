@@ -73,6 +73,8 @@ jobs:
           grep -q '^CONFIG_CRYPTO_LZ4KD=y$' "$C"
           grep -q 'sge_array\[' kernel/sched/cpufreq_energy_aware.c
           grep -q 'eagov_energy_model_freq' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_dts_step_power' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'energy_step = __ATTR_RW(energy_step)' kernel/sched/cpufreq_energy_aware.c
           grep -q 'core_dynamic \* total_load' kernel/sched/cpufreq_energy_aware.c
           grep -q 'cluster_dynamic \* peak_load' kernel/sched/cpufreq_energy_aware.c
           grep -q 'SD_LEVEL1' kernel/sched/cpufreq_energy_aware.c
@@ -88,6 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
           grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
           grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
