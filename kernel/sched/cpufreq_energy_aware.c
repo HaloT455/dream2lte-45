@@ -438,6 +438,16 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 		input->clkoff_ratio = ego_compute_cpu_idle_ratio(cpu);
 		work.peak = max(work.peak, input->util);
 	}
+	/*
+	 * Direct Samsung A53 EGO get_next_freq() floor: its original
+	 * ego_map_util_freq() uses a 25% default PELT margin before the
+	 * ego_find_energy_freq() energy search.  Exynos8895 model capacity
+	 * and CAL frequencies replace the A53 energy_table lookups.
+	 */
+	work.org_freq = ego_map_util_freq_8895(
+		work.peak,
+		ea->model.states[ea->model.nr_states - 1].frequency,
+		ea->model.states[ea->model.nr_states - 1].capacity, 25U);
 	eagov_qos_range(ea, &low, &high);
 	choice = ego_find_energy_freq(&ea->model, &work, low, high);
 	/* A conflicting QoS floor cannot defeat a thermal/QoS ceiling. */
