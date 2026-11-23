@@ -19,17 +19,20 @@
 	compatible = "samsung,exynos8895", "samsung,UNIVERSAL8895";
 
 	/*
-	 * Restrict the strict energy-aware profile to characterized energy
-	 * states: A53 1690 MHz, M2 2314 MHz. Higher firmware OPPs have no
-	 * matching busy-power rows and must not reuse lower-OPP costs.
+	 * Restore the old ALice firmware-backed high OPPs.
+	 * A53: 2002 MHz; M2: 2704 MHz.
+	 * ACME/CAL provides real frequencies and voltages; energy_aware keeps
+	 * Samsung's native DTS model unmodified and estimates ONLY the extra
+	 * OC energy-state costs from actual CAL/ASV voltages. No voltage,
+	 * thermal, PM QoS or fuse protection is bypassed by these bounds.
 	 */
 	cpufreq {
 		domain@0 {
-			max-freq = <1690000>;
+			max-freq = <2002000>;
 		};
 
 		domain@1 {
-			max-freq = <2314000>;
+			max-freq = <2704000>;
 		};
 	};
 
