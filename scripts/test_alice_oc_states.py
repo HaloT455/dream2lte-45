@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory() as d:
     binary = Path(d) / "oc_test"
     cfile.write_text(SOURCE)
     subprocess.run(["cc", "-std=c99", "-O2", "-Wall", "-Wextra",
-                    "-Werror", "-I" + str(ROOT / "kernel/sched"),
+                    "-Werror", "-iquote" + str(ROOT / "kernel/sched"),
                     str(cfile), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
 print("PASS: real CAL/ASV OC interface and voltage/capacity estimates")
