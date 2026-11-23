@@ -175,68 +175,103 @@ static unsigned int eagov_opp_voltage(struct cpufreq_policy *policy,
  * OC frequencies. P ~ f*V^2 is therefore an engineering estimate only.
  */
 static int eagov_append_oc_states(struct eagov_policy *ea,
+				   struct device_node *cost_node,
 				   unsigned int allocated)
 {
 	struct cpufreq_policy *policy = ea->policy;
 	struct eagov_energy_model *model = &ea->model;
 	const struct eagov_energy_state *base;
-	unsigned int base_uv, prev_freq, next, nr = ea->nr_native_states;
+	unsigned int base_uv, previous_freq, requested_freq;
+	unsigned int nr = ea->nr_native_states;
 	struct cpufreq_frequency_table *opp;
+	int i, candidates;
 
 	if (!nr)
 		return -EINVAL;
+
 	base = &model->states[nr - 1];
-	prev_freq = base->frequency;
-	if (policy->cpuinfo.max_freq <= prev_freq)
+	previous_freq = base->frequency;
+	candidates = of_property_count_u32_elems(cost_node,
+						 "oc-frequency-data");
+	/* Native-only is valid when no OC list is present in the DT. */
+	if (candidates <= 0)
 		return 0;
 
+	/*
+	 * Only documented OC candidate frequencies may enter the EGO table.
+	 * The actual Exynos ACME/CAL OPP table and per-chip ASV voltage must
+	 * also expose each candidate. Never invent or enable missing OPPs.
+	 */
 	base_uv = eagov_opp_voltage(policy, base->frequency);
-	if (!base_uv)
-		return -ENODEV;
+	if (!base_uv) {
+		pr_warn("CPU%u: missing base ASV voltage, native EGO only\n",
+			policy->cpu);
+		return 0;
+	}
 
-	while (prev_freq < policy->cpuinfo.max_freq) {
+	for (i = 0; i < candidates; i++) {
 		struct eagov_energy_state *state;
 		unsigned int uv, core_power, cluster_power, capacity;
+		bool supported = false;
+		u32 freq;
 
-		/* ACME's CAL table may be descending: choose next ascending. */
-		next = ~0U;
+		if (of_property_read_u32_index(cost_node, "oc-frequency-data",
+					       i, &freq))
+			return -EINVAL;
+		if (freq <= previous_freq)
+			return -EINVAL;
+		previous_freq = freq;
+
+		if (freq > policy->cpuinfo.max_freq)
+			continue;
+
 		cpufreq_for_each_valid_entry(opp, policy->freq_table) {
-			if (opp->frequency > prev_freq &&
-			    opp->frequency <= policy->cpuinfo.max_freq &&
-			    opp->frequency < next)
-				next = opp->frequency;
+			if (opp->frequency == freq) {
+				supported = true;
+				break;
+			}
 		}
-		if (next == ~0U)
-			break;
+		if (!supported) {
+			pr_warn("CPU%u: OC %u kHz absent from ACME/CAL, skip\n",
+				policy->cpu, freq);
+			continue;
+		}
+
+		uv = eagov_opp_voltage(policy, freq);
+		core_power = eagov_estimate_oc_power(base->core_power,
+				base->frequency, base_uv, freq, uv);
+		cluster_power = eagov_estimate_oc_power(base->cluster_power,
+				base->frequency, base_uv, freq, uv);
+		capacity = eagov_estimate_oc_capacity(base->capacity,
+				base->frequency, freq);
+
+		/* No fake power or frequency entry if chip ASV is missing. */
+		if (!uv || !core_power || !cluster_power || !capacity) {
+			pr_warn("CPU%u: OC %u kHz has no valid ASV power estimate, skip\n",
+				policy->cpu, freq);
+			continue;
+		}
 		if (nr >= allocated)
 			return -EOVERFLOW;
 
-		uv = eagov_opp_voltage(policy, next);
-		core_power = eagov_estimate_oc_power(base->core_power,
-			    base->frequency, base_uv, next, uv);
-		cluster_power = eagov_estimate_oc_power(base->cluster_power,
-			    base->frequency, base_uv, next, uv);
-		capacity = eagov_estimate_oc_capacity(base->capacity,
-			    base->frequency, next);
-		if (!uv || !core_power || !cluster_power || !capacity)
-			return -EINVAL;
-
 		state = &model->states[nr];
-		state->frequency = next;
+		state->frequency = freq;
 		state->capacity = capacity;
 		state->core_power = max(core_power,
-				model->states[nr - 1].core_power + 1);
+					model->states[nr - 1].core_power + 1);
 		state->cluster_power = max(cluster_power,
-				model->states[nr - 1].cluster_power + 1);
+					model->states[nr - 1].cluster_power + 1);
 		nr++;
-		prev_freq = next;
 	}
 
-	if (prev_freq < policy->cpuinfo.max_freq)
-		return -EINVAL;
 	model->nr_states = nr;
-	pr_info("CPU%u: %u native DTS states + %u CAL/ASV OC states (estimated power)\n",
-		policy->cpu, ea->nr_native_states, nr - ea->nr_native_states);
+	pr_info("CPU%u: EGO %u native DTS + %u ASV OC_EST states; modeled top %u kHz\n",
+		policy->cpu, ea->nr_native_states, nr - ea->nr_native_states,
+		model->states[nr - 1].frequency);
+	if (model->states[nr - 1].frequency < policy->cpuinfo.max_freq)
+		pr_warn("CPU%u: CAL/ASV does not cover full CPUFreq range, EGO stays within modeled OPPs\n",
+			policy->cpu);
+
 	return 0;
 }
 
@@ -319,7 +354,7 @@ static int eagov_build_model(struct eagov_policy *ea)
 
 	ea->nr_native_states = nr;
 	ea->model.nr_states = nr;
-	ret = eagov_append_oc_states(ea, allocated);
+	ret = eagov_append_oc_states(ea, cost_node, allocated);
 	if (ret)
 		goto free_states;
 
