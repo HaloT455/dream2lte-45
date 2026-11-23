@@ -46,6 +46,9 @@ struct eagov_policy {
 	struct task_struct *thread;
 	unsigned int target_state;
 	unsigned int applied_state;
+	/* Samsung ego_policy org_freq/eng_freq observability. */
+	unsigned int org_freq;
+	unsigned int eng_freq;
 	unsigned long long target_energy;
 	s64 power_delta;
 	bool enabled;
@@ -462,6 +465,8 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	    ea->policy->cur != ea->model.states[ea->applied_state].frequency)
 		ea->applied_state = EAGOV_NO_STATE;
 	ea->target_energy = choice.energy;
+	ea->org_freq = work.org_freq;
+	ea->eng_freq = ea->model.states[choice.state].frequency;
 	ea->target_state = choice.state;
 	if (ea->enabled && !ea->queued && ea->applied_state != choice.state) {
 		ea->queued = true;
@@ -558,6 +563,21 @@ static ssize_t idle_ratios_show(struct gov_attr_set *set, char *buf)
 	return len;
 }
 
+/* Samsung ego_policy: show the workload floor and energy-chosen OPP. */
+static ssize_t org_freq_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
+
+	return sprintf(buf, "%u\n", READ_ONCE(ea->org_freq));
+}
+
+static ssize_t eng_freq_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
+
+	return sprintf(buf, "%u\n", READ_ONCE(ea->eng_freq));
+}
+
 static ssize_t energy_step_show(struct gov_attr_set *set, char *buf)
 {
 	struct eagov_policy *ea = eagov_from_attrs(set);
@@ -607,12 +627,16 @@ static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
 
 static struct governor_attr idle_ratios = __ATTR_RO(idle_ratios);
 static struct governor_attr energy_step = __ATTR_RO(energy_step);
+static struct governor_attr org_freq = __ATTR_RO(org_freq);
+static struct governor_attr eng_freq = __ATTR_RO(eng_freq);
 static struct governor_attr energy_delta = __ATTR_RO(energy_delta);
 static struct governor_attr energy_steps = __ATTR_RO(energy_steps);
 static struct governor_attr predicted_energy = __ATTR_RO(predicted_energy);
 static struct attribute *eagov_attributes[] = {
 	&idle_ratios.attr,
 	&energy_step.attr,
+	&org_freq.attr,
+	&eng_freq.attr,
 	&energy_delta.attr,
 	&energy_steps.attr,
 	&predicted_energy.attr,
@@ -724,6 +748,8 @@ static int eagov_start(struct cpufreq_policy *policy)
 	ea->applied_state = EAGOV_NO_STATE;
 	ea->queued = false;
 	ea->power_delta = 0;
+	ea->org_freq = 0;
+	ea->eng_freq = 0;
 	for_each_cpu(cpu, policy->cpus) {
 		struct eagov_cpu *sample = &per_cpu(eagov_cpus, cpu);
 
