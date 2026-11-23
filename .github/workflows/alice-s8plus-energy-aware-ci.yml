@@ -65,6 +65,8 @@ jobs:
           set -eux
           python3 scripts/check_energy_aware_only.py out-ea/.config
           grep -q '^CONFIG_KSU=y$' out-ea/.config
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -q '^# CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED is not set$' out-ea/.config
           grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' out-ea/.config
           grep -q '^CONFIG_CRYPTO_LZ4KD=y$' out-ea/.config
 
@@ -74,6 +76,7 @@ jobs:
           python3 -m py_compile scripts/alice_ci_boot_repack.py
           python3 scripts/test_alice_energy_step_dts.py
           python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
           python3 scripts/test_aura_eroFS_profile.py
           python3 scripts/test_alice_oc_states.py
           python3 scripts/test_energy_aware_worker.py
@@ -104,6 +107,9 @@ jobs:
           test -s out-ea/arch/arm64/boot/Image
           test -s out-ea/arch/arm64/boot/dtb.img
           python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
           grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
