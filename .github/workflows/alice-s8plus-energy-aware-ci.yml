@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - agent/s8plus-a53-ego-esg-port-20261123
+      - alice-ego-energy-aware
   workflow_dispatch:
 
 permissions:
