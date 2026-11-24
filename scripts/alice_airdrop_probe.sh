@@ -39,3 +39,14 @@ for iface in awdl0 mosey0; do
   if [ -d "/sys/class/net/$iface" ]; then echo "$iface present"; else echo "$iface absent now (not proof of lack of support)"; fi
 done
 echo 'No NFC settings or radio firmware changed.'
+
+echo '=== Runtime Wi-Fi firmware and vendor HAL evidence ==='
+if command -v lshal >/dev/null 2>&1; then lshal 2>/dev/null | grep -Ei 'android.hardware.wifi'; fi
+service list | grep -Ei 'android.hardware.wifi|wifiaware'
+for x in /sys/module/bcmdhd/version /sys/module/dhd/version; do [ ! -r "$x" ] || cat "$x"; done
+# Root may be needed for dmesg. Filter to firmware/capability lines, no peer scans.
+dmesg 2>/dev/null | grep -Ei 'Firmware version|FW version|firmware capability|fw_capabilities|NAN (supported|not supported)|AWDL (supported|not supported)|BCM4361' | tail -n 35
+echo '=== Firmware and feature file names (no contents) ==='
+for dir in /vendor/firmware /vendor/etc/wifi /system/etc/wifi /vendor/etc/permissions; do
+ [ ! -d "$dir" ] || ls "$dir" 2>/dev/null | grep -Ei 'bcmdhd|4361|wifi.aware|wifi.direct|^fw_bcm'
+done

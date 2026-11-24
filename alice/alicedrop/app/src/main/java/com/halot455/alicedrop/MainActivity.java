@@ -6,6 +6,8 @@ import android.content.pm.PackageManager;
 import android.net.*;
 import android.net.nsd.*;
 import android.net.wifi.aware.WifiAwareManager;
+import android.net.wifi.WifiManager;
+import java.util.LinkedHashSet;
 import android.nfc.NfcAdapter;
 import android.app.AlertDialog;
 import android.widget.*;
@@ -26,6 +28,10 @@ public class MainActivity extends Activity {
  private final Handler ui=new Handler(Looper.getMainLooper());
  private NsdManager nsd;
  private NsdManager.DiscoveryListener listener;
+ private WifiManager.MulticastLock multicast;
+ private final LinkedHashSet<String> discovered=new LinkedHashSet<>();
+ private int scanId;
+ private Runnable scanTimeout;
  private String token;
  private NfcAdapter nfc;
  private boolean touchArmed;
@@ -43,7 +49,8 @@ public class MainActivity extends Activity {
   add(layout,"Kiểm tra AirDrop / Wi-Fi Aware / NFC",v->probe());
   add(layout,"Touch to Share — thử vùng chạm NFC (20 giây)",v->startTouch());
   add(layout,"Dừng thử vùng chạm",v->{stopTouch();msg("Đã dừng NFC thử nghiệm");});
-  add(layout,"Dò dịch vụ AirDrop trên mạng hiện tại (10 giây)",v->discover());
+  add(layout,"Tìm thiết bị AirDrop (30 giây)",v->discover());
+  add(layout,"Dừng tìm thiết bị",v->{stopDiscovery();msg("Đã dừng tìm thiết bị.");});
   add(layout,"Chọn file",v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,PICK);});
   add(layout,"Gửi qua bảng chia sẻ Android / Quick Share",v->share());
   add(layout,"Bật truyền Wi-Fi qua Safari (không phải AirDrop)",v->startLan());
@@ -94,18 +101,45 @@ public class MainActivity extends Activity {
  }
  @Override protected void onPause(){stopTouch();super.onPause();}
  private void discover(){
-  stopTouch();stopDiscovery(); nsd=getSystemService(NsdManager.class); if(nsd==null){msg("NSD không khả dụng");return;}
-  listener=new NsdManager.DiscoveryListener(){
-   public void onDiscoveryStarted(String s){ui.post(()->msg("Đang dò _airdrop._tcp trên mạng hiện tại…"));}
-   public void onDiscoveryStopped(String s){}
-   public void onServiceFound(NsdServiceInfo s){ui.post(()->msg("Thấy dịch vụ "+s.getServiceName()+"; chưa xác minh AirDrop/AWDL hoặc truyền file."));}
-   public void onServiceLost(NsdServiceInfo s){}
-   public void onStartDiscoveryFailed(String s,int e){ui.post(()->msg("Dò thất bại: "+e));}
-   public void onStopDiscoveryFailed(String s,int e){}
-  };
-  try{nsd.discoverServices("_airdrop._tcp.",NsdManager.PROTOCOL_DNS_SD,listener);NsdManager.DiscoveryListener current=listener;ui.postDelayed(()->{if(listener==current)stopDiscovery();},10000);}catch(Exception e){msg("Không thể dò: "+e.getMessage());}
+  stopTouch();stopDiscovery();
+  final int id=++scanId;
+  discovered.clear();
+  nsd=getSystemService(NsdManager.class);
+  WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
+  if(nsd==null||wifi==null){msg("Dịch vụ Wi-Fi/NSD không khả dụng.");return;}
+  if(!wifi.isWifiEnabled()){msg("Bật Wi-Fi trước khi dò.");return;}
+  try{
+   multicast=wifi.createMulticastLock("AliceDrop:discovery");
+   multicast.setReferenceCounted(false);multicast.acquire();
+   listener=new NsdManager.DiscoveryListener(){
+    public void onDiscoveryStarted(String s){ui.post(()->{if(id==scanId)showDiscovery(false);});}
+    public void onDiscoveryStopped(String s){}
+    public void onServiceFound(NsdServiceInfo s){ui.post(()->{if(id!=scanId)return;discovered.add(s.getServiceName());showDiscovery(false);});}
+    public void onServiceLost(NsdServiceInfo s){ui.post(()->{if(id!=scanId)return;discovered.remove(s.getServiceName());showDiscovery(false);});}
+    public void onStartDiscoveryFailed(String s,int e){ui.post(()->{if(id!=scanId)return;stopDiscovery();msg("Lỗi bắt đầu dò NSD: "+e);});}
+    public void onStopDiscoveryFailed(String s,int e){}
+   };
+   nsd.discoverServices("_airdrop._tcp",NsdManager.PROTOCOL_DNS_SD,listener);
+   scanTimeout=()->{if(id==scanId){stopDiscovery();showDiscovery(true);}};
+   ui.postDelayed(scanTimeout,30000);
+   showDiscovery(false);
+  }catch(Exception e){stopDiscovery();msg("Không thể dò: "+e.getMessage());}
  }
- private void stopDiscovery(){if(listener!=null&&nsd!=null){try{nsd.stopServiceDiscovery(listener);}catch(Exception ignored){}listener=null;}}
+ private void showDiscovery(boolean done){
+  StringBuilder s=new StringBuilder(done?"Đã kết thúc dò.":"Đang dò dịch vụ AirDrop (30 giây)…");
+  s.append("\nTìm thấy: ").append(discovered.size());
+  for(String name:discovered)s.append("\n• ").append(name);
+  if(discovered.isEmpty()&&done)s.append("\nKhông thấy dịch vụ AirDrop. Hãy bật AirDrop Mọi người trong 10 phút trên iPhone. Nếu vẫn không thấy, S8+ chưa có đường truyền AWDL/Quick Share tương thích.");
+  if(!hasInterface("awdl0")&&!hasInterface("mosey0"))s.append("\nChưa thấy giao diện AWDL/mosey đang hoạt động. Dò mDNS hiện chỉ qua các mạng Android có sẵn.");
+  s.append("\nTên dịch vụ không phải xác nhận thiết bị hoặc khả năng truyền file.");
+  msg(s.toString());
+ }
+ private void stopDiscovery(){
+  scanId++;
+  if(scanTimeout!=null){ui.removeCallbacks(scanTimeout);scanTimeout=null;}
+  if(listener!=null&&nsd!=null){try{nsd.stopServiceDiscovery(listener);}catch(Exception ignored){}listener=null;}
+  if(multicast!=null){try{if(multicast.isHeld())multicast.release();}catch(Exception ignored){}multicast=null;}
+ }
  private void updateSelected(){selectedText.setText(selected==null?"Chưa chọn file":"Đã chọn một file");}
  private void share(){if(selected==null){msg("Chọn file trước");return;}String type=getContentResolver().getType(selected);Intent i=new Intent(Intent.ACTION_SEND).setType(type==null?"application/octet-stream":type).putExtra(Intent.EXTRA_STREAM,selected).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);i.setClipData(ClipData.newRawUri("AliceDrop",selected));startActivity(Intent.createChooser(i,"Chia sẻ với"));}
  @Override protected void onActivityResult(int r,int c,Intent data){super.onActivityResult(r,c,data);if(c!=RESULT_OK||data==null)return;if(r==PICK){selected=data.getData();updateSelected();}if(r==SAVE&&received!=null){File f=received;Uri dest=data.getData();worker.execute(()->{try(InputStream in=new FileInputStream(f);OutputStream out=getContentResolver().openOutputStream(dest)){if(out==null)throw new IOException("Không mở được file");copy(in,out,LIMIT);ui.post(()->msg("Đã lưu file"));}catch(Exception e){ui.post(()->msg("Lỗi lưu file: "+e.getMessage()));}});}}
