@@ -18,11 +18,36 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - run: gradle -p alice/alicedrop :app:assembleDebug --no-daemon
+      - name: Build dependency-free Java APK using Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=alice/alicedrop/app
+          SDK="${ANDROID_HOME}/platforms/android-35/android.jar"
+          BT="${ANDROID_HOME}/build-tools/35.0.0"
+          mkdir -p out-apk/classes out-apk/dex "$APP/build/outputs/apk/debug"
+          find "$APP/src/main/java" -name '*.java' > out-apk/sources.txt
+          javac -source 8 -target 8 -encoding UTF-8 -classpath "$SDK" -d out-apk/classes @out-apk/sources.txt
+          jar cf out-apk/classes.jar -C out-apk/classes .
+          "$BT/d8" --lib "$SDK" --min-api 26 --output out-apk/dex out-apk/classes.jar
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('alice/alicedrop/app/src/main/AndroidManifest.xml')
+          s=p.read_text().replace('<manifest ', '<manifest package="com.halot455.alicedrop" android:versionCode="2" android:versionName="0.2-touch-probe" ',1)
+          s=s.replace('<application ', '<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>\n<application ',1)
+          Path('out-apk/AndroidManifest.xml').write_text(s)
+          PY
+          "$BT/aapt2" link -I "$SDK" --manifest out-apk/AndroidManifest.xml -o out-apk/base.apk
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('out-apk/base.apk','a') as z:
+              z.write('out-apk/dex/classes.dex','classes.dex',compress_type=zipfile.ZIP_DEFLATED)
+          PY
+          "$BT/zipalign" -p -f 4 out-apk/base.apk out-apk/aligned.apk
+          keytool -genkeypair -keystore out-apk/test.jks -storepass android -keypass android -alias alicedrop -dname "CN=AliceDrop Test" -keyalg RSA -keysize 2048 -validity 3650
+          "$BT/apksigner" sign --ks out-apk/test.jks --ks-pass pass:android --key-pass pass:android --out "$APP/build/outputs/apk/debug/app-debug.apk" out-apk/aligned.apk
+          "$BT/apksigner" verify --verbose "$APP/build/outputs/apk/debug/app-debug.apk"
       - run: |
           mkdir -p artifact
           cp alice/alicedrop/app/build/outputs/apk/debug/app-debug.apk artifact/AliceDrop-alpha.apk
