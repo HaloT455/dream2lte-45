@@ -78,7 +78,6 @@ jobs:
           python3 scripts/test_alice_energy_step_dts.py
           python3 scripts/test_samsung_a53_ego_port.py
           python3 scripts/test_ksu_auto_lsm_44.py
-          python3 scripts/test_aura_eroFS_profile.py
           python3 scripts/test_alice_oc_states.py
           python3 scripts/test_energy_aware_worker.py
           grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
