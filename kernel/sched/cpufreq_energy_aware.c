@@ -30,12 +30,19 @@
 
 unsigned long boosted_cpu_util(int cpu);
 
-/* Balanced default: keep all OC OPPs in the model, opt in to OC explicitly. */
+/* Balanced: permit short automatic OC bursts, not sustained maximum clocks. */
 static bool eagov_allow_oc;
+static bool eagov_auto_oc = true;
+module_param_named(auto_oc, eagov_auto_oc, bool, 0644);
+MODULE_PARM_DESC(auto_oc, "Allow bounded automatic OC under sustained CPU demand");
 module_param_named(allow_oc, eagov_allow_oc, bool, 0644);
 MODULE_PARM_DESC(allow_oc, "Allow estimated overclock OPPs in EGO selection");
 #define EAGOV_SCAN_NS 2000000ULL
 #define EAGOV_MARGIN 12U
+#define EAGOV_OC_MARGIN 18U
+#define EAGOV_OC_DEMAND_NS 12000000ULL
+#define EAGOV_OC_BURST_NS 80000000ULL
+#define EAGOV_OC_COOLDOWN_NS 200000000ULL
 
 struct eagov_policy {
 	struct cpufreq_policy *policy;
@@ -55,6 +62,8 @@ struct eagov_policy {
 	unsigned int target_state;
 	unsigned int applied_state;
 	u64 last_scan;
+	u64 oc_demand_since, oc_until, oc_cooldown_until;
+	bool oc_active;
 	unsigned int last_peak, last_low, last_high;
 	/* Samsung ego_policy org_freq/eng_freq observability. */
 	unsigned int org_freq;
@@ -156,10 +165,56 @@ static void eagov_qos_range(struct eagov_policy *ea, unsigned int *low,
 		*low = clamp_val((unsigned int)qos_min, policy->min, policy->max);
 		*high = clamp_val((unsigned int)qos_max, policy->min, policy->max);
 	}
-	/* Never exceed the thermal/QoS ceiling. Respect an explicit policy min. */
-	if (!READ_ONCE(eagov_allow_oc) && ea->nr_native_states)
-		*high = min(*high, max(policy->min,
+}
+
+/* Preserve thermal and QoS ceilings; never create an unsupported OPP. */
+static unsigned int eagov_limit_oc(struct eagov_policy *ea, unsigned int high)
+{
+	if (!READ_ONCE(eagov_allow_oc) &&
+	    !(READ_ONCE(eagov_auto_oc) && ea->oc_active) && ea->nr_native_states)
+		return min(high, max(ea->policy->min,
 			ea->model.states[ea->nr_native_states - 1].frequency));
+	return high;
+}
+
+/* Called under ea->lock. Hysteresis and a cooldown bound automatic OC. */
+static void eagov_update_auto_oc(struct eagov_policy *ea, u64 time,
+				 unsigned int peak, unsigned int high)
+{
+	const struct eagov_energy_state *native;
+	bool eligible;
+
+	if (!ea->nr_native_states || ea->nr_native_states >= ea->model.nr_states)
+		return;
+	native = &ea->model.states[ea->nr_native_states - 1];
+	/* Discontinuous samples cannot establish sustained demand. */
+	if (ea->last_scan && ((s64)(time - ea->last_scan) < 0 ||
+	    time - ea->last_scan > 30000000ULL)) {
+		ea->oc_demand_since = 0;
+		if (ea->oc_active)
+			ea->oc_cooldown_until = time + EAGOV_OC_COOLDOWN_NS;
+		ea->oc_active = false;
+	}
+	eligible = READ_ONCE(eagov_auto_oc) && high > native->frequency;
+	if (ea->oc_active && (!eligible || time >= ea->oc_until ||
+	    peak * 100U < native->capacity * 85U)) {
+		ea->oc_active = false;
+		ea->oc_demand_since = 0;
+		ea->oc_cooldown_until = time + EAGOV_OC_COOLDOWN_NS;
+	}
+	if (ea->oc_active)
+		return;
+	if (!eligible || time < ea->oc_cooldown_until ||
+	    peak * 100U < native->capacity * 95U) {
+		ea->oc_demand_since = 0;
+		return;
+	}
+	if (!ea->oc_demand_since)
+		ea->oc_demand_since = time;
+	else if (time - ea->oc_demand_since >= EAGOV_OC_DEMAND_NS) {
+		ea->oc_active = true;
+		ea->oc_until = time + EAGOV_OC_BURST_NS;
+	}
 }
 
 /* ACME registers the real CAL/ASV voltage for each supported OPP. */
@@ -463,11 +518,16 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	 * ALice balanced uses 12% to avoid excessive headroom; the independent
 	 * capacity floor in the energy search still includes its 12.5% reserve.
 	 */
+	eagov_qos_range(ea, &low, &high);
+	eagov_update_auto_oc(ea, time, work.peak, high);
+	high = eagov_limit_oc(ea, high);
 	work.org_freq = ego_map_util_freq_8895(
 		work.peak,
 		ea->model.states[ea->model.nr_states - 1].frequency,
-		ea->model.states[ea->model.nr_states - 1].capacity, EAGOV_MARGIN);
-	eagov_qos_range(ea, &low, &high);
+		ea->model.states[ea->model.nr_states - 1].capacity,
+		ea->oc_active && ea->nr_native_states &&
+		work.peak * 100U >= ea->model.states[ea->nr_native_states - 1].capacity * 98U ?
+		EAGOV_OC_MARGIN : EAGOV_MARGIN);
 	ea->last_scan = time;
 	ea->last_peak = work.peak;
 	ea->last_low = low;
@@ -504,6 +564,7 @@ static bool eagov_should_scan(struct eagov_policy *ea, u64 time,
 	s64 elapsed = (s64)(time - ea->last_scan);
 
 	eagov_qos_range(ea, &low, &high);
+	high = eagov_limit_oc(ea, high);
 	return !ea->last_scan || elapsed < 0 ||
 		elapsed >= (s64)EAGOV_SCAN_NS || (flags & SCHED_CPUFREQ_DL) ||
 		low != ea->last_low || high != ea->last_high ||
@@ -809,6 +870,8 @@ static int eagov_start(struct cpufreq_policy *policy)
 	ea->queued = false;
 	ea->power_delta = 0;
 	ea->last_scan = 0;
+	ea->oc_demand_since = ea->oc_until = ea->oc_cooldown_until = 0;
+	ea->oc_active = false;
 	ea->last_peak = ea->last_low = ea->last_high = 0;
 	ea->org_freq = 0;
 	ea->eng_freq = 0;
