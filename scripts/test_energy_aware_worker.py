@@ -29,6 +29,11 @@ typedef uint64_t u64;
 typedef int64_t s64;
 #define NR_CPUS 2
 #define CPUFREQ_RELATION_L 0
+#define SCHED_CPUFREQ_DL 1
+#define EAGOV_SCAN_NS 2000000ULL
+#define EAGOV_MARGIN 12U
+#define READ_ONCE(x) (x)
+static bool eagov_allow_oc;
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -50,6 +55,8 @@ struct eagov_policy {
     struct kthread_work work;
     struct kthread_worker worker;
     unsigned int target_state, applied_state, org_freq, eng_freq;
+    unsigned int nr_native_states, last_peak, last_low, last_high;
+    u64 last_scan;
     unsigned long long target_energy;
     s64 power_delta;
     bool enabled, queued;
@@ -100,6 +107,8 @@ static void reset(void) {
     state.qos_min_class = 1; state.qos_max_class = 2;
     qos_min = 0; qos_max = 300;
     state.model = (struct eagov_energy_model){states, 3, 0, 0, 0};
+    state.nr_native_states = 2;
+    eagov_allow_oc = true;
     state.target_state = state.applied_state = EAGOV_NO_STATE;
     state.enabled = true;
     irq_pending = work_pending = fail_driver = clamp_driver = stop_in_driver = false;
@@ -125,7 +134,7 @@ static void drain(void) {
 int main(void) {
     reset(); request(40); request(120); drain();
     assert(driver_calls == 1 && last_applied == 200 && state.applied_state == 1);
-    assert(state.org_freq == 150 && state.eng_freq == 200);
+    assert(state.org_freq == 134 && state.eng_freq == 200);
     request(120); assert(!irq_pending);  /* unchanged OPP */
 
     reset(); request(40); inject_count = 1; drain();
@@ -162,13 +171,27 @@ int main(void) {
     qos_min = 300; qos_max = 200; request(300); drain(); assert(last_applied == 200);
     policy.cur = 100; request(300); drain(); assert(last_applied == 200);
 
-    puts("PASS: EGO request/worker coalescing, bounded replay, errors, QoS, stop, stale CPUs, energy deltas");
+    reset(); eagov_allow_oc = false;
+    request(300); drain(); assert(last_applied == 200);
+    assert(!eagov_should_scan(&state, now, 300, 0));
+    assert(eagov_should_scan(&state, now, 300, SCHED_CPUFREQ_DL));
+    assert(eagov_should_scan(&state, now + EAGOV_SCAN_NS, 300, 0));
+    eagov_allow_oc = true;
+    assert(eagov_should_scan(&state, now, 300, 0));
+    request(300); drain(); assert(last_applied == 300);
+    eagov_allow_oc = false; qos_max = 100;
+    assert(eagov_should_scan(&state, now, 300, 0));
+    request(300); drain(); assert(last_applied == 100);
+    reset(); request(40); drain();
+    assert(!eagov_should_scan(&state, now, 41, 0));
+    assert(eagov_should_scan(&state, now, 100, 0));
+    puts("PASS: EGO worker, QoS, native cap, OC opt-in, scan throttle and urgent bypass");
     return 0;
 }
 '''
 
 source = (ROOT / "kernel/sched/cpufreq_energy_aware.c").read_text()
-names = ("eagov_qos_range", "eagov_busy_power", "eagov_request", "eagov_work", "eagov_irq_work")
+names = ("eagov_qos_range", "eagov_busy_power", "eagov_request", "eagov_should_scan", "eagov_work", "eagov_irq_work")
 code = PREAMBLE + "\n".join(function(source, name) for name in names) + TESTS
 with tempfile.TemporaryDirectory(prefix="ego-port-test-") as tmp:
     test = Path(tmp) / "test.c"

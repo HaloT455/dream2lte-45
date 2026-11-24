@@ -21,6 +21,7 @@
 #include <linux/pm_qos.h>
 #include <linux/sched_energy.h>
 #include <linux/slab.h>
+#include <linux/moduleparam.h>
 
 #include "sched.h"
 #include "energy_aware_model.h"
@@ -28,6 +29,13 @@
 #include "energy_aware_idle.h"
 
 unsigned long boosted_cpu_util(int cpu);
+
+/* Balanced default: keep all OC OPPs in the model, opt in to OC explicitly. */
+static bool eagov_allow_oc;
+module_param_named(allow_oc, eagov_allow_oc, bool, 0644);
+MODULE_PARM_DESC(allow_oc, "Allow estimated overclock OPPs in EGO selection");
+#define EAGOV_SCAN_NS 2000000ULL
+#define EAGOV_MARGIN 12U
 
 struct eagov_policy {
 	struct cpufreq_policy *policy;
@@ -46,6 +54,8 @@ struct eagov_policy {
 	struct task_struct *thread;
 	unsigned int target_state;
 	unsigned int applied_state;
+	u64 last_scan;
+	unsigned int last_peak, last_low, last_high;
 	/* Samsung ego_policy org_freq/eng_freq observability. */
 	unsigned int org_freq;
 	unsigned int eng_freq;
@@ -142,10 +152,14 @@ static void eagov_qos_range(struct eagov_policy *ea, unsigned int *low,
 
 	*low = policy->min;
 	*high = policy->max;
-	if (qos_min < 0 || qos_max < 0)
-		return;
-	*low = clamp_val((unsigned int)qos_min, policy->min, policy->max);
-	*high = clamp_val((unsigned int)qos_max, policy->min, policy->max);
+	if (qos_min >= 0 && qos_max >= 0) {
+		*low = clamp_val((unsigned int)qos_min, policy->min, policy->max);
+		*high = clamp_val((unsigned int)qos_max, policy->min, policy->max);
+	}
+	/* Never exceed the thermal/QoS ceiling. Respect an explicit policy min. */
+	if (!READ_ONCE(eagov_allow_oc) && ea->nr_native_states)
+		*high = min(*high, max(policy->min,
+			ea->model.states[ea->nr_native_states - 1].frequency));
 }
 
 /* ACME registers the real CAL/ASV voltage for each supported OPP. */
@@ -443,15 +457,21 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	}
 	/*
 	 * Direct Samsung A53 EGO get_next_freq() floor: its original
-	 * ego_map_util_freq() uses a 25% default PELT margin before the
+	 * ego_map_util_freq() originally uses a 25% PELT margin before the
 	 * ego_find_energy_freq() energy search.  Exynos8895 model capacity
 	 * and CAL frequencies replace the A53 energy_table lookups.
+	 * ALice balanced uses 12% to avoid excessive headroom; the independent
+	 * capacity floor in the energy search still includes its 12.5% reserve.
 	 */
 	work.org_freq = ego_map_util_freq_8895(
 		work.peak,
 		ea->model.states[ea->model.nr_states - 1].frequency,
-		ea->model.states[ea->model.nr_states - 1].capacity, 25U);
+		ea->model.states[ea->model.nr_states - 1].capacity, EAGOV_MARGIN);
 	eagov_qos_range(ea, &low, &high);
+	ea->last_scan = time;
+	ea->last_peak = work.peak;
+	ea->last_low = low;
+	ea->last_high = high;
 	choice = ego_find_energy_freq(&ea->model, &work, low, high);
 	/* A conflicting QoS floor cannot defeat a thermal/QoS ceiling. */
 	if (choice.state == EAGOV_NO_STATE)
@@ -474,6 +494,23 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	}
 }
 
+/* Bound repeated full model scans, but never delay DL, QoS or a sharp rise. */
+static bool eagov_should_scan(struct eagov_policy *ea, u64 time,
+			      unsigned int util, unsigned int flags)
+{
+	unsigned int low, high;
+	unsigned int threshold = max(1U,
+		ea->model.states[ea->model.nr_states - 1].capacity / 16U);
+	s64 elapsed = (s64)(time - ea->last_scan);
+
+	eagov_qos_range(ea, &low, &high);
+	return !ea->last_scan || elapsed < 0 ||
+		elapsed >= (s64)EAGOV_SCAN_NS || (flags & SCHED_CPUFREQ_DL) ||
+		low != ea->last_low || high != ea->last_high ||
+		ea->target_state == EAGOV_NO_STATE ||
+		(util > ea->last_peak && util - ea->last_peak >= threshold);
+}
+
 static void eagov_update(struct update_util_data *hook, u64 time,
 			 unsigned int flags)
 {
@@ -485,7 +522,7 @@ static void eagov_update(struct update_util_data *hook, u64 time,
 	sample->util = util;
 	sample->time = time;
 	sample->valid = true;
-	if (ea->enabled)
+	if (ea->enabled && eagov_should_scan(ea, time, util, flags))
 		eagov_request(ea, time);
 	raw_spin_unlock(&ea->lock);
 }
@@ -771,6 +808,8 @@ static int eagov_start(struct cpufreq_policy *policy)
 	ea->applied_state = EAGOV_NO_STATE;
 	ea->queued = false;
 	ea->power_delta = 0;
+	ea->last_scan = 0;
+	ea->last_peak = ea->last_low = ea->last_high = 0;
 	ea->org_freq = 0;
 	ea->eng_freq = 0;
 	for_each_cpu(cpu, policy->cpus) {
