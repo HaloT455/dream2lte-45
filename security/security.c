@@ -33,7 +33,13 @@
 /* Maximum number of letters for an LSM name string */
 #define SECURITY_NAME_MAX	10
 
-#ifdef CONFIG_KSU
+/*
+ * ALice: KernelSU chooses exactly one hook transport:
+ *   - CONFIG_KSU_LSM_SECURITY_HOOKS=y: native Linux 4.4 LSM registration
+ *   - CONFIG_KSU_LSM_SECURITY_HOOKS=n: legacy manual call sites below
+ * Never run both, or observers (notably setuid/rename) fire twice.
+ */
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 extern int ksu_bprm_check(struct linux_binprm *bprm);
 extern int ksu_inode_rename(struct inode *old_inode,
 			    struct dentry *old_dentry,
@@ -258,7 +264,7 @@ int security_bprm_check(struct linux_binprm *bprm)
 {
 	int ret;
 
-#ifdef CONFIG_KSU
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 	ret = ksu_bprm_check(bprm);
 	if (ret)
 		return ret;
@@ -586,7 +592,7 @@ int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
             (d_is_positive(new_dentry) && IS_PRIVATE(d_backing_inode(new_dentry)))))
 		return 0;
 
-#ifdef CONFIG_KSU
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 	ksu_inode_rename(old_dir, old_dentry, new_dir, new_dentry);
 #endif
 
@@ -754,7 +760,7 @@ int security_file_permission(struct file *file, int mask)
 {
 	int ret;
 
-#ifdef CONFIG_KSU
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 	ret = ksu_file_permission(file, mask);
 	if (ret)
 		return ret;
@@ -950,7 +956,7 @@ int security_kernel_module_from_file(struct file *file)
 int security_task_fix_setuid(struct cred *new, const struct cred *old,
 			     int flags)
 {
-#ifdef CONFIG_KSU
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 	int ret = ksu_task_fix_setuid(new, old, flags);
 
 	if (ret)
@@ -1171,7 +1177,7 @@ int security_getprocattr(struct task_struct *p, char *name, char **value)
 
 int security_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
 {
-#ifdef CONFIG_KSU
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_LSM_SECURITY_HOOKS)
 	int ret = ksu_hide_setprocattr(name, value, size);
 
 	if (ret)
