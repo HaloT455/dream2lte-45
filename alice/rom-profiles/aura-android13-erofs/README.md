@@ -32,7 +32,7 @@ reconstructed proprietary source from a compiled boot image.
 | APOLLO thermal thresholds | 76/81/86/... °C | 65/70/75/... °C | **Do not import** elevated limits or weakened cooling maps |
 | KernelSU | `CONFIG_KSU=y`; LSM hooks and always-threaded throne tracker | `CONFIG_KSU=y`; native 4.4 auto LSM hooks (new), boot tracker remains synchronous | **Imported mechanism from existing ALice KernelSU source:** native list registration instead of pointer hijacking; disabled duplicate manual sites; details in `alice/KERNELSU_AUTO_LSM44.md` |
 | Memory | legacy Android lowmemorykiller, zswap, vnswap | LRU_GEN/PSI and LZ4KD zram | Do not combine competing memory schemes without source and tests |
-| Networking | MPTCP enabled | no MPTCP subsystem | Feature exists in donor binary, **source code not supplied** |
+| Networking | MPTCP enabled | not built; existing legacy source in `net/mptcp/` | Evaluate disabled Kconfig/build integration and Android/peer protocol compatibility before enabling; no donor binary code copied |
 | Mali GPU | `CONFIG_MALI_VK_BOOST=y` | no such option in ALice | Not portable from binary alone; source/driver version required |
 | Fstab SYSTEM/PRODUCT/VENDOR | EROFS-only | EROFS and ext4 fallback | **Imported as opt-in ROM profile** |
 | Zram fstab entry | 2,684,354,560 bytes, 8 streams | 3,435,970,560 bytes, 4 streams | Preserved in opt-in ROM profile; not changed in default ALice |
@@ -62,3 +62,7 @@ of importing the looser donor configuration.
 A passed kernel CI build is not physical evidence of Android boot or OC
 stability, and an `AVBf` footer is not evidence of valid signatures
 for another kernel.
+
+## Follow-up source inventory
+
+ALice already has `drivers/staging/android/freecess.c`, `freecess_pkg.c`, `include/linux/freecess.h`, `net/mptcp/`, legacy zswap and vnswap source. These are not evidence that the features are linked or safe to enable. Freecess needs matching Samsung userspace; MPTCP needs protocol/peer and integration checks; keep LRU_GEN/PSI/LZ4KD as the default memory design. The donor and ALice compiled configurations both select Mali r19p0; donor `MALI_VK_BOOST` has no verified corresponding ALice implementation yet. No donor KernelSU code is imported. Original ALice KernelSU v3.2.5+ remains pinned to HaloT455/KernelSU master e874376f71d80c6ee4163fafdc03e62412adbc49, with the local ALice auto LSM adaptation retained.
