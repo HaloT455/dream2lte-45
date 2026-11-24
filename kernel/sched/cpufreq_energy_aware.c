@@ -1,5 +1,5 @@
 /*
- * Exynos8895 CPUFreq governor driven by discrete energy states.
+ * ALice EGO Energy Aware governor for Exynos8895.
  *
  * Copyright (C) 2016, Intel Corporation
  * Original scheduler/CPUFreq interface: Rafael J. Wysocki
@@ -490,7 +490,7 @@ static void eagov_update(struct update_util_data *hook, u64 time,
 	raw_spin_unlock(&ea->lock);
 }
 
-/* The sleeping Exynos driver is transport; it never selects an energy step. */
+/* The sleeping Exynos driver applies the OPP selected by EGO Energy Aware. */
 static void eagov_work(struct kthread_work *work)
 {
 	struct eagov_policy *ea = container_of(work, struct eagov_policy, work);
@@ -578,12 +578,18 @@ static ssize_t eng_freq_show(struct gov_attr_set *set, char *buf)
 	return sprintf(buf, "%u\n", READ_ONCE(ea->eng_freq));
 }
 
-static ssize_t energy_step_show(struct gov_attr_set *set, char *buf)
+static ssize_t energy_state_show(struct gov_attr_set *set, char *buf)
 {
 	struct eagov_policy *ea = eagov_from_attrs(set);
 	unsigned int state = READ_ONCE(ea->applied_state);
 
 	return sprintf(buf, "%u\n", state == EAGOV_NO_STATE ? 0 : state + 1);
+}
+
+/* Legacy read-only alias for existing ALice modules. */
+static ssize_t energy_step_show(struct gov_attr_set *set, char *buf)
+{
+	return energy_state_show(set, buf);
 }
 
 static ssize_t energy_delta_show(struct gov_attr_set *set, char *buf)
@@ -600,7 +606,8 @@ static ssize_t predicted_energy_show(struct gov_attr_set *set, char *buf)
 	return sprintf(buf, "%llu\n", READ_ONCE(ea->target_energy));
 }
 
-static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
+static ssize_t eagov_energy_states_show(struct gov_attr_set *set, char *buf,
+					bool legacy)
 {
 	struct eagov_policy *ea = eagov_from_attrs(set);
 	unsigned int i;
@@ -608,7 +615,8 @@ static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
 	u64 previous = 0;
 
 	len += scnprintf(buf, PAGE_SIZE,
-			 "step kHz capacity core cluster busy_power delta_power source\n");
+			 "%s kHz capacity core cluster busy_power delta_power source\n",
+			 legacy ? "step" : "state");
 	for (i = 0; i < ea->model.nr_states && len < PAGE_SIZE; i++) {
 		struct eagov_energy_state *state = &ea->model.states[i];
 		u64 power = eagov_busy_power(ea, i);
@@ -625,7 +633,20 @@ static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
 	return len;
 }
 
+static ssize_t energy_states_show(struct gov_attr_set *set, char *buf)
+{
+	return eagov_energy_states_show(set, buf, false);
+}
+
+/* Preserve the original table header for legacy readers. */
+static ssize_t energy_steps_show(struct gov_attr_set *set, char *buf)
+{
+	return eagov_energy_states_show(set, buf, true);
+}
+
 static struct governor_attr idle_ratios = __ATTR_RO(idle_ratios);
+static struct governor_attr energy_state = __ATTR_RO(energy_state);
+static struct governor_attr energy_states = __ATTR_RO(energy_states);
 static struct governor_attr energy_step = __ATTR_RO(energy_step);
 static struct governor_attr org_freq = __ATTR_RO(org_freq);
 static struct governor_attr eng_freq = __ATTR_RO(eng_freq);
@@ -634,6 +655,8 @@ static struct governor_attr energy_steps = __ATTR_RO(energy_steps);
 static struct governor_attr predicted_energy = __ATTR_RO(predicted_energy);
 static struct attribute *eagov_attributes[] = {
 	&idle_ratios.attr,
+	&energy_state.attr,
+	&energy_states.attr,
 	&energy_step.attr,
 	&org_freq.attr,
 	&eng_freq.attr,
