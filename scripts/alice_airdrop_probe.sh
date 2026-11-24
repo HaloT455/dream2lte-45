@@ -31,3 +31,11 @@ dumpsys wifiaware 2>/dev/null | grep -Ei 'available|supported|capabilities|usage
 echo '=== Quick Share package presence ==='
 pm list packages | grep -Ei 'quickshare|nearby|com.google.android.gms|com.samsung.android.app.share'
 echo 'Probe only: no radio settings, firmware, SELinux, or files changed.'
+
+echo '=== NFC and Apple-link capabilities ==='
+pm list features | grep -Ei 'android.hardware.nfc'
+service list | grep -Ei 'nfc|wifi'
+for iface in awdl0 mosey0; do
+  if [ -d "/sys/class/net/$iface" ]; then echo "$iface present"; else echo "$iface absent now (not proof of lack of support)"; fi
+done
+echo 'No NFC settings or radio firmware changed.'

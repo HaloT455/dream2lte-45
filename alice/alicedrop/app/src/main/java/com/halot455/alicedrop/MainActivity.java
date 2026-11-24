@@ -6,6 +6,8 @@ import android.content.pm.PackageManager;
 import android.net.*;
 import android.net.nsd.*;
 import android.net.wifi.aware.WifiAwareManager;
+import android.nfc.NfcAdapter;
+import android.app.AlertDialog;
 import android.widget.*;
 import android.view.*;
 import java.io.*;
@@ -25,6 +27,9 @@ public class MainActivity extends Activity {
  private NsdManager nsd;
  private NsdManager.DiscoveryListener listener;
  private String token;
+ private NfcAdapter nfc;
+ private boolean touchArmed;
+ private final Runnable touchTimeout=()->{stopTouch();msg("Hết phiên thử NFC. Chưa xác nhận AirDrop.");};
  private int generation;
  private static final long LIMIT=100L*1024*1024;
  private static final int PICK=1,SAVE=2;
@@ -35,7 +40,9 @@ public class MainActivity extends Activity {
   TextView title=new TextView(this); title.setText("AliceDrop");title.setTextSize(32); layout.addView(title);
   status=new TextView(this);layout.addView(status);
   selectedText=new TextView(this);layout.addView(selectedText);
-  add(layout,"Kiểm tra AirDrop / Wi-Fi Aware",v->probe());
+  add(layout,"Kiểm tra AirDrop / Wi-Fi Aware / NFC",v->probe());
+  add(layout,"Touch to Share — thử vùng chạm NFC (20 giây)",v->startTouch());
+  add(layout,"Dừng thử vùng chạm",v->{stopTouch();msg("Đã dừng NFC thử nghiệm");});
   add(layout,"Dò dịch vụ AirDrop trên mạng hiện tại (10 giây)",v->discover());
   add(layout,"Chọn file",v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,PICK);});
   add(layout,"Gửi qua bảng chia sẻ Android / Quick Share",v->share());
@@ -52,11 +59,42 @@ public class MainActivity extends Activity {
   boolean feature=getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI_AWARE);
   WifiAwareManager a=getSystemService(WifiAwareManager.class);
   boolean available=false; try{available=a!=null&&a.isAvailable();}catch(Exception ignored){}
-  boolean awdl=false;try{awdl=NetworkInterface.getByName("awdl0")!=null;}catch(Exception ignored){}
-  msg("Kernel: "+System.getProperty("os.version")+"\nWi-Fi Aware: "+feature+" / sẵn sàng: "+available+"\nawdl0: "+awdl+"\nAirDrop gốc: chưa xác minh giao tiếp hai chiều. Quick Share phụ thuộc thiết bị và ROM.");
+  boolean awdl=hasInterface("awdl0"), mosey=hasInterface("mosey0");
+  nfc=NfcAdapter.getDefaultAdapter(this);
+  boolean annotation=false;
+  String annotationState="API không có";
+  if(nfc!=null){try{annotation=Boolean.TRUE.equals(NfcAdapter.class.getMethod("isReaderModeAnnotationSupported").invoke(nfc));annotationState=annotation?"có":"không hỗ trợ";}catch(Exception ignored){}}
+  boolean hce=getPackageManager().hasSystemFeature(PackageManager.FEATURE_NFC_HOST_CARD_EMULATION);
+  msg("Kernel: "+System.getProperty("os.version")+"\nWi-Fi Aware: "+feature+" / sẵn sàng: "+available+"\nawdl0: "+awdl+" / mosey0: "+mosey+"\nNFC: "+(nfc!=null)+" / bật: "+(nfc!=null&&nfc.isEnabled())+" / HCE: "+hce+"\nNFC polling annotation: "+annotationState+"\nAirDrop gốc: chưa xác minh giao tiếp hai chiều. Quick Share phụ thuộc thiết bị và ROM.");
  }
+ private static boolean hasInterface(String name){try{return NetworkInterface.getByName(name)!=null;}catch(Exception e){return false;}}
+ private void startTouch(){
+  stopTouch();stopDiscovery();stopLan();
+  nfc=NfcAdapter.getDefaultAdapter(this);
+  if(nfc==null||!nfc.isEnabled()){msg("NFC không có hoặc chưa bật. Bật NFC trong Cài đặt trước.");return;}
+  touchArmed=true;
+  try{
+   nfc.enableReaderMode(this,tag->ui.post(()->{
+    if(!touchArmed)return;
+    stopTouch();
+    status.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+    new AlertDialog.Builder(this).setTitle("Đã phát hiện thẻ NFC")
+     .setMessage("Đây chỉ là xác nhận vùng chạm NFC, không xác nhận iPhone hay kết nối AirDrop. Không đọc dữ liệu thẻ và không tự gửi file.")
+     .setPositiveButton("Mở bảng chia sẻ", (dialog,which)->share())
+     .setNegativeButton("Đóng",null).show();
+   }),NfcAdapter.FLAG_READER_NFC_A|NfcAdapter.FLAG_READER_NFC_B|NfcAdapter.FLAG_READER_NFC_F|NfcAdapter.FLAG_READER_NFC_V|NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,null);
+   msg("Đưa thẻ NFC thử nghiệm vào mặt lưng S8+. Phiên 20 giây. iPhone không nhất thiết xuất hiện như một thẻ NFC.");
+   ui.postDelayed(touchTimeout,20000);
+  }catch(Exception e){stopTouch();msg("Không bật được NFC reader: "+e.getMessage());}
+ }
+ private void stopTouch(){
+  ui.removeCallbacks(touchTimeout);
+  if(touchArmed&&nfc!=null){try{nfc.disableReaderMode(this);}catch(Exception ignored){}}
+  touchArmed=false;
+ }
+ @Override protected void onPause(){stopTouch();super.onPause();}
  private void discover(){
-  stopDiscovery(); nsd=getSystemService(NsdManager.class); if(nsd==null){msg("NSD không khả dụng");return;}
+  stopTouch();stopDiscovery(); nsd=getSystemService(NsdManager.class); if(nsd==null){msg("NSD không khả dụng");return;}
   listener=new NsdManager.DiscoveryListener(){
    public void onDiscoveryStarted(String s){ui.post(()->msg("Đang dò _airdrop._tcp trên mạng hiện tại…"));}
    public void onDiscoveryStopped(String s){}
@@ -77,7 +115,7 @@ public class MainActivity extends Activity {
   throw new IOException("Hãy kết nối hai máy cùng Wi-Fi tin cậy");
  }
  private void startLan(){
-  stopLan(); final int gen=++generation; final Uri sending=selected;
+  stopTouch();stopLan(); final int gen=++generation; final Uri sending=selected;
   byte[] random=new byte[16];new SecureRandom().nextBytes(random);StringBuilder b=new StringBuilder();for(byte x:random)b.append(String.format("%02x",x&255));final String key=b.toString();token=key;
   worker.execute(()->{try(ServerSocket ss=new ServerSocket()){ss.bind(new InetSocketAddress(wifiIp(),0));ss.setSoTimeout(1000);synchronized(this){if(gen!=generation)return;server=ss;}String url="http://"+ss.getInetAddress().getHostAddress()+":"+ss.getLocalPort()+"/"+key+"/";ui.post(()->{if(gen==generation){link.setText(url);msg("Safari: mở link trên iPhone. Chỉ dùng Wi-Fi tin cậy; phiên 5 phút, HTTP không mã hóa.");}});
   long until=SystemClock.elapsedRealtime()+300000;

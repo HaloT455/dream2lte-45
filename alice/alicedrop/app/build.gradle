@@ -2,5 +2,5 @@ plugins { id 'com.android.application' version '8.7.3' }
 android {
  namespace 'com.halot455.alicedrop'
  compileSdk 35
- defaultConfig { applicationId 'com.halot455.alicedrop'; minSdk 26; targetSdk 35; versionCode 1; versionName '0.1-alpha' }
+ defaultConfig { applicationId 'com.halot455.alicedrop'; minSdk 26; targetSdk 35; versionCode 2; versionName '0.2-touch-probe' }
 }
