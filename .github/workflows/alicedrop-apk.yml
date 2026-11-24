@@ -1,0 +1,33 @@
+name: AliceDrop Android alpha
+on:
+  workflow_dispatch:
+  push:
+    branches: [alice-airdrop-probe]
+    paths: ['alice/alicedrop/**', '.github/workflows/alicedrop-apk.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - run: gradle -p alice/alicedrop :app:assembleDebug --no-daemon
+      - run: |
+          mkdir -p artifact
+          cp alice/alicedrop/app/build/outputs/apk/debug/app-debug.apk artifact/AliceDrop-alpha.apk
+          cd artifact
+          unzip -t AliceDrop-alpha.apk
+          sha256sum AliceDrop-alpha.apk > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AliceDrop-alpha-APK
+          path: artifact/
