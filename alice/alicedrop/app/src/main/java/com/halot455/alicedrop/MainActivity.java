@@ -8,6 +8,11 @@ import android.net.nsd.*;
 import android.net.wifi.aware.WifiAwareManager;
 import android.net.wifi.WifiManager;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import tech.airdrop4e.A4eCore;
+import tech.airdrop4e.A4ePeer;
+import tech.airdrop4e.A4eSendOpts;
 import android.nfc.NfcAdapter;
 import android.app.AlertDialog;
 import android.widget.*;
@@ -31,6 +36,10 @@ public class MainActivity extends Activity {
  private WifiManager.MulticastLock multicast;
  private final LinkedHashSet<String> discovered=new LinkedHashSet<>();
  private int scanId;
+ private volatile int nativeEpoch;
+ private volatile boolean foreground;
+ private boolean nativeBusy;
+ private final ExecutorService nativeWorker=Executors.newSingleThreadExecutor();
  private Runnable scanTimeout;
  private String token;
  private NfcAdapter nfc;
@@ -49,7 +58,8 @@ public class MainActivity extends Activity {
   add(layout,"Kiểm tra AirDrop / Wi-Fi Aware / NFC",v->probe());
   add(layout,"Touch to Share — thử vùng chạm NFC (20 giây)",v->startTouch());
   add(layout,"Dừng thử vùng chạm",v->{stopTouch();msg("Đã dừng NFC thử nghiệm");});
-  add(layout,"Tìm thiết bị AirDrop (30 giây)",v->discover());
+  add(layout,"Gửi AirDrop native — thử nghiệm",v->nativeBrowse());
+  add(layout,"Tìm dịch vụ AirDrop (30 giây)",v->discover());
   add(layout,"Dừng tìm thiết bị",v->{stopDiscovery();msg("Đã dừng tìm thiết bị.");});
   add(layout,"Chọn file",v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,PICK);});
   add(layout,"Gửi qua bảng chia sẻ Android / Quick Share",v->share());
@@ -99,7 +109,7 @@ public class MainActivity extends Activity {
   if(touchArmed&&nfc!=null){try{nfc.disableReaderMode(this);}catch(Exception ignored){}}
   touchArmed=false;
  }
- @Override protected void onPause(){stopTouch();super.onPause();}
+ @Override protected void onPause(){foreground=false;nativeEpoch++;stopTouch();super.onPause();}
  private void discover(){
   stopTouch();stopDiscovery();
   final int id=++scanId;
@@ -140,6 +150,65 @@ public class MainActivity extends Activity {
   if(listener!=null&&nsd!=null){try{nsd.stopServiceDiscovery(listener);}catch(Exception ignored){}listener=null;}
   if(multicast!=null){try{if(multicast.isHeld())multicast.release();}catch(Exception ignored){}multicast=null;}
  }
+ @Override protected void onResume(){super.onResume();foreground=true;}
+ private void nativeBrowse(){
+  if(nativeBusy){msg("Đang xử lý phiên native trước.");return;}
+  if(selected==null){msg("Chọn file trước.");return;}
+  final Uri file=selected;
+  new AlertDialog.Builder(this).setTitle("AirDrop native thử nghiệm")
+   .setMessage("Chỉ thử trên Wi-Fi tin cậy với thiết bị của bạn. iPhone phải bật AirDrop Mọi người trong 10 phút. Lõi native chưa xác minh danh tính Apple; không gửi dữ liệu nhạy cảm. S8+ chưa có AWDL tương thích.")
+   .setNegativeButton("Hủy",null).setPositiveButton("Tìm", (d,k)->nativeFind(file)).show();
+ }
+ private void nativeFind(Uri file){
+  if(nativeBusy||!foreground)return;
+  stopDiscovery();stopTouch();stopLan();
+  nativeBusy=true; final int epoch=++nativeEpoch;
+  msg("Đang tìm thiết bị bằng lõi AirDrop native…");
+  nativeWorker.execute(()->{
+   WifiManager.MulticastLock lock=null;
+   try{
+    WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
+    if(wifi==null||!wifi.isWifiEnabled())throw new IOException("Bật Wi-Fi trước");
+    lock=wifi.createMulticastLock("AliceDrop:native");lock.setReferenceCounted(false);lock.acquire();
+    A4eCore core=A4eCore.INSTANCE;
+    core.identityLoadOrCreate(new File(getFilesDir(),"native-identity").getPath(),"AliceDrop S8+");
+    LinkedHashMap<String,A4ePeer> peers=new LinkedHashMap<>();
+    core.browse(15000,peer->{if(peer.addr!=null&&!peer.addr.isEmpty()&&peer.port>0&&peer.port<=65535&&peers.size()<64)peers.put(peer.endpoint(),peer);});
+    ArrayList<A4ePeer> list=new ArrayList<>(peers.values());
+    ui.post(()->{nativeBusy=false;if(!foreground||epoch!=nativeEpoch)return;if(list.isEmpty()){msg("Không thấy thiết bị native. AWDL chưa hoạt động hoặc iPhone chưa mở nhận AirDrop.");return;}
+     String[] names=new String[list.size()];for(int i=0;i<names.length;i++){A4ePeer p=list.get(i);names[i]=(p.name==null?p.ident:p.name)+" ("+p.endpoint()+")";}
+     new AlertDialog.Builder(this).setTitle("Chọn thiết bị của bạn").setItems(names,(d,k)->{
+      A4ePeer peer=list.get(k);
+      new AlertDialog.Builder(this).setTitle("Xác nhận gửi file").setMessage(names[k]+"\nChỉ tiếp tục nếu đây là thiết bị bạn muốn gửi tới.").setNegativeButton("Hủy",null).setPositiveButton("Gửi",(dd,kk)->nativeSend(file,peer)).show();
+     }).setNegativeButton("Hủy",null).show();
+    });
+   }catch(Exception|LinkageError e){ui.post(()->{nativeBusy=false;if(foreground&&epoch==nativeEpoch)msg("Lỗi native: "+e.getMessage());});}
+   finally{if(lock!=null&&lock.isHeld())lock.release();}
+  });
+ }
+ private void nativeSend(Uri uri,A4ePeer peer){
+  if(nativeBusy||!foreground)return;
+  nativeBusy=true;final int epoch=++nativeEpoch;msg("Đang chuẩn bị file…");
+  nativeWorker.execute(()->{
+   File dir=null, staged=null;
+   try{
+    String name="AliceDrop-file.bin";
+    try(android.database.Cursor c=getContentResolver().query(uri,new String[]{android.provider.OpenableColumns.DISPLAY_NAME},null,null,null)){
+     if(c!=null&&c.moveToFirst()&&!c.isNull(0))name=c.getString(0);
+    }
+    name=name.replaceAll("[\\\\/\\p{Cntrl}]","_");
+    if(name.equals(".")||name.equals("..")||name.isEmpty()||name.length()>120)name="AliceDrop-file.bin";
+    dir=new File(getCacheDir(),"native-"+java.util.UUID.randomUUID());if(!dir.mkdir())throw new IOException("Không tạo được thư mục tạm");
+    staged=new File(dir,name);
+    try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(staged)){if(in==null)throw new IOException("Không đọc được file");copy(in,out,LIMIT);}
+    if(!foreground||epoch!=nativeEpoch)throw new IOException("Phiên đã đóng");
+    ui.post(()->{if(foreground&&epoch==nativeEpoch)msg("Đang yêu cầu thiết bị nhận xác nhận…");});
+    A4eCore.INSTANCE.sendFiles(new String[]{staged.getPath()},peer.endpoint(),new A4eSendOpts("AliceDrop S8+"));
+    ui.post(()->{if(foreground&&epoch==nativeEpoch)msg("Lõi native báo gửi thành công. Kiểm tra file trên thiết bị nhận.");});
+   }catch(Exception|LinkageError e){ui.post(()->{if(foreground&&epoch==nativeEpoch)msg("Gửi không thành công: "+e.getMessage());});}
+   finally{if(staged!=null)staged.delete();if(dir!=null)dir.delete();ui.post(()->nativeBusy=false);}
+  });
+ }
  private void updateSelected(){selectedText.setText(selected==null?"Chưa chọn file":"Đã chọn một file");}
  private void share(){if(selected==null){msg("Chọn file trước");return;}String type=getContentResolver().getType(selected);Intent i=new Intent(Intent.ACTION_SEND).setType(type==null?"application/octet-stream":type).putExtra(Intent.EXTRA_STREAM,selected).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);i.setClipData(ClipData.newRawUri("AliceDrop",selected));startActivity(Intent.createChooser(i,"Chia sẻ với"));}
  @Override protected void onActivityResult(int r,int c,Intent data){super.onActivityResult(r,c,data);if(c!=RESULT_OK||data==null)return;if(r==PICK){selected=data.getData();updateSelected();}if(r==SAVE&&received!=null){File f=received;Uri dest=data.getData();worker.execute(()->{try(InputStream in=new FileInputStream(f);OutputStream out=getContentResolver().openOutputStream(dest)){if(out==null)throw new IOException("Không mở được file");copy(in,out,LIMIT);ui.post(()->msg("Đã lưu file"));}catch(Exception e){ui.post(()->msg("Lỗi lưu file: "+e.getMessage()));}});}}
@@ -177,5 +246,5 @@ public class MainActivity extends Activity {
   }else{reply(out,404,"Unavailable");}out.flush();
  }
  @Override protected void onStop(){stopDiscovery();stopLan();super.onStop();}
- @Override protected void onDestroy(){worker.shutdownNow();super.onDestroy();}
+ @Override protected void onDestroy(){worker.shutdownNow();nativeWorker.shutdown();super.onDestroy();}
 }

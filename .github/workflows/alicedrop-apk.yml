@@ -6,6 +6,7 @@ on:
     paths: ['alice/alicedrop/**', '.github/workflows/alicedrop-apk.yml']
 permissions:
   contents: read
+  actions: read
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -19,6 +20,19 @@ jobs:
         with:
           packages: 'platform-tools'
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: AliceDrop-ARM64-protocol-experiment
+          run-id: 45555705240
+          github-token: ${{ github.token }}
+          path: native-artifact
+      - name: Verify native dependency
+        run: |
+          cd native-artifact
+          sha256sum -c SHA256SUMS
+          test "$(cat UPSTREAM_COMMIT)" = 34bdc8dfdd9c3eebd5b5bd8588b2fad2243a8e9c
+          readelf -h libairdrop_ffi.so | grep AArch64
+          readelf -Ws libairdrop_ffi.so | grep Java_tech_airdrop4e_A4eCore_sendFiles
       - name: Build dependency-free Java APK using Android SDK
         shell: bash
         run: |
@@ -34,7 +48,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('alice/alicedrop/app/src/main/AndroidManifest.xml')
-          s=p.read_text().replace('<manifest ', '<manifest package="com.halot455.alicedrop" android:versionCode="3" android:versionName="0.3-discovery" ',1)
+          s=p.read_text().replace('<manifest ', '<manifest package="com.halot455.alicedrop" android:versionCode="4" android:versionName="0.4-native-sender" ',1)
           s=s.replace('<application ', '<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>\n<application ',1)
           Path('out-apk/AndroidManifest.xml').write_text(s)
           PY
@@ -43,6 +57,8 @@ jobs:
           import zipfile
           with zipfile.ZipFile('out-apk/base.apk','a') as z:
               z.write('out-apk/dex/classes.dex','classes.dex',compress_type=zipfile.ZIP_DEFLATED)
+              z.write('native-artifact/libairdrop_ffi.so','lib/arm64-v8a/libairdrop_ffi.so',compress_type=zipfile.ZIP_DEFLATED)
+              z.write('native-artifact/LICENSE','assets/airdrop-core-LICENSE.txt')
           PY
           "$BT/zipalign" -p -f 4 out-apk/base.apk out-apk/aligned.apk
           keytool -genkeypair -keystore out-apk/test.jks -storepass android -keypass android -alias alicedrop -dname "CN=AliceDrop Test" -keyalg RSA -keysize 2048 -validity 3650
