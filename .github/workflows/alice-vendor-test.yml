@@ -1,0 +1,17 @@
+name: Vendor merge tool self-test
+on:
+  push:
+    branches: [alice-vendor-merge]
+    paths: ['scripts/alice_vendor_merge.py', 'scripts/test_alice_vendor_merge.sh', '.github/workflows/alice-vendor-test.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y brotli e2fsprogs
+      - run: python3 -m py_compile scripts/alice_vendor_merge.py
+      - run: bash scripts/test_alice_vendor_merge.sh
