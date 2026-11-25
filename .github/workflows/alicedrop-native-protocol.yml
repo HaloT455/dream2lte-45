@@ -1,0 +1,49 @@
+name: AliceDrop native protocol experiment
+on:
+  workflow_dispatch:
+  push:
+    branches: [alice-airdrop-probe]
+    paths: ['alice/alicedrop/native/**', '.github/workflows/alicedrop-native-protocol.yml']
+permissions:
+  contents: read
+jobs:
+  protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BenItBuhner/AirDrop-for-Everything
+          ref: 34bdc8dfdd9c3eebd5b5bd8588b2fad2243a8e9c
+          persist-credentials: false
+      - name: Verify donor revision and host protocol tests
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 34bdc8dfdd9c3eebd5b5bd8588b2fad2243a8e9c
+          rustup update stable
+          cargo +stable test -p airdrop-core --locked
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Build ARM64 FFI using Android NDK
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;27.2.12479018"
+          rustup target add aarch64-linux-android --toolchain stable
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          export AR_aarch64_linux_android="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          cargo +stable build --locked --release --target aarch64-linux-android -p airdrop-ffi
+          mkdir -p artifact
+          cp target/aarch64-linux-android/release/libairdrop_ffi.so artifact/
+          cp LICENSE artifact/
+          git rev-parse HEAD > artifact/UPSTREAM_COMMIT
+          file artifact/libairdrop_ffi.so
+          readelf -h artifact/libairdrop_ffi.so | grep AArch64
+          printf '%s\n' 'Experimental protocol library only. No Android AWDL driver; not an installable APK.' > artifact/STATUS.txt
+          (cd artifact && sha256sum libairdrop_ffi.so > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AliceDrop-ARM64-protocol-experiment
+          path: artifact/
+          if-no-files-found: error
