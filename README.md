@@ -40,12 +40,13 @@ has no proportional utilization-to-frequency target, separate up/down rate
 limits, busy-CPU frequency hold, IOWAIT frequency boost or optional power-budget
 mode. Its worker only passes the selected state to the sleeping Exynos driver.
 
-A53 uses 9 modeled states from 455 to 1690 MHz; Mongoose M2 uses 13 from 741 to
-2314 MHz. Higher firmware OPPs are excluded because this tree has no matching
-energy costs for them. This is an intentional reduction from the old 2002/
-2704 MHz limits. Core and shared-cluster busy/idle costs come from Samsung DTS;
-these are model units, not measured battery watts. The explicit frequency
-bindings follow the ordered stock OPPs and capacity ratios in that DTS.
+A53 has 9 native DTS states (455–1690 MHz) and 3 additional OC candidates
+through 2002 MHz; Mongoose M2 has 13 native states (741–2314 MHz) and
+4 OC candidates through 2704 MHz. Extra states use actual CAL/ASV OPPs
+and f × V² engineering estimates, not measured Samsung energy costs.
+Unsupported OC frequencies or missing voltage data are skipped.
+The explicit native frequency bindings follow the ordered stock OPPs
+and capacity ratios in that DTS.
 
 Runtime diagnostics under each policy's `energy_aware/` directory expose
 `energy_steps` (full state/power/delta table), `energy_step` (last acknowledged
@@ -82,3 +83,12 @@ sizes were independently checked against the supplied image.
 
 Linux kernel code remains licensed under GPL-2.0; see `COPYING`. Vendored
 components retain their own license notices.
+
+## Paired Android 16 camera-first trial (2026-11-26)
+
+Vendor source: https://github.com/HaloT455/Vendor-45-/tree/work/a16-camera-first-no-dualsim-20261126
+
+Radio settings remain Test7; Dual SIM work is deferred. The kernel retains
+MAX77865 RGB, EROFS, PSI, KernelSU and LZ4KD. No LED, camera, boot or battery
+runtime success is claimed. The genuine matching boot input is mandatory
+for a boot image; see boot-input/README.md. Never flash kernel Image as boot.img.
