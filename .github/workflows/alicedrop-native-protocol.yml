@@ -2,7 +2,7 @@ name: AliceDrop native protocol experiment
 on:
   workflow_dispatch:
   push:
-    branches: [alice-airdrop-probe]
+    branches: [alice-airdrop-probe, alice-unified]
     paths: ['alice/alicedrop/native/**', '.github/workflows/alicedrop-native-protocol.yml']
 permissions:
   contents: read

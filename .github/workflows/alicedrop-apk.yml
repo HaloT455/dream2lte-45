@@ -2,11 +2,10 @@ name: AliceDrop Android alpha
 on:
   workflow_dispatch:
   push:
-    branches: [alice-airdrop-probe]
+    branches: [alice-airdrop-probe, alice-unified]
     paths: ['alice/alicedrop/**', '.github/workflows/alicedrop-apk.yml']
 permissions:
   contents: read
-  actions: read
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -20,12 +19,29 @@ jobs:
         with:
           packages: 'platform-tools'
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: AliceDrop-ARM64-protocol-experiment
-          run-id: 45555705240
-          github-token: ${{ github.token }}
-          path: native-artifact
+          repository: BenItBuhner/AirDrop-for-Everything
+          ref: 34bdc8dfdd9c3eebd5b5bd8588b2fad2243a8e9c
+          path: native-upstream
+          persist-credentials: false
+      - name: Rebuild pinned ARM64 dependency (no expiring CI artifact)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;27.2.12479018"
+          rustup update stable
+          rustup target add aarch64-linux-android --toolchain stable
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          export AR_aarch64_linux_android="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          cd native-upstream
+          test "$(git rev-parse HEAD)" = 34bdc8dfdd9c3eebd5b5bd8588b2fad2243a8e9c
+          cargo +stable build --locked --release --target aarch64-linux-android -p airdrop-ffi
+          mkdir -p ../native-artifact
+          cp target/aarch64-linux-android/release/libairdrop_ffi.so LICENSE ../native-artifact/
+          git rev-parse HEAD > ../native-artifact/UPSTREAM_COMMIT
+          (cd ../native-artifact && sha256sum libairdrop_ffi.so > SHA256SUMS)
       - name: Verify native dependency
         run: |
           cd native-artifact
@@ -70,6 +86,7 @@ jobs:
           cd artifact
           unzip -t AliceDrop-alpha.apk
           sha256sum AliceDrop-alpha.apk > SHA256SUMS
+          git rev-parse HEAD > SOURCE_COMMIT
       - uses: actions/upload-artifact@v4
         with:
           name: AliceDrop-alpha-APK
