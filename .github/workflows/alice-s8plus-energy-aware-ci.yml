@@ -2,7 +2,7 @@ name: ALice S8Plus A53 EGO energy_aware ONLY CI
 on:
   push:
     branches:
-      - agent/s8plus-a53-ego-esg-port-20261123
+      - agent/s8plus-camera-first-paired-20261126
   workflow_dispatch:
 
 permissions:
@@ -68,7 +68,926 @@ jobs:
           grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
           grep -q '^# CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED is not set$' out-ea/.config
           grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' out-ea/.config
-          grep -q '^CONFIG_CRYPTO_LZ4KD=y$' out-ea/.config
+          grep -q '^CONFIG_CRYPTO_LZ4KD=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^CONFIG_EROFS_FS=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^CONFIG_EROFS_FS_ZIP=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^CONFIG_EROFS_FS_SECURITY=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^CONFIG_LEDS_MAX77865_RGB=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^CONFIG_PSI=y
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
+          grep -q '^# CONFIG_ANDROID_SIMPLE_LMK is not set
+
+      - name: Verify real Samsung A53 energy costs and repacker syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/alice_ci_boot_repack.py
+          python3 scripts/test_alice_energy_step_dts.py
+          python3 scripts/test_samsung_a53_ego_port.py
+          python3 scripts/test_ksu_auto_lsm_44.py
+          python3 scripts/test_aura_eroFS_profile.py
+          python3 scripts/test_alice_oc_states.py
+          python3 scripts/test_energy_aware_worker.py
+          grep -q 'sched-energy-costs' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CPU_COST_1: core-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'CLUSTER_COST_1: cluster-core1' arch/arm64/boot/dts/exynos/exynos8895.dtsi
+          grep -q 'sge_array\[' kernel/sched/energy.c
+          grep -q 'of_parse_phandle(cn, "sched-energy-costs"' kernel/sched/energy.c
+          grep -q 'init_sched_energy_costs();' arch/arm64/kernel/topology.c
+          grep -q 'init_cpu_topology();' arch/arm64/kernel/smp.c
+          grep -q 'et_compute_cpu_energy_8895' kernel/sched/energy_aware_samsung_et.h
+          grep -q 'ego_map_util_freq_8895' kernel/sched/cpufreq_energy_aware.c
+          test -s research/samsung-a53-exynos1280-ego-reference.c
+          test -s research/samsung-a53-exynos1280-energy-table-reference.c
+          grep -q 'eagov_opp_voltage' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'eagov_append_oc_states' kernel/sched/cpufreq_energy_aware.c
+          grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+          grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
+
+      - name: Build Image and DTBs
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+
+      - name: Verify actual compiled symbols and publish
+        run: |
+          set -eux
+          test -s out-ea/arch/arm64/boot/Image
+          test -s out-ea/arch/arm64/boot/dtb.img
+          python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
+          grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
+          grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
+          grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
+          grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
+          mkdir -p artifact
+          cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
+          cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
+          cp out-ea/.config artifact/energy-aware.config
+          cp out-ea/System.map artifact/System.map
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+
+      - name: Upload kernel build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-ONLY-Kernel
+          path: artifact/
+          if-no-files-found: error
+
+      - name: Upload failed build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-S8Plus-EnergyAware-build-log
+          path: build-energy-aware.log
+          if-no-files-found: ignore
+
+      - name: Report missing original boot input
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') == '' }}
+        run: |
+          echo "::warning::Kernel built, but boot.img is NOT produced: boot-input/ALICE_original_boot.img (or .zip) is absent."
+          echo "Supply a real original boot image from this exact device/ROM. No synthetic ramdisk/header is used."
+
+      - name: Prepare genuine original Samsung boot image
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f boot-input/ALICE_original_boot.img ] && [ -f boot-input/ALICE_original_boot.zip ]; then
+            echo "::error::Provide ONE boot input, not both."
+            exit 1
+          fi
+          if [ -f boot-input/ALICE_original_boot.zip ]; then
+            test "$(unzip -Z1 boot-input/ALICE_original_boot.zip)" = "boot.img"
+            unzip -p boot-input/ALICE_original_boot.zip boot.img > "$RUNNER_TEMP/ALICE_original_boot.img"
+          else
+            cp boot-input/ALICE_original_boot.img "$RUNNER_TEMP/ALICE_original_boot.img"
+          fi
+          test -s "$RUNNER_TEMP/ALICE_original_boot.img"
+          printf 'ORIGINAL_BOOT=%s\n' "$RUNNER_TEMP/ALICE_original_boot.img" >> "$GITHUB_ENV"
+
+      - name: Repack real boot image with freshly compiled Image and DTB
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-boot
+          python3 scripts/alice_ci_boot_repack.py \
+            --original-boot "$ORIGINAL_BOOT" \
+            --image out-ea/arch/arm64/boot/Image \
+            --dtb out-ea/arch/arm64/boot/dtb.img \
+            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+          echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
+          echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          cp out-ea/.config artifact-boot/kernel.config
+          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
+
+      - name: Upload REAL Samsung energy-aware boot.img test artifact
+        if: ${{ hashFiles('boot-input/ALICE_original_boot.img', 'boot-input/ALICE_original_boot.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
+          path: artifact-boot/
+          if-no-files-found: error
+ out-ea/.config
 
       - name: Verify real Samsung A53 energy costs and repacker syntax
         run: |
