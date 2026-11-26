@@ -27,6 +27,7 @@
 #include "energy_aware_model.h"
 #include "energy_aware_oc.h"
 #include "energy_aware_idle.h"
+#include "energy_aware_iowait.h"
 
 unsigned long boosted_cpu_util(int cpu);
 
@@ -34,15 +35,16 @@ unsigned long boosted_cpu_util(int cpu);
 static bool eagov_allow_oc;
 static bool eagov_auto_oc = true;
 module_param_named(auto_oc, eagov_auto_oc, bool, 0644);
-MODULE_PARM_DESC(auto_oc, "Allow bounded automatic OC under sustained CPU demand");
+MODULE_PARM_DESC(auto_oc, "Allow bounded automatic OC on responsive CPU demand");
 module_param_named(allow_oc, eagov_allow_oc, bool, 0644);
 MODULE_PARM_DESC(allow_oc, "Allow estimated overclock OPPs in EGO selection");
 #define EAGOV_SCAN_NS 2000000ULL
 #define EAGOV_MARGIN 12U
-#define EAGOV_OC_MARGIN 18U
-#define EAGOV_OC_DEMAND_NS 12000000ULL
-#define EAGOV_OC_BURST_NS 80000000ULL
-#define EAGOV_OC_COOLDOWN_NS 200000000ULL
+#define EAGOV_DOWN_NS 8000000ULL
+#define EAGOV_OC_MARGIN 35U
+#define EAGOV_OC_DEMAND_NS 2000000ULL
+#define EAGOV_OC_BURST_NS 60000000ULL
+#define EAGOV_OC_COOLDOWN_NS 180000000ULL
 
 struct eagov_policy {
 	struct cpufreq_policy *policy;
@@ -62,9 +64,12 @@ struct eagov_policy {
 	unsigned int target_state;
 	unsigned int applied_state;
 	u64 last_scan;
+	u64 last_freq_update;
 	u64 oc_demand_since, oc_until, oc_cooldown_until;
+	u64 oc_entries;
 	bool oc_active;
 	unsigned int last_peak, last_low, last_high;
+	unsigned int max_applied_khz;
 	/* Samsung ego_policy org_freq/eng_freq observability. */
 	unsigned int org_freq;
 	unsigned int eng_freq;
@@ -80,6 +85,7 @@ struct eagov_cpu {
 	u64 time;
 	unsigned int util;
 	bool valid;
+	struct eagov_iowait iowait;
 };
 
 static DEFINE_PER_CPU(struct eagov_cpu, eagov_cpus);
@@ -197,7 +203,7 @@ static void eagov_update_auto_oc(struct eagov_policy *ea, u64 time,
 	}
 	eligible = READ_ONCE(eagov_auto_oc) && high > native->frequency;
 	if (ea->oc_active && (!eligible || time >= ea->oc_until ||
-	    peak * 100U < native->capacity * 85U)) {
+	    peak * 100U < native->capacity * 70U)) {
 		ea->oc_active = false;
 		ea->oc_demand_since = 0;
 		ea->oc_cooldown_until = time + EAGOV_OC_COOLDOWN_NS;
@@ -205,7 +211,7 @@ static void eagov_update_auto_oc(struct eagov_policy *ea, u64 time,
 	if (ea->oc_active)
 		return;
 	if (!eligible || time < ea->oc_cooldown_until ||
-	    peak * 100U < native->capacity * 95U) {
+	    peak * 100U < native->capacity * 80U) {
 		ea->oc_demand_since = 0;
 		return;
 	}
@@ -214,6 +220,7 @@ static void eagov_update_auto_oc(struct eagov_policy *ea, u64 time,
 	else if (time - ea->oc_demand_since >= EAGOV_OC_DEMAND_NS) {
 		ea->oc_active = true;
 		ea->oc_until = time + EAGOV_OC_BURST_NS;
+		ea->oc_entries++;
 	}
 }
 
@@ -497,7 +504,7 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	struct eagov_energy_choice choice;
 	struct ego_cpu_work cpus[NR_CPUS];
 	struct ego_workload work = { .cpus = cpus };
-	unsigned int cpu, low, high;
+	unsigned int cpu, low, high, raw_peak = 0;
 	s64 window = eagov_sample_window();
 
 	for_each_cpu(cpu, ea->policy->cpus) {
@@ -507,6 +514,15 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 
 		input->util = !sample->valid ||
 			(s64)(time - sample->time) > window ? 0 : sample->util;
+		raw_peak = max(raw_peak, input->util);
+		if (!sample->valid || (s64)(time - sample->time) > window) {
+			sample->iowait.boost = 0;
+			sample->iowait.pending = false;
+		} else {
+			input->util = eagov_iowait_apply(&sample->iowait,
+				input->util,
+				ea->model.states[ea->nr_native_states - 1].capacity);
+		}
 		input->clkoff_ratio = ego_compute_cpu_idle_ratio(cpu);
 		work.peak = max(work.peak, input->util);
 	}
@@ -519,17 +535,18 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 	 * capacity floor in the energy search still includes its 12.5% reserve.
 	 */
 	eagov_qos_range(ea, &low, &high);
-	eagov_update_auto_oc(ea, time, work.peak, high);
+	/* A storage wakeup alone must not arm an automatic OC burst. */
+	eagov_update_auto_oc(ea, time, raw_peak, high);
 	high = eagov_limit_oc(ea, high);
 	work.org_freq = ego_map_util_freq_8895(
 		work.peak,
 		ea->model.states[ea->model.nr_states - 1].frequency,
 		ea->model.states[ea->model.nr_states - 1].capacity,
 		ea->oc_active && ea->nr_native_states &&
-		work.peak * 100U >= ea->model.states[ea->nr_native_states - 1].capacity * 98U ?
+		raw_peak * 100U >= ea->model.states[ea->nr_native_states - 1].capacity * 80U ?
 		EAGOV_OC_MARGIN : EAGOV_MARGIN);
 	ea->last_scan = time;
-	ea->last_peak = work.peak;
+	ea->last_peak = raw_peak;
 	ea->last_low = low;
 	ea->last_high = high;
 	choice = ego_find_energy_freq(&ea->model, &work, low, high);
@@ -539,6 +556,18 @@ static void eagov_request(struct eagov_policy *ea, u64 time)
 					    ea->policy->min, high);
 	if (WARN_ON_ONCE(choice.state == EAGOV_NO_STATE))
 		return;
+
+	/* Match ESG1's 8 ms down response; never defer a reduced QoS ceiling. */
+	if (ea->target_state != EAGOV_NO_STATE &&
+	    choice.state < ea->target_state &&
+	    (s64)(time - ea->last_freq_update) >= 0 &&
+	    time - ea->last_freq_update < EAGOV_DOWN_NS &&
+	    ea->model.states[ea->target_state].frequency <= high) {
+		choice.state = ea->target_state;
+		choice.energy = ego_compute_energy(&ea->model, choice.state, &work);
+	}
+	if (choice.state != ea->target_state)
+		ea->last_freq_update = time;
 
 	/* QoS can change the hardware OPP outside this governor's worker. */
 	if (!ea->queued && ea->applied_state != EAGOV_NO_STATE &&
@@ -580,6 +609,10 @@ static void eagov_update(struct update_util_data *hook, u64 time,
 	unsigned int util = eagov_read_util(ea, time, flags);
 
 	raw_spin_lock(&ea->lock);
+	eagov_iowait_update(&sample->iowait, time,
+		flags & SCHED_CPUFREQ_IOWAIT,
+		ea->model.states[ea->nr_native_states - 1].capacity,
+		TICK_NSEC);
 	sample->util = util;
 	sample->time = time;
 	sample->valid = true;
@@ -616,6 +649,8 @@ static void eagov_work(struct kthread_work *work)
 		/* QoS may clamp the driver: acknowledge only an applied OPP. */
 		ea->applied_state = !ret && ea->policy->cur == frequency ?
 				    state : EAGOV_NO_STATE;
+		if (ea->applied_state != EAGOV_NO_STATE)
+			ea->max_applied_khz = max(ea->max_applied_khz, frequency);
 		if (ea->applied_state != EAGOV_NO_STATE && previous != state)
 			ea->power_delta = previous == EAGOV_NO_STATE ? 0 :
 				(s64)eagov_busy_power(ea, state) -
@@ -674,6 +709,28 @@ static ssize_t eng_freq_show(struct gov_attr_set *set, char *buf)
 	struct eagov_policy *ea = eagov_from_attrs(set);
 
 	return sprintf(buf, "%u\n", READ_ONCE(ea->eng_freq));
+}
+
+/* Policy acknowledgements are separate from the live CAL clock readout. */
+static ssize_t oc_status_show(struct gov_attr_set *set, char *buf)
+{
+	struct eagov_policy *ea = eagov_from_attrs(set);
+	unsigned int low, high;
+
+	eagov_qos_range(ea, &low, &high);
+	return scnprintf(buf, PAGE_SIZE,
+		"auto_oc=%u allow_oc=%u active=%u bursts=%llu "
+		"native_max_khz=%u modeled_max_khz=%u policy_max_khz=%u "
+		"qos_min_khz=%u qos_max_khz=%u target_khz=%u "
+		"policy_cur_khz=%u max_applied_khz=%u raw_peak=%u\n",
+		READ_ONCE(eagov_auto_oc), READ_ONCE(eagov_allow_oc),
+		READ_ONCE(ea->oc_active),
+		(unsigned long long)READ_ONCE(ea->oc_entries),
+		ea->model.states[ea->nr_native_states - 1].frequency,
+		ea->model.states[ea->model.nr_states - 1].frequency,
+		READ_ONCE(ea->policy->max), low, high,
+		READ_ONCE(ea->eng_freq), READ_ONCE(ea->policy->cur),
+		READ_ONCE(ea->max_applied_khz), READ_ONCE(ea->last_peak));
 }
 
 static ssize_t energy_state_show(struct gov_attr_set *set, char *buf)
@@ -748,6 +805,7 @@ static struct governor_attr energy_states = __ATTR_RO(energy_states);
 static struct governor_attr energy_step = __ATTR_RO(energy_step);
 static struct governor_attr org_freq = __ATTR_RO(org_freq);
 static struct governor_attr eng_freq = __ATTR_RO(eng_freq);
+static struct governor_attr oc_status = __ATTR_RO(oc_status);
 static struct governor_attr energy_delta = __ATTR_RO(energy_delta);
 static struct governor_attr energy_steps = __ATTR_RO(energy_steps);
 static struct governor_attr predicted_energy = __ATTR_RO(predicted_energy);
@@ -758,6 +816,7 @@ static struct attribute *eagov_attributes[] = {
 	&energy_step.attr,
 	&org_freq.attr,
 	&eng_freq.attr,
+	&oc_status.attr,
 	&energy_delta.attr,
 	&energy_steps.attr,
 	&predicted_energy.attr,
@@ -870,8 +929,11 @@ static int eagov_start(struct cpufreq_policy *policy)
 	ea->queued = false;
 	ea->power_delta = 0;
 	ea->last_scan = 0;
+	ea->last_freq_update = 0;
 	ea->oc_demand_since = ea->oc_until = ea->oc_cooldown_until = 0;
+	ea->oc_entries = 0;
 	ea->oc_active = false;
+	ea->max_applied_khz = 0;
 	ea->last_peak = ea->last_low = ea->last_high = 0;
 	ea->org_freq = 0;
 	ea->eng_freq = 0;
@@ -968,3 +1030,4 @@ static int __init eagov_register(void)
 	return ret;
 }
 fs_initcall(eagov_register);
+

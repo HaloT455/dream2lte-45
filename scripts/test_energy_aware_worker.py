@@ -25,17 +25,12 @@ PREAMBLE = r'''
 #include <stdio.h>
 #include <string.h>
 #include "energy_aware_model.h"
+#include "energy_aware_iowait.h"
 typedef uint64_t u64;
 typedef int64_t s64;
 #define NR_CPUS 2
 #define CPUFREQ_RELATION_L 0
 #define SCHED_CPUFREQ_DL 1
-#define EAGOV_SCAN_NS 2000000ULL
-#define EAGOV_MARGIN 12U
-#define EAGOV_OC_MARGIN 18U
-#define EAGOV_OC_DEMAND_NS 12000000ULL
-#define EAGOV_OC_BURST_NS 80000000ULL
-#define EAGOV_OC_COOLDOWN_NS 200000000ULL
 #define READ_ONCE(x) (x)
 static bool eagov_allow_oc, eagov_auto_oc;
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
@@ -60,13 +55,15 @@ struct eagov_policy {
     struct kthread_worker worker;
     unsigned int target_state, applied_state, org_freq, eng_freq;
     unsigned int nr_native_states, last_peak, last_low, last_high;
-    u64 last_scan, oc_demand_since, oc_until, oc_cooldown_until;
+    u64 last_scan, last_freq_update, oc_demand_since, oc_until, oc_cooldown_until;
+    u64 oc_entries;
+    unsigned int max_applied_khz;
     bool oc_active;
     unsigned long long target_energy;
     s64 power_delta;
     bool enabled, queued;
 };
-struct eagov_cpu { u64 time; unsigned int util; bool valid; };
+struct eagov_cpu { u64 time; unsigned int util; bool valid; struct eagov_iowait iowait; };
 static struct eagov_cpu eagov_cpus[NR_CPUS];
 static struct eagov_policy state;
 static struct cpufreq_policy policy;
@@ -124,9 +121,17 @@ static void reset(void) {
 static void request(unsigned int util) {
     unsigned long flags;
     raw_spin_lock_irqsave(&state.lock, flags);
-    eagov_cpus[0] = (struct eagov_cpu){now++, util, true};
+    now += 10000000ULL;
+    eagov_cpus[0].time = now;
+    eagov_cpus[0].util = util;
+    eagov_cpus[0].valid = true;
     eagov_request(&state, eagov_cpus[0].time);
     raw_spin_unlock_irqrestore(&state.lock, flags);
+}
+static void request_at(unsigned int util, u64 time) {
+    assert(time >= 10000000ULL);
+    now = time - 10000000ULL;
+    request(util);
 }
 static void run_once(void) {
     if (irq_pending) { irq_pending = false; eagov_irq_work(&state.irq_work); }
@@ -165,7 +170,7 @@ int main(void) {
     assert(state.power_delta == 150); request(40); drain(); assert(state.power_delta == -150);
 
     reset(); mask = 3;
-    eagov_cpus[1] = (struct eagov_cpu){5, 270, true};
+    eagov_cpus[1] = (struct eagov_cpu){.time = 5, .util = 270, .valid = true};
     request(40); assert(state.target_state == 2); drain();
     now = 30000000; request(40); drain(); assert(state.target_state == 0); /* stale peer */
     policy.max = 200; request(300); drain(); assert(last_applied == 200); /* thermal */
@@ -195,7 +200,7 @@ int main(void) {
     request(200); drain(); assert(last_applied == 200 && !state.oc_active);
     now += EAGOV_OC_DEMAND_NS; request(200); drain();
     assert(state.oc_active && last_applied == 300);
-    now += 2000000; request(160); drain();
+    now += 2000000; request(120); drain();
     assert(!state.oc_active && last_applied == 200);
     now += 2000000; request(300); drain(); assert(!state.oc_active);
     reset(); eagov_allow_oc = false; eagov_auto_oc = true;
@@ -208,14 +213,56 @@ int main(void) {
     assert(state.oc_active);
     for (int i = 0; i < 9; i++) { now += 10000000; request(200); drain(); }
     assert(!state.oc_active && last_applied == 200);
-    puts("PASS: EGO worker, QoS, bounded automatic OC, cooldown and urgent bypass");
+
+    /* The real selector can enter OC on a short, single-core 85% burst. */
+    reset(); eagov_allow_oc = false; eagov_auto_oc = true;
+    request(170); drain(); assert(!state.oc_active && last_applied == 200);
+    request_at(170, now + EAGOV_OC_DEMAND_NS); drain();
+    assert(state.oc_active && last_applied == 300 && state.oc_entries == 1);
+    assert(state.max_applied_khz == 300);
+    qos_max = 200; request_at(170, now + 1000000ULL); drain();
+    assert(!state.oc_active && last_applied == 200); /* immediate QoS cut */
+
+    /* A brief valley does not bounce down; a real ceiling takes effect now. */
+    reset(); request(120); drain();
+    u64 up_time = now;
+    request_at(40, up_time + 2000000ULL); drain(); assert(last_applied == 200);
+    request_at(40, up_time + EAGOV_DOWN_NS); drain(); assert(last_applied == 100);
+    request_at(120, now + 1000000ULL); drain(); assert(last_applied == 200);
+    qos_max = 100; request_at(40, now + 1000000ULL); drain();
+    assert(last_applied == 100);
+
+    /* Native I/O headroom never counts as raw CPU demand for auto OC. */
+    reset(); eagov_allow_oc = false; eagov_auto_oc = true;
+    eagov_cpus[0].iowait.boost = 200;
+    eagov_cpus[0].iowait.pending = true;
+    request(40); drain(); assert(last_applied == 200 && !state.oc_active);
+    eagov_cpus[0].iowait.pending = true;
+    request(40); drain(); assert(!state.oc_active && state.oc_entries == 0);
+
+    struct eagov_iowait io = {0};
+    u64 wake = 1;
+    for (unsigned int expected = 25; expected <= 200; expected *= 2) {
+        eagov_iowait_update(&io, wake++, true, 200, 4000000ULL);
+        assert(eagov_iowait_apply(&io, 0, 200) == expected);
+    }
+    eagov_iowait_update(&io, wake++, true, 200, 4000000ULL);
+    assert(eagov_iowait_apply(&io, 0, 200) == 200);
+    assert(eagov_iowait_apply(&io, 0, 200) == 100);
+    assert(eagov_iowait_apply(&io, 0, 200) == 50);
+    eagov_iowait_update(&io, wake + 5000000ULL, false, 200, 4000000ULL);
+    assert(eagov_iowait_apply(&io, 0, 200) == 0);
+    eagov_iowait_update(&io, 1, false, 200, 4000000ULL);
+    assert(io.boost == 0 && !io.pending); /* clock discontinuity */
+    puts("PASS: EGO worker, responsive OC, I/O wakeups, down pacing and QoS cuts");
     return 0;
 }
 '''
 
 source = (ROOT / "kernel/sched/cpufreq_energy_aware.c").read_text()
 names = ("eagov_qos_range", "eagov_limit_oc", "eagov_update_auto_oc", "eagov_busy_power", "eagov_request", "eagov_should_scan", "eagov_work", "eagov_irq_work")
-code = PREAMBLE + "\n".join(function(source, name) for name in names) + TESTS
+defines = "\n".join(re.findall(r"^#define EAGOV_[^\n]+", source, re.M))
+code = PREAMBLE + defines + "\n" + "\n".join(function(source, name) for name in names) + TESTS
 with tempfile.TemporaryDirectory(prefix="ego-port-test-") as tmp:
     test = Path(tmp) / "test.c"
     binary = Path(tmp) / "test"
@@ -226,3 +273,4 @@ with tempfile.TemporaryDirectory(prefix="ego-port-test-") as tmp:
         "-iquote" + str(ROOT / "kernel/sched"), str(test), "-o", str(binary)
     ], check=True)
     subprocess.run([str(binary)], check=True, cwd=tmp)
+

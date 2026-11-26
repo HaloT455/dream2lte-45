@@ -1,10 +1,11 @@
-name: ALice S8Plus A53 EGO energy_aware ONLY CI
+name: ALice S8Plus responsive EGO boot R1
 on:
   push:
     branches:
       - agent/s8plus-a53-ego-esg-port-20261123
       - alice-ego-energy-aware
       - alice-unified
+      - agent/s8plus-ego-responsive-oc-20261127
   workflow_dispatch:
 
 permissions:
@@ -71,9 +72,11 @@ jobs:
             --disable CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
             --disable CPU_FREQ_GOV_SCHEDUTIL \
             --disable ALICE_BATTERY_RESERVE \
+            --disable LRU_GEN \
+            --disable LRU_GEN_ENABLED \
             --enable CPU_FREQ_GOV_ENERGYAWARE \
             --enable CPU_FREQ_DEFAULT_GOV_ENERGYAWARE \
-            --set-str LOCALVERSION "-Alice-S8P-EA-KSU-LZ4KD"
+            --set-str LOCALVERSION "-Alice-S8P-EA-R1-KSU-LZ4KD"
           make O=out-ea olddefconfig
 
       - name: Assert strict energy-aware integration
@@ -92,6 +95,7 @@ jobs:
           grep -Fxq 'CONFIG_PSI=y' out-ea/.config
           grep -Fxq '# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set' out-ea/.config
           grep -Fxq '# CONFIG_ANDROID_SIMPLE_LMK is not set' out-ea/.config
+          grep -Fxq '# CONFIG_LRU_GEN is not set' out-ea/.config
 
       - name: Verify real Samsung A53 energy costs and repacker syntax
         run: |
@@ -197,12 +201,14 @@ jobs:
             --original-boot "$ORIGINAL_BOOT" \
             --image out-ea/arch/arm64/boot/Image \
             --dtb out-ea/arch/arm64/boot/dtb.img \
-            --out artifact-boot/ALice_boot.img | tee artifact-boot/build-provenance.txt
+            --out artifact-boot/ALice_boot_R1.img | tee artifact-boot/build-provenance.txt
           echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
           echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
-          test "$(stat -c %s artifact-boot/ALice_boot.img)" -le 41943040
+          test "$(stat -c %s artifact-boot/ALice_boot_R1.img)" -le 41943040
           cp out-ea/.config artifact-boot/kernel.config
-          (cd artifact-boot && sha256sum ALice_boot.img kernel.config > SHA256SUMS)
+          cp scripts/collect_s8plus_boot_r1.sh artifact-boot/
+          cp docs/S8PLUS_BOOT_R1.md artifact-boot/README.md
+          (cd artifact-boot && sha256sum ALice_boot_R1.img kernel.config collect_s8plus_boot_r1.sh README.md > SHA256SUMS)
           echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
 
       - name: Upload REAL Samsung energy-aware boot.img test artifact
@@ -212,3 +218,4 @@ jobs:
           name: ALice-Exynos8895-EnergyAware-REAL-BOOT-${{ github.sha }}
           path: artifact-boot/
           if-no-files-found: error
+
