@@ -45,7 +45,7 @@ jobs:
             exit 1
           fi
           gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            --name ALice-S8Plus-A53-EGO-Adapted-EnergyAware-Kernel \
+            --name ALice-S8Plus-EnergyAware-ONLY-Kernel \
             --dir kernel-out
           (cd kernel-out && sha256sum -c SHA256SUMS)
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$' kernel-out/energy-aware.config
