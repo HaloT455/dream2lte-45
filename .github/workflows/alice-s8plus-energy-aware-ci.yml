@@ -122,10 +122,15 @@ jobs:
           grep -q 'max-freq = <2002000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
           grep -q 'max-freq = <2704000>;' arch/arm64/boot/dts/exynos/exynos8895-dream2lte_common.dtsi
 
+      - name: Compile changed governor and MGLRU-disabled memory paths first
+        run: |
+          set -o pipefail
+          make O=out-ea -j4 kernel/sched/cpufreq_energy_aware.o mm/rmap.o mm/vmscan.o 2>&1 | tee build-energy-aware.log
+
       - name: Build Image and DTBs
         run: |
           set -o pipefail
-          make O=out-ea -j4 Image dtb.img 2>&1 | tee build-energy-aware.log
+          make O=out-ea -j4 Image dtb.img 2>&1 | tee -a build-energy-aware.log
 
       - name: Verify actual compiled symbols and publish
         run: |

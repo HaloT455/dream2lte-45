@@ -8,6 +8,8 @@ Mốc ESG1 trong repo: 45f0ebd745a50ac8d0a3b1fa78fa93c89de3e7c2.
 
 - Tắt MGLRU trong cấu hình build, như workflow ESG1. Bản trước bật cả
   CONFIG_LRU_GEN và CONFIG_LRU_GEN_ENABLED cùng cơ chế bỏ qua một lần tắt từ init.
+- Áp dụng đúng guard CONFIG_LRU_GEN cho rmap.c từ ESG1 để đường build
+  không MGLRU không tham chiếu helper chỉ tồn tại khi bật MGLRU.
 - Bổ sung phản hồi I/O wakeup có suy giảm, tối đa năng lực native của cụm CPU.
   I/O boost không được tính thành tải thật để kích OC.
 - Giữ lựa chọn tần số từ mô hình EGO; thêm khoảng chờ giảm xung 8 ms như ESG1.
@@ -44,6 +46,9 @@ Không có yêu cầu flash vendor trong bản này.
 cải thiện độ mượt, nhiệt, thời lượng pin, OC thực, nháy xanh hay nhận PD trên củ sạc.
 
 Sau khi tái hiện lỗi, lấy snapshot chỉ đọc bằng adb/root shell:
+
+Dùng adb qua Wi-Fi khi cổng USB đang cắm củ sạc. Có thể chạy script trực tiếp
+trong terminal root trên điện thoại, rồi lưu đầu ra thành tệp văn bản.
 
 ```sh
 adb push collect_s8plus_boot_r1.sh /data/local/tmp/

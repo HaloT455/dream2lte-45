@@ -904,6 +904,7 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			return SWAP_FAIL; /* To break the loop */
 		}
 
+#ifdef CONFIG_LRU_GEN
 		/*
 		 * Bounded MGLRU locality aging: when rmap finds a young mapping,
 		 * scan only a small PTE neighborhood in the same PMD.  Hot pages
@@ -923,6 +924,7 @@ static int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			lru_gen_scan_around(&pvmw);
 			referenced++;
 		}
+#endif
 
 		if (ptep_clear_flush_young_notify(vma, address, pte)) {
 			/*

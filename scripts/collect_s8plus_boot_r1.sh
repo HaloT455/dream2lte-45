@@ -13,6 +13,8 @@ uname -a
 show /proc/uptime
 show /proc/sys/vm/swappiness
 show /sys/kernel/mm/lru_gen/enabled
+show /sys/power/cpufreq_min_limit
+show /sys/power/cpufreq_max_limit
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     [ -d "$policy" ] || continue
     for field in affected_cpus scaling_driver scaling_governor scaling_min_freq \
