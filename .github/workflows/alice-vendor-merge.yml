@@ -61,7 +61,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import hashlib,re
-          names={'vendor.new.dat.br','vendor.transfer.list','vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img'}
+          names={'vendor.new.dat.br','vendor.transfer.list','vendor-OneUI8-S8Plus-Test7-Camera-Bixby.img'}
           entries={}
           for line in Path('SHA256SUMS').read_text().splitlines():
               match=re.fullmatch(r'([a-fA-F0-9]{64})  ([A-Za-z0-9._-]+)',line)
@@ -77,13 +77,13 @@ jobs:
               if actual!=h: raise SystemExit('Hash mismatch '+n)
           PY
       - name: Install image tools
-        run: sudo apt-get update && sudo apt-get install -y brotli e2fsprogs android-sdk-libsparse-utils
+        run: sudo apt-get update && sudo apt-get install -y brotli e2fsprogs erofs-utils android-sdk-libsparse-utils
       - name: Audit actual input images
         run: |
           sudo python3 scripts/alice_vendor_merge.py \
             --base vendor-input/vendor.new.dat.br \
             --transfer vendor-input/vendor.transfer.list \
-            --donor vendor-input/vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img \
+            --donor vendor-input/vendor-OneUI8-S8Plus-Test7-Camera-Bixby.img \
             --out vendor-audit
       - name: Publish real diff for review
         uses: actions/upload-artifact@v4
@@ -99,18 +99,20 @@ jobs:
           sudo python3 scripts/alice_vendor_merge.py \
             --base vendor-input/vendor.new.dat.br \
             --transfer vendor-input/vendor.transfer.list \
-            --donor vendor-input/vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img \
+            --donor vendor-input/vendor-OneUI8-S8Plus-Test7-Camera-Bixby.img \
             --plan alice/vendor/reviewed-plan.json --out vendor-merged
           (cd vendor-merged && sha256sum -c SHA256SUMS)
       - name: Pack full OTA vendor and verify reconstruction
         run: |
           sudo python3 scripts/alice_vendor_pack.py vendor-merged/vendor-MERGED-UNTESTED.img vendor-ota
+          cp vendor-merged/vendor-MERGED-UNTESTED.img vendor-merged/ALice_vendor.img
+          (cd vendor-merged && sha256sum ALice_vendor.img > ALice_SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: ALice-vendor-MERGED-UNTESTED
           path: |
-            vendor-merged/vendor-MERGED-UNTESTED.img
-            vendor-merged/SHA256SUMS
+            vendor-merged/ALice_vendor.img
+            vendor-merged/ALice_SHA256SUMS
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:

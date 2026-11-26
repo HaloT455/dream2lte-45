@@ -11,7 +11,9 @@ Target: Exynos 8895, One UI 8 / Android 16 port. This branch consolidates the ke
 ## Build outputs and limitations
 - Kernel CI preserves existing energy-aware configuration, adaptive OC, KSU and LZ4KD checks. A genuine device boot image is required for repacking; otherwise the output is kernel only.
 - AliceDrop CI builds its pinned upstream ARM64 FFI from source rather than relying on the older expiring artifact. No AWDL backend validated for BCM4361; native iPhone file transfer and touch-to-share remain unverified.
-- Vendor base is vendor.new.dat.br + vendor.transfer.list. Donor is vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img. Original binary files cannot be opened in the current processing environment. No real radio/SIM2/LTE/LED/media patches have been applied. Synthetic test is not vendor firmware. See alice/vendor/README.md.
+- The November 26 input set is recorded in `s8plus-inputs-20261126.json`. The real `vendor.new.dat.br` reconstructs to a 600 MiB EROFS partition image (1,376 entries); Test7 is the reference donor (1,429 entries). Preserve the new.dat radio stack; Dual SIM work is deferred.
+- Retain the EGO adaptive OC governor and its state aliases from `alice-unified`; the paired branch's EROFS, RGB LED, PSI and disabled-kernel-LMK gates are integrated without reverting those governor changes. The manual boot repacker now requests the actual artifact name emitted by kernel CI.
+- Actual input EGO config matches the prior unified CI config, and its DTB is byte-identical. Kernel Image bytes differ between builds; this is not claimed to be bit-for-bit reproduction of the input kernel. New builds include the kernel ELF and exact source commit for further audit.
 - No proprietary vendor or boot binaries uploaded to the public repository. No flashable vendor.img produced.
 - Do not treat a green build as proof of device boot, radio, camera, thermal or Apple compatibility. Keep existing known-good boot and vendor backups.
 

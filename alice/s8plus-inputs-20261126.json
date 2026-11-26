@@ -1,0 +1,16 @@
+{
+  "target": "dream2lte Exynos8895 One UI 8 Android 16",
+  "kernel_source_base": "81f13f163f9ff47c31230862cc300582633c5351",
+  "radio_changes": false,
+  "inputs": [
+    {"name": "ALice-S8Plus-EGO-EnergyAware-AutoHook-TEST.img", "bytes": 39102464, "sha256": "c09f62145c47926a423114a525ae695e10a127f4e8015f697082abd969729873"},
+    {"name": "boot.img", "bytes": 41943040, "sha256": "80003cebe663f62683b28d864e73482ff379e6d52418a9eaa5897595a1bd1250"},
+    {"name": "vendor.new.dat.br", "bytes": 387949212, "sha256": "46346df0052d461727a2fb50239b9b828db2aba08a4219a02acff8efa528657e"},
+    {"name": "vendor.transfer.list", "bytes": 17648, "sha256": "8b1cf1e3acc78e499c23537aafc61bb478533105a645b5ff8ce5bb08ec288f42"},
+    {"name": "vendor-OneUI8-S8Plus-Test7-Camera-Bixby.img", "bytes": 481640448, "sha256": "4368eefcc7c4a8d7dc7b1d61e2116a80daef31f10a134d2853f7c63259224437"}
+  ],
+  "decoded_vendor": {"sha256": "70d580771c738320e06271e169f6777b2464eaada8626484cf42997dc71ed923", "bytes": 629145600, "filesystem": "erofs", "entries": 1376},
+  "ego_ramdisk_sha256": "0acad424dbd7eb133c8d315fad4e112a3cc1fb8991b5dafcf2949092035466a2",
+  "ego_dtb_sha256": "2b13ccd59aa01caa43f1dad94d647649f511a37463cdd356d745ddc939d026e3",
+  "device_runtime_verified": false
+}

@@ -71,6 +71,13 @@ jobs:
           grep -q '^# CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED is not set$' out-ea/.config
           grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4KD=y$' out-ea/.config
           grep -q '^CONFIG_CRYPTO_LZ4KD=y$' out-ea/.config
+          grep -Fxq 'CONFIG_EROFS_FS=y' out-ea/.config
+          grep -Fxq 'CONFIG_EROFS_FS_ZIP=y' out-ea/.config
+          grep -Fxq 'CONFIG_EROFS_FS_SECURITY=y' out-ea/.config
+          grep -Fxq 'CONFIG_LEDS_MAX77865_RGB=y' out-ea/.config
+          grep -Fxq 'CONFIG_PSI=y' out-ea/.config
+          grep -Fxq '# CONFIG_ANDROID_LOW_MEMORY_KILLER is not set' out-ea/.config
+          grep -Fxq '# CONFIG_ANDROID_SIMPLE_LMK is not set' out-ea/.config
 
       - name: Verify real Samsung A53 energy costs and repacker syntax
         run: |
@@ -107,19 +114,26 @@ jobs:
           set -eux
           test -s out-ea/arch/arm64/boot/Image
           test -s out-ea/arch/arm64/boot/dtb.img
+          readelf -h out-ea/vmlinux | grep -Eq 'Machine:[[:space:]]+AArch64'
           python3 scripts/check_energy_aware_only.py out-ea/.config --system-map out-ea/System.map
           grep -q '^CONFIG_KSU_LSM_SECURITY_HOOKS=y$' out-ea/.config
           grep -Eq ' [tT] ksu_auto44_bprm_check$' out-ea/System.map
           grep -Eq ' [tT] ksu_auto44_release_vfs_hook$' out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_encode$' out-ea/System.map
           grep -Eq ' [a-zA-Z] lz4kd_decode$' out-ea/System.map
+          grep -Eq ' [tT] psi_memstall_enter$' out-ea/System.map
+          grep -Eq ' [tT] psi_trigger_poll$' out-ea/System.map
+          grep -Eq ' [tT] erofs_fill_super$' out-ea/System.map
+          grep -Eq ' [tT] max77865_rgb_probe$' out-ea/System.map
           grep -a -q 'energy_aware' out-ea/arch/arm64/boot/Image
           mkdir -p artifact
           cp out-ea/arch/arm64/boot/Image artifact/Image-energy-aware
           cp out-ea/arch/arm64/boot/dtb.img artifact/dtb.img
           cp out-ea/.config artifact/energy-aware.config
           cp out-ea/System.map artifact/System.map
-          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map > SHA256SUMS)
+          cp out-ea/vmlinux artifact/vmlinux
+          printf '%s\n' "$GITHUB_SHA" > artifact/SOURCE_COMMIT
+          (cd artifact && sha256sum Image-energy-aware dtb.img energy-aware.config System.map vmlinux SOURCE_COMMIT > SHA256SUMS)
 
       - name: Upload kernel build outputs
         if: success()
@@ -169,11 +183,11 @@ jobs:
             --original-boot "$ORIGINAL_BOOT" \
             --image out-ea/arch/arm64/boot/Image \
             --dtb out-ea/arch/arm64/boot/dtb.img \
-            --out artifact-boot/boot.img | tee artifact-boot/build-provenance.txt
+            --out artifact-boot/ALice_boot.img | tee artifact-boot/build-provenance.txt
           echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
           echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
           cp out-ea/.config artifact-boot/kernel.config
-          (cd artifact-boot && sha256sum boot.img kernel.config > SHA256SUMS)
+          (cd artifact-boot && sha256sum ALice_boot.img kernel.config > SHA256SUMS)
           echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
 
       - name: Upload REAL Samsung energy-aware boot.img test artifact

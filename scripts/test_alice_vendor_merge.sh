@@ -32,4 +32,14 @@ debugfs -R 'cat /etc/ril-test.conf' merged/vendor-MERGED-UNTESTED.img > actual
 cmp actual donor-tree/etc/ril-test.conf
 debugfs -R 'cat /etc/keep.conf' merged/vendor-MERGED-UNTESTED.img > actual
 cmp actual base-tree/etc/keep.conf
+# Test7 is EROFS; exercise an actual EROFS donor, not only two ext4 images.
+mkfs.erofs -T0 donor.erofs donor-tree
+sudo python3 "$ROOT/scripts/alice_vendor_merge.py" --base vendor.new.dat.br --transfer vendor.transfer.list --donor donor.erofs --out erofs-audit
+test ! -e erofs-audit/vendor-MERGED-UNTESTED.img
+sudo python3 "$ROOT/scripts/alice_vendor_merge.py" --base vendor.new.dat.br --transfer vendor.transfer.list --donor donor.erofs --out erofs-merged --plan plan.json
+(cd erofs-merged && sha256sum -c SHA256SUMS)
+debugfs -R 'cat /etc/ril-test.conf' erofs-merged/vendor-MERGED-UNTESTED.img > actual
+cmp actual donor-tree/etc/ril-test.conf
+debugfs -R 'cat /etc/keep.conf' erofs-merged/vendor-MERGED-UNTESTED.img > actual
+cmp actual base-tree/etc/keep.conf
 printf 'Synthetic test passed. No actual phone firmware used or produced.\n'

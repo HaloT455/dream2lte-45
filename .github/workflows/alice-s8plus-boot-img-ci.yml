@@ -45,7 +45,7 @@ jobs:
             exit 1
           fi
           gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            --name ALice-S8Plus-A53-EGO-Adapted-EnergyAware-Kernel \
+            --name ALice-S8Plus-EnergyAware-ONLY-Kernel \
             --dir kernel-out
           (cd kernel-out && sha256sum -c SHA256SUMS)
           grep -q '^CONFIG_CPU_FREQ_DEFAULT_GOV_ENERGYAWARE=y$' kernel-out/energy-aware.config
@@ -61,9 +61,9 @@ jobs:
             --original-boot "$RUNNER_TEMP/original-boot.img" \
             --image kernel-out/Image-energy-aware \
             --dtb kernel-out/dtb.img \
-            --out output/boot.img | tee output/build-provenance.txt
+            --out output/ALice_boot.img | tee output/build-provenance.txt
           cat provenance.txt >> output/build-provenance.txt
-          (cd output && sha256sum boot.img > SHA256SUMS)
+          (cd output && sha256sum ALice_boot.img > SHA256SUMS)
           echo "UNTESTED boot; keep recovery and backup of original boot partition." > output/README-TEST-ONLY.txt
 
       - name: Upload boot test image (no fabricated boot)
