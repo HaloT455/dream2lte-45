@@ -4,6 +4,14 @@ There is **no pre-generated boot.img in this branch**. The energy-aware CI
 will only publish a flash-test boot image when supplied with a **genuine**
 original boot image from the same handset and currently used ROM.
 
+The paired November 26 workflows now retrieve the genuine supplied EGO boot
+from `HaloT455/Vendor-45-` commit
+`7c0f966009db44cebc302db87c27c529e4a872df`, under `source/boot`.
+`scripts/alice_prepare_boot_input.py` verifies every ZIP part, archive checksum,
+the single `boot.img` entry and the exact uploaded image SHA256 before placing
+it at the path below. No additional upload is required for this input set.
+The actual resulting file is named `ALice_boot.img`.
+
 ## Required file: choose ONE
 
 - `boot-input/ALICE_original_boot.img` (original unmodified boot partition image), OR

@@ -14,6 +14,20 @@ jobs:
       - name: Checkout exact ALice branch commit
         uses: actions/checkout@v4
 
+      - name: Checkout checksum-pinned genuine EGO boot input
+        uses: actions/checkout@v4
+        with:
+          repository: HaloT455/Vendor-45-
+          ref: 7c0f966009db44cebc302db87c27c529e4a872df
+          path: paired-boot-input
+          sparse-checkout: source/boot
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Verify exact uploaded EGO input before repacking
+        run: |
+          python3 scripts/alice_prepare_boot_input.py --bundle paired-boot-input/source/boot --output boot-input/ALICE_original_boot.img
+
       - name: Require genuine original boot image
         run: |
           set -euo pipefail
@@ -63,6 +77,7 @@ jobs:
             --dtb kernel-out/dtb.img \
             --out output/ALice_boot.img | tee output/build-provenance.txt
           cat provenance.txt >> output/build-provenance.txt
+          test "$(stat -c %s output/ALice_boot.img)" -le 41943040
           (cd output && sha256sum ALice_boot.img > SHA256SUMS)
           echo "UNTESTED boot; keep recovery and backup of original boot partition." > output/README-TEST-ONLY.txt
 

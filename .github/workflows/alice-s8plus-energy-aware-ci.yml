@@ -18,6 +18,20 @@ jobs:
       - name: Checkout dedicated ALice source branch
         uses: actions/checkout@v4
 
+      - name: Checkout checksum-pinned genuine EGO boot input
+        uses: actions/checkout@v4
+        with:
+          repository: HaloT455/Vendor-45-
+          ref: 7c0f966009db44cebc302db87c27c529e4a872df
+          path: paired-boot-input
+          sparse-checkout: source/boot
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Verify exact uploaded EGO input before repacking
+        run: |
+          python3 scripts/alice_prepare_boot_input.py --bundle paired-boot-input/source/boot --output boot-input/ALICE_original_boot.img
+
       - name: Install build tools
         run: |
           set -euo pipefail
@@ -186,6 +200,7 @@ jobs:
             --out artifact-boot/ALice_boot.img | tee artifact-boot/build-provenance.txt
           echo "Source commit: $GITHUB_SHA" >> artifact-boot/build-provenance.txt
           echo "Source branch: $GITHUB_REF_NAME" >> artifact-boot/build-provenance.txt
+          test "$(stat -c %s artifact-boot/ALice_boot.img)" -le 41943040
           cp out-ea/.config artifact-boot/kernel.config
           (cd artifact-boot && sha256sum ALice_boot.img kernel.config > SHA256SUMS)
           echo "TEST ONLY: NOT physically boot tested; original boot backup and recovery required." > artifact-boot/README-TEST-ONLY.txt
