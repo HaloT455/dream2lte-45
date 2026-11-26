@@ -1,0 +1,119 @@
+name: ALice real vendor audit and merge
+on:
+  push:
+    branches: [alice-unified]
+    paths:
+      - '.github/workflows/alice-vendor-merge.yml'
+      - 'alice/vendor/reviewed-plan.json'
+      - 'scripts/alice_vendor_merge.py'
+      - 'scripts/alice_vendor_pack.py'
+  workflow_dispatch:
+    inputs:
+      input_run_id:
+        description: 'Actions run ID containing the vendor input ZIP artifact'
+        type: string
+        required: true
+      input_repository:
+        description: 'Repository containing the vendor input artifact'
+        type: string
+        required: true
+      input_artifact:
+        description: 'Exact artifact name'
+        type: string
+        default: ALice-vendor-input
+      publish:
+        description: 'Authorize publishing vendor audit/firmware outputs (public if repo is public)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      INPUT_RUN: ${{ inputs.input_run_id || vars.ALICE_VENDOR_INPUT_RUN_ID }}
+      INPUT_REPO: ${{ inputs.input_repository || vars.ALICE_VENDOR_INPUT_REPOSITORY }}
+      INPUT_NAME: ${{ inputs.input_artifact || 'ALice-vendor-input' }}
+      PUBLISH: ${{ inputs.publish || vars.ALICE_VENDOR_PUBLISH == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require genuine input, not sample firmware
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_RUN" =~ ^[0-9]+$ ]] || { echo "::error::Missing real vendor input artifact run ID"; exit 1; }
+          [[ "$INPUT_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::Missing input repository"; exit 1; }
+          [[ "$PUBLISH" == true ]] || { echo "::error::Output publication not authorized. Use a private repository or explicitly authorize publication."; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          repository: ${{ env.INPUT_REPO }}
+          run-id: ${{ env.INPUT_RUN }}
+          name: ${{ env.INPUT_NAME }}
+          github-token: ${{ secrets.ALICE_VENDOR_INPUT_TOKEN || github.token }}
+          path: vendor-input
+      - name: Validate exact input names and hashes
+        run: |
+          set -euo pipefail
+          cd vendor-input
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re
+          names={'vendor.new.dat.br','vendor.transfer.list','vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img'}
+          entries={}
+          for line in Path('SHA256SUMS').read_text().splitlines():
+              match=re.fullmatch(r'([a-fA-F0-9]{64})  ([A-Za-z0-9._-]+)',line)
+              if not match: raise SystemExit('Invalid SHA256SUMS entry')
+              h,n=match.groups()
+              if n not in names or n in entries: raise SystemExit('Unexpected input name')
+              entries[n]=h.lower()
+          if set(entries)!=names: raise SystemExit('Missing input hashes')
+          for n,h in entries.items():
+              p=Path(n)
+              if p.is_symlink() or not p.is_file(): raise SystemExit('Invalid input '+n)
+              with p.open('rb') as f: actual=hashlib.file_digest(f,'sha256').hexdigest()
+              if actual!=h: raise SystemExit('Hash mismatch '+n)
+          PY
+      - name: Install image tools
+        run: sudo apt-get update && sudo apt-get install -y brotli e2fsprogs android-sdk-libsparse-utils
+      - name: Audit actual input images
+        run: |
+          sudo python3 scripts/alice_vendor_merge.py \
+            --base vendor-input/vendor.new.dat.br \
+            --transfer vendor-input/vendor.transfer.list \
+            --donor vendor-input/vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img \
+            --out vendor-audit
+      - name: Publish real diff for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALice-vendor-real-audit
+          path: vendor-audit/vendor-diff.json
+          if-no-files-found: error
+      - name: Require reviewed merge plan
+        run: |
+          test -s alice/vendor/reviewed-plan.json || { echo "::error::Audit complete. Review actual differences and commit reviewed-plan.json before building an image."; exit 1; }
+      - name: Apply reviewed donor replacements
+        run: |
+          sudo python3 scripts/alice_vendor_merge.py \
+            --base vendor-input/vendor.new.dat.br \
+            --transfer vendor-input/vendor.transfer.list \
+            --donor vendor-input/vendor-a16-sim2-lte-ril-ab-video6-UNTESTED.img \
+            --plan alice/vendor/reviewed-plan.json --out vendor-merged
+          (cd vendor-merged && sha256sum -c SHA256SUMS)
+      - name: Pack full OTA vendor and verify reconstruction
+        run: |
+          sudo python3 scripts/alice_vendor_pack.py vendor-merged/vendor-MERGED-UNTESTED.img vendor-ota
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ALice-vendor-MERGED-UNTESTED
+          path: |
+            vendor-merged/vendor-MERGED-UNTESTED.img
+            vendor-merged/SHA256SUMS
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ALice-vendor-full-OTA-UNTESTED
+          path: vendor-ota/
+          if-no-files-found: error
